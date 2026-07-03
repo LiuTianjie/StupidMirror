@@ -1,0 +1,5 @@
+StupidMirror uses Apple platform APIs, including CoreMediaIO and AVFoundation,
+to discover and render USB iPhone screen sources exposed by macOS.
+
+Optional iPhone control support relies on Appium and WebDriverAgent, which are
+separate projects with their own licenses and setup requirements.
