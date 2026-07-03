@@ -68,6 +68,13 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertTrue(AppiumControlConfiguration().preferInstalledWDA)
     }
 
+    func testPreinstalledWDAReuseUsesShortProbeTimeout() {
+        let configuration = AppiumControlConfiguration()
+
+        XCTAssertLessThan(configuration.preinstalledWDAStartupTimeoutSeconds, configuration.sessionStartupTimeoutSeconds)
+        XCTAssertLessThanOrEqual(configuration.preinstalledWDAStartupTimeoutSeconds, 35)
+    }
+
     func testInstalledWDASessionUsesLaunchOnlyCapability() {
         var configuration = AppiumControlConfiguration()
         configuration.usePreinstalledWDA = true
@@ -89,8 +96,24 @@ final class ControlGestureReducerTests: XCTestCase {
 
     func testInstalledWDAFallbackDoesNotHideActionableUserErrors() {
         XCTAssertTrue(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"WebDriverAgentRunner is not installed"}}"#)))
+        XCTAssertTrue(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"connect ECONNREFUSED 127.0.0.1:8100"}}"#)))
         XCTAssertFalse(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"Unlock iPhone to Continue"}}"#)))
         XCTAssertFalse(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"Developer Mode is disabled"}}"#)))
+    }
+
+    func testFreshWDARetryOnlyHandlesRecoverableAgentFailures() {
+        XCTAssertTrue(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.timeout("Timed out while starting WebDriverAgent after 210s.")))
+        XCTAssertTrue(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.httpStatus(500, #"{"value":{"message":"WebDriverAgent did not become ready and WDA is not listening on 8100"}}"#)))
+
+        XCTAssertFalse(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.httpStatus(500, #"{"value":{"message":"Unlock iPhone Air to Continue"}}"#)))
+        XCTAssertFalse(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.httpStatus(500, #"{"value":{"message":"xcodebuild failed because no provisioning profile was found"}}"#)))
+    }
+
+    func testActionFailureInvalidatesDeadSessionsButNotOrdinaryBadInput() {
+        XCTAssertTrue(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(404, #"{"value":{"message":"invalid session id"}}"#)))
+        XCTAssertTrue(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(500, #"{"value":{"message":"socket hang up while talking to WDA"}}"#)))
+
+        XCTAssertFalse(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(400, #"{"value":{"message":"bad argument: x must be a number"}}"#)))
     }
 
     func testAppiumDragUsesShortW3CPointerActionInsteadOfHalfSecondHold() throws {

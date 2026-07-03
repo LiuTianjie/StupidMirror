@@ -15,6 +15,7 @@ struct AppiumControlConfiguration {
     var wdaLaunchTimeoutMS: Int = 180_000
     var wdaConnectionTimeoutMS: Int = 180_000
     var sessionStartupTimeoutSeconds: TimeInterval = 210
+    var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 35
     var newCommandTimeoutSeconds: Int = 300
 }
 
@@ -110,6 +111,10 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 installedConfiguration.usePreinstalledWDA = true
                 installedConfiguration.usePrebuiltWDA = false
                 installedConfiguration.useNewWDA = false
+                installedConfiguration.sessionStartupTimeoutSeconds = min(
+                    configuration.sessionStartupTimeoutSeconds,
+                    configuration.preinstalledWDAStartupTimeoutSeconds
+                )
                 await MainActor.run {
                     self.statusMessage = "Reusing installed WebDriverAgent control agent..."
                 }
@@ -138,12 +143,31 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
         var installConfiguration = configuration
         installConfiguration.usePreinstalledWDA = false
-        return try await startSession(
-            client: client,
-            udid: udid,
-            bundleID: bundleID,
-            configuration: installConfiguration
-        )
+        do {
+            return try await startSession(
+                client: client,
+                udid: udid,
+                bundleID: bundleID,
+                configuration: installConfiguration
+            )
+        } catch {
+            guard AppiumError.shouldRetryWithFreshWDA(afterSessionError: error) else {
+                throw error
+            }
+            try Task.checkCancellation()
+            var freshConfiguration = installConfiguration
+            freshConfiguration.useNewWDA = true
+            freshConfiguration.usePrebuiltWDA = false
+            await MainActor.run {
+                self.statusMessage = "Restarting WebDriverAgent control agent..."
+            }
+            return try await startSession(
+                client: client,
+                udid: udid,
+                bundleID: bundleID,
+                configuration: freshConfiguration
+            )
+        }
     }
 
     private func startSession(
@@ -275,7 +299,14 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     }
                 } catch {
                     await MainActor.run {
-                        self.statusMessage = error.localizedDescription
+                        let message = AppiumError.controlFailureMessage(for: error)
+                        self.statusMessage = message
+                        if AppiumError.shouldInvalidateActiveSession(afterActionError: error) {
+                            self.sessionID = nil
+                            self.screenSize = nil
+                            self.pendingActions.removeAll()
+                            self.state = .failed(message)
+                        }
                     }
                 }
             }
@@ -644,7 +675,51 @@ enum AppiumError: LocalizedError {
             || haystack.contains("not supported")
             || haystack.contains("could not launch")
             || haystack.contains("failed to launch")
+            || haystack.contains("connection was refused")
+            || haystack.contains("econnrefused")
+            || haystack.contains("did not become ready")
+            || haystack.contains("wda is not listening")
+            || haystack.contains("timed out while starting webdriveragent")
             || haystack.contains("devicectl")
+    }
+
+    static func shouldRetryWithFreshWDA(afterSessionError error: Error) -> Bool {
+        let haystack = [String(describing: error), error.localizedDescription]
+            .joined(separator: " ")
+            .lowercased()
+        if haystack.contains("unlock")
+            || haystack.contains("developer mode")
+            || haystack.contains("ui automation")
+            || haystack.contains("not trusted")
+            || haystack.contains("trust this computer")
+            || haystack.contains("pairing")
+            || haystack.contains("provisioning profile")
+            || haystack.contains("code signing")
+            || haystack.contains("requires a development team") {
+            return false
+        }
+        return haystack.contains("connection was refused")
+            || haystack.contains("econnrefused")
+            || haystack.contains("8100")
+            || haystack.contains("did not become ready")
+            || haystack.contains("wda is not listening")
+            || haystack.contains("timed out while starting webdriveragent")
+            || haystack.contains("xctestmanager")
+            || haystack.contains("socket hang up")
+    }
+
+    static func shouldInvalidateActiveSession(afterActionError error: Error) -> Bool {
+        let haystack = [String(describing: error), error.localizedDescription]
+            .joined(separator: " ")
+            .lowercased()
+        return haystack.contains("invalid session")
+            || haystack.contains("no such driver")
+            || haystack.contains("session does not exist")
+            || haystack.contains("connection was refused")
+            || haystack.contains("econnrefused")
+            || haystack.contains("socket hang up")
+            || haystack.contains("wda")
+            || haystack.contains("xctestmanager")
     }
 
     var errorDescription: String? {
