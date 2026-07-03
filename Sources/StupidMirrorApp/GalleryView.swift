@@ -174,15 +174,21 @@ struct PermissionView: View {
                 .foregroundStyle(.tertiary)
             Text(store.t("permission.title"))
                 .font(.title3.weight(.semibold))
-            Text(store.t("permission.body"))
+            Text(permissionBody)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 420)
             HStack(spacing: Theme.Spacing.sm) {
                 Button {
-                    store.openCameraPrivacySettings()
+                    if store.permissionStatus == .notDetermined {
+                        Task {
+                            await store.requestCameraPermission()
+                        }
+                    } else {
+                        store.openCameraPrivacySettings()
+                    }
                 } label: {
-                    Label(store.t("permission.openSettings"), systemImage: "gearshape")
+                    Label(primaryActionTitle, systemImage: primaryActionIcon)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.Palette.accent)
@@ -198,6 +204,27 @@ struct PermissionView: View {
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var permissionBody: String {
+        switch store.permissionStatus {
+        case .notDetermined:
+            store.t("permission.body.notDetermined")
+        case .denied, .restricted:
+            store.t("permission.body.denied")
+        default:
+            store.t("permission.body")
+        }
+    }
+
+    private var primaryActionTitle: String {
+        store.permissionStatus == .notDetermined
+            ? store.t("permission.requestAccess")
+            : store.t("permission.openSettings")
+    }
+
+    private var primaryActionIcon: String {
+        store.permissionStatus == .notDetermined ? "video.badge.checkmark" : "gearshape"
     }
 }
 

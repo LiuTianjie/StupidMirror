@@ -156,15 +156,12 @@ final class DeviceGalleryStore: ObservableObject {
         statusMessage = "CoreMediaIO screen capture devices enabled: \(status)"
         installDeviceObservers()
         startPeriodicRefresh()
-        Task {
-            await ensureAccessAndRefresh()
-        }
+        refreshIfCameraAuthorized()
     }
 
-    func ensureAccessAndRefresh() async {
-        let granted = await AVFoundationMirrorBackend.requestVideoAccess()
+    func refreshIfCameraAuthorized() {
         permissionStatus = AVFoundationMirrorBackend.authorizationStatus()
-        guard granted else {
+        guard permissionStatus == .authorized else {
             statusMessage = t("status.permissionRequired")
             return
         }
@@ -176,6 +173,16 @@ final class DeviceGalleryStore: ObservableObject {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    func requestCameraPermission() async {
+        let granted = await AVFoundationMirrorBackend.requestVideoAccess()
+        permissionStatus = AVFoundationMirrorBackend.authorizationStatus()
+        if granted {
+            refresh()
+        } else {
+            statusMessage = t("status.permissionRequired")
+        }
     }
 
     func recheckCameraPermission() {

@@ -24,6 +24,9 @@ final class AppLocalizationTests: XCTestCase {
     private var criticalKeys: [String] {
         [
             "dashboard.subtitle",
+            "permission.body.notDetermined",
+            "permission.body.denied",
+            "permission.requestAccess",
             "permission.openSettings",
             "permission.recheck",
             "status.controlPreparingAgent",
