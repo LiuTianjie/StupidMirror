@@ -110,8 +110,7 @@ else
 fi
 
 if command -v xattr >/dev/null 2>&1; then
-  find "$tmp_app" -exec xattr -c {} \; 2>/dev/null || true
-  xattr -c "$tmp_app" 2>/dev/null || true
+  find "$tmp_app" -xattr -print0 | xargs -0 xattr -c 2>/dev/null || true
 fi
 
 if command -v codesign >/dev/null 2>&1; then
