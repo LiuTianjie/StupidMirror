@@ -23,6 +23,7 @@ Environment:
   BUMP=patch|minor|major|x.y.z
   SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
   BUNDLE_ID="com.example.StupidMirror"
+  ENTITLEMENTS="StupidMirror.entitlements"
   VERSION="0.1.0"
   BUILD_NUMBER="1"
   NOTARY_PROFILE="notarytool-keychain-profile"

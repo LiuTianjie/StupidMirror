@@ -12,7 +12,7 @@ version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
 build_number="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 sign_identity="${SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}"
-entitlements="${ENTITLEMENTS:-}"
+entitlements="${ENTITLEMENTS:-StupidMirror.entitlements}"
 skip_codesign="${SKIP_CODESIGN:-false}"
 bundle_appium="${BUNDLE_APPIUM:-true}"
 default_appium_url="${DEFAULT_APPIUM_URL:-http://127.0.0.1:4723}"
@@ -109,6 +109,10 @@ if [ "$skip_codesign" != "true" ] && command -v codesign >/dev/null 2>&1; then
       sign_args+=(--timestamp --options runtime)
     fi
     if [ -n "$entitlements" ]; then
+      if [ ! -f "$entitlements" ]; then
+        echo "Entitlements file not found: ${entitlements}" >&2
+        exit 1
+      fi
       sign_args+=(--entitlements "$entitlements")
     fi
     codesign "${sign_args[@]}" "$build_app_path"

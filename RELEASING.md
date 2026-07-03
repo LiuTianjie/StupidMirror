@@ -51,6 +51,7 @@ Set `COMMIT_RELEASE=false` or `PUSH_RELEASE=false` to disable those steps.
 
 - `SIGN_IDENTITY`: Developer ID Application certificate name. Auto-detected if omitted.
 - `BUNDLE_ID`: Bundle identifier. Defaults to `dev.stupidmirror.app`.
+- `ENTITLEMENTS`: Entitlements plist for signing. Defaults to `StupidMirror.entitlements`.
 - `VERSION`: Override version without editing `VERSION`.
 - `BUILD_NUMBER`: Override build number. Defaults to a timestamp.
 - `NOTARY_PROFILE`: Keychain profile for `xcrun notarytool`.

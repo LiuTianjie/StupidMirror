@@ -92,6 +92,10 @@ NOTARY_PROFILE="stupidmirror-notary" \
 make release-local
 ```
 
+Release builds are signed with `StupidMirror.entitlements` by default. Keep the
+camera entitlement enabled; without it, Developer ID + Hardened Runtime builds
+cannot register StupidMirror in Privacy & Security -> Camera.
+
 If `NOTARY_PROFILE` is omitted, the script still builds, signs, zips, and uploads
 the app, but it skips Apple notarization.
 
