@@ -176,12 +176,16 @@ if [ "$push_release" = "true" ]; then
   git push origin "$tag"
 fi
 
-release_flags=()
+release_create_args=(
+  gh release create "$tag" "$artifact_path"
+  --title "$release_name"
+  --notes "$release_notes"
+)
 if [ "${DRAFT:-false}" = "true" ]; then
-  release_flags+=(--draft)
+  release_create_args+=(--draft)
 fi
 if [ "${PRERELEASE:-false}" = "true" ]; then
-  release_flags+=(--prerelease)
+  release_create_args+=(--prerelease)
 fi
 
 if gh release view "$tag" >/dev/null 2>&1; then
@@ -189,10 +193,7 @@ if gh release view "$tag" >/dev/null 2>&1; then
   gh release upload "$tag" "$artifact_path" --clobber
 else
   echo "Creating release ${tag}..."
-  gh release create "$tag" "$artifact_path" \
-    --title "$release_name" \
-    --notes "$release_notes" \
-    "${release_flags[@]}"
+  "${release_create_args[@]}"
 fi
 
 echo "Uploaded ${artifact_path} to GitHub Release ${tag}."
