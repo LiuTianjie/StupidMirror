@@ -398,7 +398,7 @@ private final class DragAreaView: NSView {
     }
 }
 
-private enum WindowResizeCorner {
+enum WindowResizeCorner {
     case topLeft, topRight, bottomLeft, bottomRight
 
     var cursor: NSCursor {
@@ -422,6 +422,40 @@ private enum WindowResizeCorner {
         case .bottomRight:
             CGVector(dx: 1, dy: -verticalPerWidth)
         }
+    }
+
+    func containsResizePoint(_ point: CGPoint, in bounds: CGRect) -> Bool {
+        guard bounds.contains(point) else { return false }
+        return activeRects(in: bounds).contains { $0.contains(point) }
+    }
+
+    func activeRects(in bounds: CGRect) -> [CGRect] {
+        guard bounds.width > 0, bounds.height > 0 else { return [] }
+        let thickness = min(MirrorWindowChrome.resizeEdgeHitThickness, bounds.width, bounds.height)
+        let minX = bounds.minX
+        let maxX = bounds.maxX
+        let minY = bounds.minY
+        let maxY = bounds.maxY
+
+        let horizontalRect: CGRect
+        let verticalRect: CGRect
+
+        switch self {
+        case .topLeft:
+            horizontalRect = CGRect(x: minX, y: maxY - thickness, width: bounds.width, height: thickness)
+            verticalRect = CGRect(x: minX, y: minY, width: thickness, height: bounds.height)
+        case .topRight:
+            horizontalRect = CGRect(x: minX, y: maxY - thickness, width: bounds.width, height: thickness)
+            verticalRect = CGRect(x: maxX - thickness, y: minY, width: thickness, height: bounds.height)
+        case .bottomLeft:
+            horizontalRect = CGRect(x: minX, y: minY, width: bounds.width, height: thickness)
+            verticalRect = CGRect(x: minX, y: minY, width: thickness, height: bounds.height)
+        case .bottomRight:
+            horizontalRect = CGRect(x: minX, y: minY, width: bounds.width, height: thickness)
+            verticalRect = CGRect(x: maxX - thickness, y: minY, width: thickness, height: bounds.height)
+        }
+
+        return [horizontalRect, verticalRect]
     }
 }
 
@@ -459,6 +493,7 @@ private final class ResizeHandleView: NSView {
     private var startFrame: NSRect?
     private var startMouseLocation: NSPoint?
     private var didPushCursor = false
+    private var resizeTrackingAreas: [NSTrackingArea] = []
 
     init(corner: WindowResizeCorner, aspectRatio: Double, onHover: @escaping () -> Void, onExit: @escaping () -> Void) {
         self.corner = corner
@@ -466,17 +501,41 @@ private final class ResizeHandleView: NSView {
         self.onHover = onHover
         self.onExit = onExit
         super.init(frame: .zero)
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
-            owner: self,
-            userInfo: nil
-        ))
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard corner.containsResizePoint(point, in: bounds) else { return nil }
+        return super.hitTest(point)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in resizeTrackingAreas {
+            removeTrackingArea(area)
+        }
+        resizeTrackingAreas = corner.activeRects(in: bounds).map { rect in
+            NSTrackingArea(
+                rect: rect,
+                options: [.activeAlways, .mouseEnteredAndExited],
+                owner: self,
+                userInfo: nil
+            )
+        }
+        for area in resizeTrackingAreas {
+            addTrackingArea(area)
+        }
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for rect in corner.activeRects(in: bounds) {
+            addCursorRect(rect, cursor: corner.cursor)
+        }
     }
 
     override func mouseEntered(with event: NSEvent) {
