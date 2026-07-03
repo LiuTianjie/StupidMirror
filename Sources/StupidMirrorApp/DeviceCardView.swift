@@ -160,8 +160,8 @@ struct DeviceDetailView: View {
             onTap: { point in
                 store.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
             },
-            onSwipe: { start, end in
-                store.swipeControl(for: session, from: start, to: end)
+            onSwipe: { start, end, durationMS in
+                store.swipeControl(for: session, from: start, to: end, durationMS: durationMS)
             }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)

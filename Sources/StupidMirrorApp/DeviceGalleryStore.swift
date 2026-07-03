@@ -362,9 +362,8 @@ final class DeviceGalleryStore: ObservableObject {
         session.controlSession.tapNormalized(x: normalizedX, y: normalizedY, serverURL: appiumServerURL)
     }
 
-    func swipeControl(for session: DeviceSession, from start: CGPoint, to end: CGPoint) {
-        print("StupidMirror control swipe \(session.device.name): \(start) -> \(end)")
-        session.controlSession.swipeNormalized(from: start, to: end, serverURL: appiumServerURL)
+    func swipeControl(for session: DeviceSession, from start: CGPoint, to end: CGPoint, durationMS: Int) {
+        session.controlSession.swipeNormalized(from: start, to: end, durationMS: durationMS, serverURL: appiumServerURL)
     }
 
     func typeControlText(_ text: String, for session: DeviceSession) {

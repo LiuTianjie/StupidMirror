@@ -3,14 +3,16 @@ import Foundation
 
 enum ControlGestureCommand: Equatable {
     case tap(CGPoint)
-    case swipe(from: CGPoint, to: CGPoint)
+    case swipe(from: CGPoint, to: CGPoint, durationMS: Int)
 }
 
 struct ControlGestureReducer {
     var tapDistance: CGFloat = 8
-    var dragEmitDistance: CGFloat = 28
+    var dragEmitDistance: CGFloat = 22
     var dragFinishDistance: CGFloat = 3
-    var scrollMinimumDistance: CGFloat = 24
+    var dragDurationMS = 16
+    var scrollDurationMS = 45
+    var scrollMinimumDistance: CGFloat = 14
     var preciseScrollScale: CGFloat = 3.2
     var discreteScrollScale: CGFloat = 1.8
     var maxScrollDeltaX: CGFloat = 220
@@ -44,7 +46,7 @@ struct ControlGestureReducer {
 
         lastMouseDragLocation = location
         hasEmittedMouseDrag = true
-        return .swipe(from: last, to: location)
+        return .swipe(from: last, to: location, durationMS: dragDurationMS)
     }
 
     mutating func endMouseDrag(at location: CGPoint) -> ControlGestureCommand? {
@@ -60,7 +62,7 @@ struct ControlGestureReducer {
             return .tap(location)
         }
         guard distance(from: last, to: location) >= dragFinishDistance else { return nil }
-        return .swipe(from: didEmit ? last : start, to: location)
+        return .swipe(from: didEmit ? last : start, to: location, durationMS: dragDurationMS)
     }
 
     mutating func beginScroll(at location: CGPoint) {
@@ -68,29 +70,40 @@ struct ControlGestureReducer {
         accumulatedScroll = .zero
     }
 
-    mutating func appendScroll(delta: CGSize) -> ControlGestureCommand? {
+    mutating func appendScroll(delta: CGSize, precise: Bool) -> ControlGestureCommand? {
         accumulatedScroll.width += delta.width
         accumulatedScroll.height += delta.height
-        return nil
+        return makeScrollCommand(precise: precise, clearsScroll: false)
     }
 
     mutating func flushScroll(precise: Bool) -> ControlGestureCommand? {
-        guard let center = scrollLocation else { return nil }
-        defer {
-            scrollLocation = nil
-            accumulatedScroll = .zero
-        }
+        makeScrollCommand(precise: precise, clearsScroll: true)
+    }
 
+    private mutating func makeScrollCommand(precise: Bool, clearsScroll: Bool) -> ControlGestureCommand? {
+        guard let center = scrollLocation else { return nil }
         let distance = hypot(accumulatedScroll.width, accumulatedScroll.height)
-        guard distance >= scrollMinimumDistance else { return nil }
+        guard distance >= scrollMinimumDistance else {
+            if clearsScroll {
+                scrollLocation = nil
+                accumulatedScroll = .zero
+            }
+            return nil
+        }
 
         let scale = precise ? preciseScrollScale : discreteScrollScale
         let cappedDX = min(max(accumulatedScroll.width * scale, -maxScrollDeltaX), maxScrollDeltaX)
         let cappedDY = min(max(accumulatedScroll.height * scale, -maxScrollDeltaY), maxScrollDeltaY)
 
+        accumulatedScroll = .zero
+        if clearsScroll {
+            scrollLocation = nil
+        }
+
         return .swipe(
             from: center,
-            to: CGPoint(x: center.x - cappedDX, y: center.y + cappedDY)
+            to: CGPoint(x: center.x - cappedDX, y: center.y + cappedDY),
+            durationMS: scrollDurationMS
         )
     }
 

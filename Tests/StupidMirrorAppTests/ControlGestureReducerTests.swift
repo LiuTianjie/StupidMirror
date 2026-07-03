@@ -11,16 +11,16 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 20, y: 25)))
         XCTAssertEqual(
             reducer.updateMouseDrag(to: CGPoint(x: 50, y: 45)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 50, y: 45))
+            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 50, y: 45), durationMS: 16)
         )
         XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 66, y: 54)))
         XCTAssertEqual(
             reducer.updateMouseDrag(to: CGPoint(x: 90, y: 70)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 50, y: 45), to: CGPoint(x: 90, y: 70))
+            ControlGestureCommand.swipe(from: CGPoint(x: 50, y: 45), to: CGPoint(x: 90, y: 70), durationMS: 16)
         )
         XCTAssertEqual(
             reducer.endMouseDrag(at: CGPoint(x: 112, y: 83)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 90, y: 70), to: CGPoint(x: 112, y: 83))
+            ControlGestureCommand.swipe(from: CGPoint(x: 90, y: 70), to: CGPoint(x: 112, y: 83), durationMS: 16)
         )
     }
 
@@ -31,7 +31,7 @@ final class ControlGestureReducerTests: XCTestCase {
 
         XCTAssertEqual(
             reducer.updateMouseDrag(to: CGPoint(x: 50, y: 45)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 50, y: 45))
+            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 50, y: 45), durationMS: 16)
         )
         XCTAssertNil(reducer.endMouseDrag(at: CGPoint(x: 51, y: 46)))
     }
@@ -51,13 +51,12 @@ final class ControlGestureReducerTests: XCTestCase {
         var reducer = ControlGestureReducer()
 
         reducer.beginScroll(at: CGPoint(x: 100, y: 200))
-        XCTAssertNil(reducer.appendScroll(delta: CGSize(width: 0, height: 14)))
-        XCTAssertNil(reducer.appendScroll(delta: CGSize(width: 0, height: 16)))
-
         XCTAssertEqual(
-            reducer.flushScroll(precise: true),
-            .swipe(from: CGPoint(x: 100, y: 200), to: CGPoint(x: 100, y: 296))
+            reducer.appendScroll(delta: CGSize(width: 0, height: 14), precise: true),
+            .swipe(from: CGPoint(x: 100, y: 200), to: CGPoint(x: 100, y: 244.8), durationMS: 45)
         )
+        XCTAssertNil(reducer.appendScroll(delta: CGSize(width: 0, height: 8), precise: true))
+        XCTAssertNil(reducer.flushScroll(precise: true))
         XCTAssertNil(reducer.flushScroll(precise: true))
     }
 
@@ -98,7 +97,7 @@ final class ControlGestureReducerTests: XCTestCase {
         let payload = AppiumPointerAction.dragPayload(
             from: CGPoint(x: 10, y: 20),
             to: CGPoint(x: 80, y: 120),
-            durationMS: 80
+            durationMS: 16
         )
         let sequences = try XCTUnwrap(payload["actions"] as? [[String: Any]])
         let pointer = try XCTUnwrap(sequences.first)
@@ -116,7 +115,7 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertEqual(actions[0]["y"] as? Int, 20)
         XCTAssertEqual(actions[2]["x"] as? Int, 80)
         XCTAssertEqual(actions[2]["y"] as? Int, 120)
-        XCTAssertEqual(actions[2]["duration"] as? Int, 80)
+        XCTAssertEqual(actions[2]["duration"] as? Int, 16)
         XCTAssertLessThan(actions[2]["duration"] as? Int ?? 500, 500)
     }
 }

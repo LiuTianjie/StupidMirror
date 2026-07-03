@@ -107,21 +107,43 @@ struct StandaloneMirrorWindowView: View {
     private var resizeHandles: some View {
         let aspectRatio = mirrorSession.frameAspectRatio ?? store.displayAspectRatio(for: session)
 
-        return VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                WindowResizeHandle(corner: .topLeft, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
-                    .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+        return ZStack {
+            VStack(spacing: 0) {
+                WindowResizeHandle(region: .top, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: MirrorWindowChrome.resizeEdgeHitThickness)
                 Spacer()
-                WindowResizeHandle(corner: .topRight, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
-                    .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                WindowResizeHandle(region: .bottom, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: MirrorWindowChrome.resizeEdgeHitThickness)
             }
-            Spacer()
+
             HStack(spacing: 0) {
-                WindowResizeHandle(corner: .bottomLeft, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
-                    .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                WindowResizeHandle(region: .left, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                    .frame(maxHeight: .infinity)
+                    .frame(width: MirrorWindowChrome.resizeEdgeHitThickness)
                 Spacer()
-                WindowResizeHandle(corner: .bottomRight, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
-                    .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                WindowResizeHandle(region: .right, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                    .frame(maxHeight: .infinity)
+                    .frame(width: MirrorWindowChrome.resizeEdgeHitThickness)
+            }
+
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    WindowResizeHandle(region: .topLeft, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                        .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                    Spacer()
+                    WindowResizeHandle(region: .topRight, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                        .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                }
+                Spacer()
+                HStack(spacing: 0) {
+                    WindowResizeHandle(region: .bottomLeft, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                        .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                    Spacer()
+                    WindowResizeHandle(region: .bottomRight, aspectRatio: aspectRatio, onHover: showChrome, onExit: scheduleHideChrome)
+                        .frame(width: MirrorWindowChrome.cornerHitSize, height: MirrorWindowChrome.cornerHitSize)
+                }
             }
         }
         .allowsHitTesting(true)
@@ -201,8 +223,8 @@ struct StandaloneMirrorWindowView: View {
             onTap: { point in
                 store.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
             },
-            onSwipe: { start, end in
-                store.swipeControl(for: session, from: start, to: end)
+            onSwipe: { start, end, durationMS in
+                store.swipeControl(for: session, from: start, to: end, durationMS: durationMS)
             }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -399,7 +421,35 @@ private final class DragAreaView: NSView {
 }
 
 enum WindowResizeCorner {
-    case topLeft, topRight, bottomLeft, bottomRight
+    case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
+
+    var isTop: Bool {
+        switch self {
+        case .topLeft, .top, .topRight: true
+        default: false
+        }
+    }
+
+    var isBottom: Bool {
+        switch self {
+        case .bottomLeft, .bottom, .bottomRight: true
+        default: false
+        }
+    }
+
+    var isLeft: Bool {
+        switch self {
+        case .topLeft, .left, .bottomLeft: true
+        default: false
+        }
+    }
+
+    var isRight: Bool {
+        switch self {
+        case .topRight, .right, .bottomRight: true
+        default: false
+        }
+    }
 
     var cursor: NSCursor {
         switch self {
@@ -407,6 +457,10 @@ enum WindowResizeCorner {
             NSCursor.frameResize(position: .bottomRight, directions: .all)
         case .topRight, .bottomLeft:
             NSCursor.frameResize(position: .topRight, directions: .all)
+        case .left, .right:
+            NSCursor.resizeLeftRight
+        case .top, .bottom:
+            NSCursor.resizeUpDown
         }
     }
 
@@ -421,6 +475,14 @@ enum WindowResizeCorner {
             CGVector(dx: -1, dy: -verticalPerWidth)
         case .bottomRight:
             CGVector(dx: 1, dy: -verticalPerWidth)
+        case .left:
+            CGVector(dx: -1, dy: 0)
+        case .right:
+            CGVector(dx: 1, dy: 0)
+        case .top:
+            CGVector(dx: 0, dy: verticalPerWidth)
+        case .bottom:
+            CGVector(dx: 0, dy: -verticalPerWidth)
         }
     }
 
@@ -437,25 +499,37 @@ enum WindowResizeCorner {
         let minY = bounds.minY
         let maxY = bounds.maxY
 
-        let horizontalRect: CGRect
-        let verticalRect: CGRect
+        let horizontalRect: CGRect?
+        let verticalRect: CGRect?
 
         switch self {
         case .topLeft:
             horizontalRect = CGRect(x: minX, y: maxY - thickness, width: bounds.width, height: thickness)
             verticalRect = CGRect(x: minX, y: minY, width: thickness, height: bounds.height)
+        case .top:
+            horizontalRect = CGRect(x: minX, y: maxY - thickness, width: bounds.width, height: thickness)
+            verticalRect = nil
         case .topRight:
             horizontalRect = CGRect(x: minX, y: maxY - thickness, width: bounds.width, height: thickness)
+            verticalRect = CGRect(x: maxX - thickness, y: minY, width: thickness, height: bounds.height)
+        case .right:
+            horizontalRect = nil
             verticalRect = CGRect(x: maxX - thickness, y: minY, width: thickness, height: bounds.height)
         case .bottomLeft:
             horizontalRect = CGRect(x: minX, y: minY, width: bounds.width, height: thickness)
             verticalRect = CGRect(x: minX, y: minY, width: thickness, height: bounds.height)
+        case .bottom:
+            horizontalRect = CGRect(x: minX, y: minY, width: bounds.width, height: thickness)
+            verticalRect = nil
         case .bottomRight:
             horizontalRect = CGRect(x: minX, y: minY, width: bounds.width, height: thickness)
             verticalRect = CGRect(x: maxX - thickness, y: minY, width: thickness, height: bounds.height)
+        case .left:
+            horizontalRect = nil
+            verticalRect = CGRect(x: minX, y: minY, width: thickness, height: bounds.height)
         }
 
-        return [horizontalRect, verticalRect]
+        return [horizontalRect, verticalRect].compactMap { $0 }
     }
 }
 
@@ -468,17 +542,17 @@ private extension CGVector {
 }
 
 private struct WindowResizeHandle: NSViewRepresentable {
-    let corner: WindowResizeCorner
+    let region: WindowResizeCorner
     let aspectRatio: Double
     let onHover: () -> Void
     let onExit: () -> Void
 
     func makeNSView(context: Context) -> ResizeHandleView {
-        ResizeHandleView(corner: corner, aspectRatio: aspectRatio, onHover: onHover, onExit: onExit)
+        ResizeHandleView(region: region, aspectRatio: aspectRatio, onHover: onHover, onExit: onExit)
     }
 
     func updateNSView(_ nsView: ResizeHandleView, context: Context) {
-        nsView.corner = corner
+        nsView.region = region
         nsView.aspectRatio = aspectRatio
         nsView.onHover = onHover
         nsView.onExit = onExit
@@ -486,7 +560,7 @@ private struct WindowResizeHandle: NSViewRepresentable {
 }
 
 private final class ResizeHandleView: NSView {
-    var corner: WindowResizeCorner
+    var region: WindowResizeCorner
     var aspectRatio: Double
     var onHover: () -> Void
     var onExit: () -> Void
@@ -495,8 +569,8 @@ private final class ResizeHandleView: NSView {
     private var didPushCursor = false
     private var resizeTrackingAreas: [NSTrackingArea] = []
 
-    init(corner: WindowResizeCorner, aspectRatio: Double, onHover: @escaping () -> Void, onExit: @escaping () -> Void) {
-        self.corner = corner
+    init(region: WindowResizeCorner, aspectRatio: Double, onHover: @escaping () -> Void, onExit: @escaping () -> Void) {
+        self.region = region
         self.aspectRatio = aspectRatio
         self.onHover = onHover
         self.onExit = onExit
@@ -509,7 +583,7 @@ private final class ResizeHandleView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard corner.containsResizePoint(point, in: bounds) else { return nil }
+        guard region.containsResizePoint(point, in: bounds) else { return nil }
         return super.hitTest(point)
     }
 
@@ -518,7 +592,7 @@ private final class ResizeHandleView: NSView {
         for area in resizeTrackingAreas {
             removeTrackingArea(area)
         }
-        resizeTrackingAreas = corner.activeRects(in: bounds).map { rect in
+        resizeTrackingAreas = region.activeRects(in: bounds).map { rect in
             NSTrackingArea(
                 rect: rect,
                 options: [.activeAlways, .mouseEnteredAndExited],
@@ -533,8 +607,8 @@ private final class ResizeHandleView: NSView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
-        for rect in corner.activeRects(in: bounds) {
-            addCursorRect(rect, cursor: corner.cursor)
+        for rect in region.activeRects(in: bounds) {
+            addCursorRect(rect, cursor: region.cursor)
         }
     }
 
@@ -568,31 +642,51 @@ private final class ResizeHandleView: NSView {
         }
 
         let minPhoneHeight = max((window.contentMinSize.height - MirrorWindowChrome.height), 180)
-        let resizeVector = corner.resizeVector(aspectRatio: aspectRatio)
+        let resizeVector = region.resizeVector(aspectRatio: aspectRatio)
         let mouseDelta = CGVector(
             dx: NSEvent.mouseLocation.x - startMouseLocation.x,
             dy: NSEvent.mouseLocation.y - startMouseLocation.y
         )
-        let projectedWidthDelta = mouseDelta.projectedDistance(along: resizeVector)
-        var width = startFrame.width + projectedWidthDelta
+        let projectedDelta = mouseDelta.projectedDistance(along: resizeVector)
+        let proposedWidth: CGFloat
+        switch region {
+        case .top, .bottom:
+            let startPhoneHeight = startFrame.height - MirrorWindowChrome.height
+            proposedWidth = (startPhoneHeight + projectedDelta) * CGFloat(aspectRatio)
+        default:
+            proposedWidth = startFrame.width + projectedDelta
+        }
+        var width = proposedWidth
         width = max(width, max(window.contentMinSize.width, minPhoneHeight * aspectRatio))
         let phoneHeight = width / CGFloat(aspectRatio)
         let height = phoneHeight + MirrorWindowChrome.height
 
         var frame = startFrame
-        switch corner {
+        switch region {
         case .topLeft:
             frame.origin.x = startFrame.maxX - width
+            frame.origin.y = startFrame.minY
+        case .top:
+            frame.origin.x = startFrame.midX - width / 2
             frame.origin.y = startFrame.minY
         case .topRight:
             frame.origin.x = startFrame.minX
             frame.origin.y = startFrame.minY
+        case .right:
+            frame.origin.x = startFrame.minX
+            frame.origin.y = startFrame.midY - height / 2
         case .bottomRight:
             frame.origin.x = startFrame.minX
+            frame.origin.y = startFrame.maxY - height
+        case .bottom:
+            frame.origin.x = startFrame.midX - width / 2
             frame.origin.y = startFrame.maxY - height
         case .bottomLeft:
             frame.origin.x = startFrame.maxX - width
             frame.origin.y = startFrame.maxY - height
+        case .left:
+            frame.origin.x = startFrame.maxX - width
+            frame.origin.y = startFrame.midY - height / 2
         }
         frame.size = CGSize(width: width, height: height)
         window.setFrame(frame, display: true, animate: false)
@@ -607,7 +701,7 @@ private final class ResizeHandleView: NSView {
 
     private func pushCursor() {
         guard !didPushCursor else { return }
-        corner.cursor.push()
+        region.cursor.push()
         didPushCursor = true
     }
 

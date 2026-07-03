@@ -5,7 +5,7 @@ struct ControlGestureOverlay: NSViewRepresentable {
     var isEnabled: Bool
     var aspectRatio: Double
     var onTap: (CGPoint) -> Void
-    var onSwipe: (CGPoint, CGPoint) -> Void
+    var onSwipe: (CGPoint, CGPoint, Int) -> Void
 
     func makeNSView(context: Context) -> ControlGestureNSView {
         let view = ControlGestureNSView()
@@ -31,7 +31,7 @@ final class ControlGestureNSView: NSView {
     var isEnabled = false
     var aspectRatio = 1.0
     var onTap: (CGPoint) -> Void = { _ in }
-    var onSwipe: (CGPoint, CGPoint) -> Void = { _, _ in }
+    var onSwipe: (CGPoint, CGPoint, Int) -> Void = { _, _, _ in }
 
     private var gestureReducer = ControlGestureReducer()
     private var scrollFlushWorkItem: DispatchWorkItem?
@@ -95,7 +95,12 @@ final class ControlGestureNSView: NSView {
             gestureReducer.beginScroll(at: location)
         }
 
-        _ = gestureReducer.appendScroll(delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY))
+        if let command = gestureReducer.appendScroll(
+            delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY),
+            precise: event.hasPreciseScrollingDeltas
+        ) {
+            sendCommand(command)
+        }
 
         let hasExplicitPhase = event.phase != [] || event.momentumPhase != []
         let ended = event.phase == .ended
@@ -122,7 +127,7 @@ final class ControlGestureNSView: NSView {
             self?.flushScroll(precise: precise)
         }
         scrollFlushWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.035, execute: workItem)
     }
 
     private func flushScroll(precise: Bool) {
@@ -142,12 +147,12 @@ final class ControlGestureNSView: NSView {
         case let .tap(point):
             guard let normalized = normalizedPoint(point) else { return }
             onTap(normalized)
-        case let .swipe(start, end):
+        case let .swipe(start, end, durationMS):
             guard let startPoint = normalizedPoint(start),
                   let endPoint = normalizedPoint(end) else {
                 return
             }
-            onSwipe(startPoint, endPoint)
+            onSwipe(startPoint, endPoint, durationMS)
         }
     }
 

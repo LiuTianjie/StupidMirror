@@ -190,11 +190,11 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         enqueueAction(.tap(point), sessionID: sessionID, serverURL: serverURL)
     }
 
-    func swipeNormalized(from start: CGPoint, to end: CGPoint, serverURL: String) {
+    func swipeNormalized(from start: CGPoint, to end: CGPoint, durationMS: Int, serverURL: String) {
         guard let sessionID, let screenSize else { return }
         let startPoint = CGPoint(x: start.x * screenSize.width, y: start.y * screenSize.height)
         let endPoint = CGPoint(x: end.x * screenSize.width, y: end.y * screenSize.height)
-        enqueueAction(.swipe(startPoint, endPoint), sessionID: sessionID, serverURL: serverURL)
+        enqueueAction(.swipe(startPoint, endPoint, durationMS: durationMS), sessionID: sessionID, serverURL: serverURL)
     }
 
     func typeText(_ text: String, serverURL: String) {
@@ -219,13 +219,16 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     }
 
     private func enqueueAction(_ action: ControlAction, sessionID: String, serverURL: String) {
-        if case .swipe = action, pendingActions.last?.isSwipe == true {
+        if action.isSwipe {
+            pendingActions.removeAll { $0.isSwipe }
+            pendingActions.append(action)
+        } else if case .tap = action, pendingActions.last?.isTap == true {
             pendingActions[pendingActions.count - 1] = action
         } else {
             pendingActions.append(action)
         }
-        if pendingActions.count > 6 {
-            pendingActions.removeFirst(pendingActions.count - 6)
+        if pendingActions.count > 4 {
+            pendingActions.removeFirst(pendingActions.count - 4)
         }
         pumpActions(sessionID: sessionID, serverURL: serverURL)
     }
@@ -250,11 +253,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                         await MainActor.run {
                             self.statusMessage = "Tap \(Int(point.x)), \(Int(point.y))"
                         }
-                    case let .swipe(start, end):
-                        try await client.swipe(sessionID: sessionID, from: start, to: end, durationMS: 80)
-                        await MainActor.run {
-                            self.statusMessage = "Swipe \(Int(start.x)), \(Int(start.y)) -> \(Int(end.x)), \(Int(end.y))"
-                        }
+                    case let .swipe(start, end, durationMS):
+                        try await client.swipe(sessionID: sessionID, from: start, to: end, durationMS: durationMS)
                     case let .typeText(text):
                         try await client.typeText(sessionID: sessionID, text: text)
                         await MainActor.run {
@@ -291,13 +291,21 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
 private enum ControlAction {
     case tap(CGPoint)
-    case swipe(CGPoint, CGPoint)
+    case swipe(CGPoint, CGPoint, durationMS: Int)
     case typeText(String)
     case pressButton(String)
     case appSwitcher
 
     var isSwipe: Bool {
         if case .swipe = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    var isTap: Bool {
+        if case .tap = self {
             true
         } else {
             false
@@ -471,7 +479,7 @@ struct AppiumHTTPClient {
 
 enum AppiumPointerAction {
     static func dragPayload(from start: CGPoint, to end: CGPoint, durationMS: Int) -> [String: Any] {
-        let duration = min(max(durationMS, 16), 300)
+        let duration = min(max(durationMS, 0), 300)
         return [
             "actions": [
                 [
