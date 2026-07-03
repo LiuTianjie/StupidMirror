@@ -65,6 +65,35 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(AppiumControlConfiguration().newCommandTimeoutSeconds, 300)
     }
 
+    func testControlSessionPrefersInstalledWDAByDefault() {
+        XCTAssertTrue(AppiumControlConfiguration().preferInstalledWDA)
+    }
+
+    func testInstalledWDASessionUsesLaunchOnlyCapability() {
+        var configuration = AppiumControlConfiguration()
+        configuration.usePreinstalledWDA = true
+        configuration.usePrebuiltWDA = true
+        configuration.useNewWDA = true
+        configuration.wdaBundleID = "com.gaojiua.WebDriverAgentRunner"
+
+        let capabilities = AppiumSessionCapabilities.make(
+            udid: "test-udid",
+            bundleID: "com.apple.Preferences",
+            configuration: configuration
+        )
+
+        XCTAssertEqual(capabilities["appium:usePreinstalledWDA"] as? Bool, true)
+        XCTAssertNil(capabilities["appium:usePrebuiltWDA"])
+        XCTAssertEqual(capabilities["appium:useNewWDA"] as? Bool, true)
+        XCTAssertEqual(capabilities["appium:updatedWDABundleId"] as? String, "com.gaojiua.WebDriverAgentRunner")
+    }
+
+    func testInstalledWDAFallbackDoesNotHideActionableUserErrors() {
+        XCTAssertTrue(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"WebDriverAgentRunner is not installed"}}"#)))
+        XCTAssertFalse(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"Unlock iPhone to Continue"}}"#)))
+        XCTAssertFalse(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"Developer Mode is disabled"}}"#)))
+    }
+
     func testAppiumDragUsesShortW3CPointerActionInsteadOfHalfSecondHold() throws {
         let payload = AppiumPointerAction.dragPayload(
             from: CGPoint(x: 10, y: 20),

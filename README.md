@@ -115,10 +115,10 @@ If permission is denied:
 ## Optional iPhone Control
 
 Packaged Mac builds include a local Appium/XCUITest runtime at
-`StupidMirror.app/Contents/Resources/Appium`. Click **Install / Connect** in
-StupidMirror; the app checks the local service, starts the bundled runtime if
-needed, then asks XCUITest to install or start WebDriverAgent on the connected
-iPhone.
+`StupidMirror.app/Contents/Resources/Appium`. Click **Connect** in StupidMirror;
+the app checks the local service, starts the bundled runtime if needed, tries to
+reuse an already-installed WebDriverAgent first, and installs it only when reuse
+is not available.
 
 Control is explicit: opening a mirror window never installs the control agent by
 itself. WebDriverAgentRunner still needs valid signing before real-device

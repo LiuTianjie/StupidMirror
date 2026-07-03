@@ -4,6 +4,8 @@ struct AppiumControlConfiguration {
     var xcodeOrgID: String = ""
     var xcodeSigningID: String = "Apple Development"
     var wdaBundleID: String = ""
+    var preferInstalledWDA: Bool = true
+    var usePreinstalledWDA: Bool = false
     var usePrebuiltWDA: Bool = false
     var useNewWDA: Bool = false
     var derivedDataPath: String = ""
@@ -66,18 +68,12 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 }
                 try await client.status()
                 try Task.checkCancellation()
-                await MainActor.run {
-                    self.statusMessage = configuration.usePrebuiltWDA
-                        ? "Starting installed WebDriverAgent control agent..."
-                        : "Installing and starting WebDriverAgent control agent..."
-                }
-                let sessionID = try await withTimeout(seconds: configuration.sessionStartupTimeoutSeconds) {
-                    try await client.createSession(
-                        udid: udid,
-                        bundleID: bundleID,
-                        configuration: configuration
-                    )
-                }
+                let sessionID = try await self.createReusableSession(
+                    client: client,
+                    udid: udid,
+                    bundleID: bundleID,
+                    configuration: configuration
+                )
                 try Task.checkCancellation()
                 await MainActor.run {
                     self.statusMessage = "Reading device screen size..."
@@ -99,6 +95,69 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 self.statusMessage = message
             }
             self.connectionTask = nil
+        }
+    }
+
+    private func createReusableSession(
+        client: AppiumHTTPClient,
+        udid: String,
+        bundleID: String,
+        configuration: AppiumControlConfiguration
+    ) async throws -> String {
+        if configuration.preferInstalledWDA {
+            do {
+                var installedConfiguration = configuration
+                installedConfiguration.usePreinstalledWDA = true
+                installedConfiguration.usePrebuiltWDA = false
+                installedConfiguration.useNewWDA = false
+                await MainActor.run {
+                    self.statusMessage = "Reusing installed WebDriverAgent control agent..."
+                }
+                return try await startSession(
+                    client: client,
+                    udid: udid,
+                    bundleID: bundleID,
+                    configuration: installedConfiguration
+                )
+            } catch {
+                guard AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: error) else {
+                    throw error
+                }
+                try Task.checkCancellation()
+                await MainActor.run {
+                    self.statusMessage = "Installed WebDriverAgent is not reusable; installing control agent..."
+                }
+            }
+        } else {
+            await MainActor.run {
+                self.statusMessage = configuration.usePrebuiltWDA
+                    ? "Starting installed WebDriverAgent control agent..."
+                    : "Installing and starting WebDriverAgent control agent..."
+            }
+        }
+
+        var installConfiguration = configuration
+        installConfiguration.usePreinstalledWDA = false
+        return try await startSession(
+            client: client,
+            udid: udid,
+            bundleID: bundleID,
+            configuration: installConfiguration
+        )
+    }
+
+    private func startSession(
+        client: AppiumHTTPClient,
+        udid: String,
+        bundleID: String,
+        configuration: AppiumControlConfiguration
+    ) async throws -> String {
+        try await withTimeout(seconds: configuration.sessionStartupTimeoutSeconds) {
+            try await client.createSession(
+                udid: udid,
+                bundleID: bundleID,
+                configuration: configuration
+            )
         }
     }
 
@@ -263,38 +322,11 @@ struct AppiumHTTPClient {
         bundleID: String,
         configuration: AppiumControlConfiguration = AppiumControlConfiguration()
     ) async throws -> String {
-        var capabilities: [String: Any] = [
-            "platformName": "iOS",
-            "appium:automationName": "XCUITest",
-            "appium:udid": udid,
-            "appium:bundleId": bundleID,
-            "appium:noReset": true,
-            "appium:mjpegServerPort": configuration.mjpegServerPort,
-            "appium:usePrebuiltWDA": configuration.usePrebuiltWDA,
-            "appium:useNewWDA": configuration.useNewWDA,
-            "appium:wdaStartupRetries": configuration.wdaStartupRetries,
-            "appium:wdaStartupRetryInterval": configuration.wdaStartupRetryIntervalMS,
-            "appium:wdaLaunchTimeout": configuration.wdaLaunchTimeoutMS,
-            "appium:wdaConnectionTimeout": configuration.wdaConnectionTimeoutMS,
-            "appium:newCommandTimeout": configuration.newCommandTimeoutSeconds
-        ]
-        let derivedDataPath = configuration.derivedDataPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !derivedDataPath.isEmpty {
-            capabilities["appium:derivedDataPath"] = derivedDataPath
-        }
-        let xcodeOrgID = configuration.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !xcodeOrgID.isEmpty {
-            capabilities["appium:xcodeOrgId"] = xcodeOrgID
-        }
-        let xcodeSigningID = configuration.xcodeSigningID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !xcodeSigningID.isEmpty {
-            capabilities["appium:xcodeSigningId"] = xcodeSigningID
-        }
-        let wdaBundleID = configuration.wdaBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !wdaBundleID.isEmpty {
-            capabilities["appium:updatedWDABundleId"] = wdaBundleID
-        }
-
+        let capabilities = AppiumSessionCapabilities.make(
+            udid: udid,
+            bundleID: bundleID,
+            configuration: configuration
+        )
         let payload: [String: Any] = [
             "capabilities": [
                 "alwaysMatch": capabilities,
@@ -482,6 +514,51 @@ enum AppiumPointerAction {
     }
 }
 
+enum AppiumSessionCapabilities {
+    static func make(
+        udid: String,
+        bundleID: String,
+        configuration: AppiumControlConfiguration = AppiumControlConfiguration()
+    ) -> [String: Any] {
+        var capabilities: [String: Any] = [
+            "platformName": "iOS",
+            "appium:automationName": "XCUITest",
+            "appium:udid": udid,
+            "appium:bundleId": bundleID,
+            "appium:noReset": true,
+            "appium:mjpegServerPort": configuration.mjpegServerPort,
+            "appium:useNewWDA": configuration.useNewWDA,
+            "appium:wdaStartupRetries": configuration.wdaStartupRetries,
+            "appium:wdaStartupRetryInterval": configuration.wdaStartupRetryIntervalMS,
+            "appium:wdaLaunchTimeout": configuration.wdaLaunchTimeoutMS,
+            "appium:wdaConnectionTimeout": configuration.wdaConnectionTimeoutMS,
+            "appium:newCommandTimeout": configuration.newCommandTimeoutSeconds
+        ]
+        if configuration.usePreinstalledWDA {
+            capabilities["appium:usePreinstalledWDA"] = true
+        } else {
+            capabilities["appium:usePrebuiltWDA"] = configuration.usePrebuiltWDA
+        }
+        let derivedDataPath = configuration.derivedDataPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !derivedDataPath.isEmpty {
+            capabilities["appium:derivedDataPath"] = derivedDataPath
+        }
+        let xcodeOrgID = configuration.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !xcodeOrgID.isEmpty {
+            capabilities["appium:xcodeOrgId"] = xcodeOrgID
+        }
+        let xcodeSigningID = configuration.xcodeSigningID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !xcodeSigningID.isEmpty {
+            capabilities["appium:xcodeSigningId"] = xcodeSigningID
+        }
+        let wdaBundleID = configuration.wdaBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !wdaBundleID.isEmpty {
+            capabilities["appium:updatedWDABundleId"] = wdaBundleID
+        }
+        return capabilities
+    }
+}
+
 private func withTimeout<T: Sendable>(
     seconds: TimeInterval,
     operation: @escaping @Sendable () async throws -> T
@@ -534,6 +611,32 @@ enum AppiumError: LocalizedError {
             return "control.error.wdaNotReady"
         }
         return error.localizedDescription
+    }
+
+    static func shouldFallbackToWDAInstall(afterInstalledWDAError error: Error) -> Bool {
+        let haystack = [String(describing: error), error.localizedDescription]
+            .joined(separator: " ")
+            .lowercased()
+        if haystack.contains("unlock")
+            || haystack.contains("developer mode")
+            || haystack.contains("ui automation")
+            || haystack.contains("not trusted")
+            || haystack.contains("trust this computer")
+            || haystack.contains("pairing")
+            || haystack.contains("provisioning profile")
+            || haystack.contains("code signing") {
+            return false
+        }
+        return haystack.contains("usepreinstalledwda")
+            || haystack.contains("preinstalled")
+            || haystack.contains("not installed")
+            || haystack.contains("is not installed")
+            || haystack.contains("does not exist")
+            || haystack.contains("not found")
+            || haystack.contains("not supported")
+            || haystack.contains("could not launch")
+            || haystack.contains("failed to launch")
+            || haystack.contains("devicectl")
     }
 
     var errorDescription: String? {
