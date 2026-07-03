@@ -131,4 +131,8 @@ else
   cp -R "$build_app_path" "$app_path"
 fi
 
+if command -v xattr >/dev/null 2>&1; then
+  find "$app_path" -xattr -print0 | xargs -0 xattr -c 2>/dev/null || true
+fi
+
 echo "Wrote ${app_path}"

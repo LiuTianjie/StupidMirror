@@ -25,7 +25,59 @@ node_version="$("$node_bin" --version)"
 wanted_stamp="appium=${appium_version}
 node=${node_version}
 driver=${xcuitest_driver}
-layout=3"
+layout=6"
+
+prune_runtime() {
+  if [ "${APPIUM_RUNTIME_PRUNE:-true}" != "true" ]; then
+    return
+  fi
+
+  echo "Pruning Appium runtime..."
+  find "$cache_dir" -type d \( \
+    -name .cache -o \
+    -name .github -o \
+    -name .nyc_output -o \
+    -name __tests__ -o \
+    -name coverage -o \
+    -name example -o \
+    -name examples -o \
+    -name man -o \
+    -name test -o \
+    -name tests \
+  \) -prune -exec rm -rf {} +
+  find "$cache_dir" -type f \( \
+    -name '*.map' -o \
+    -name '*.markdown' -o \
+    -name '*.md' -o \
+    -name '*.d.ts' -o \
+    -name '*.d.ts.map' -o \
+    -name '*.tsbuildinfo' \
+  \) -delete
+
+  # The bundled app runs Appium's compiled JavaScript. The TypeScript compiler
+  # package is pulled in by Appium tooling but is not needed by the packaged
+  # runtime path.
+  find "$cache_dir" -path '*/node_modules/typescript' -type d -prune -exec rm -rf {} +
+
+  # Keep only the macOS arm64 sharp binary family needed on Apple Silicon.
+  find "$cache_dir" -type d \( \
+    -path '*/node_modules/@img/sharp-wasm32' -o \
+    -path '*/node_modules/@img/sharp-linux-*' -o \
+    -path '*/node_modules/@img/sharp-libvips-linux-*' -o \
+    -path '*/node_modules/@img/sharp-darwin-x64' -o \
+    -path '*/node_modules/@img/sharp-libvips-darwin-x64' \
+  \) -prune -exec rm -rf {} +
+
+  find "$cache_dir" -type l -exec sh -c '
+    for path do
+      target=$(readlink "$path")
+      dir=$(dirname "$path")
+      if [ ! -e "$dir/$target" ] && [ ! -e "$target" ]; then
+        rm -f "$path"
+      fi
+    done
+  ' sh {} +
+}
 
 if [ ! -f "$runtime_stamp" ] || [ "$(cat "$runtime_stamp")" != "$wanted_stamp" ]; then
   echo "Vendoring Appium ${appium_version} runtime into ${cache_dir}..."
@@ -52,7 +104,7 @@ JSON
     cp -R "${cache_dir}/node_modules/appium" "$nested_appium"
   fi
   APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
-  find "$cache_dir" -type d -name .cache -prune -exec rm -rf {} +
+  prune_runtime
 
   printf '%s' "$wanted_stamp" > "$runtime_stamp"
 else
@@ -90,7 +142,7 @@ export STUPIDMIRROR_SKIP_WDA_ICON_EMBED="${STUPIDMIRROR_SKIP_WDA_ICON_EMBED:-1}"
 exec "${runtime_dir}/bin/node" "${runtime_dir}/node_modules/appium/build/lib/main.js" "$@"
 SH
 chmod +x "${cache_dir}/bin/appium" "${cache_dir}/bin/node"
-find "$cache_dir" -type d -name .cache -prune -exec rm -rf {} +
+prune_runtime
 
 rm -rf "$destination"
 mkdir -p "$(dirname "$destination")"
