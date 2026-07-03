@@ -27,6 +27,7 @@ Environment:
   VERSION="0.1.0"
   BUILD_NUMBER="1"
   NOTARY_PROFILE="notarytool-keychain-profile"
+  ALLOW_UNNOTARIZED=true
   RELEASE_NAME="StupidMirror v0.1.0"
   RELEASE_NOTES="Release notes..."
   DRAFT=true
@@ -142,7 +143,24 @@ if [ -n "$notary_profile" ]; then
   xcrun stapler staple "$tmp_app"
   xcrun stapler validate "$tmp_app"
 else
-  echo "NOTARY_PROFILE is not set; skipping Apple notarization."
+  if [ "${ALLOW_UNNOTARIZED:-false}" != "true" ]; then
+    cat >&2 <<'MSG'
+NOTARY_PROFILE is not set. Refusing to upload an unnotarized public macOS release.
+
+Set up a notarytool profile first:
+  APPLE_ID="name@example.com" \
+  TEAM_ID="TEAMID" \
+  APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx" \
+  scripts/setup-notary-profile.sh
+
+Then release with:
+  NOTARY_PROFILE=stupidmirror-notary make release-local BUMP=patch
+
+For private/local test builds only, set ALLOW_UNNOTARIZED=true.
+MSG
+    exit 1
+  fi
+  echo "NOTARY_PROFILE is not set; ALLOW_UNNOTARIZED=true so Apple notarization is skipped."
 fi
 
 mkdir -p "$artifact_dir"

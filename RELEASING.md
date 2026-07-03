@@ -40,8 +40,10 @@ Specific version:
 NOTARY_PROFILE=stupidmirror-notary make release-local BUMP=0.2.0
 ```
 
-Without `NOTARY_PROFILE`, the script still builds, signs, zips, and uploads, but
-skips Apple notarization.
+Public GitHub releases must be notarized. Without `NOTARY_PROFILE`, the release
+script refuses to upload because downloaded, quarantined apps can be blocked by
+Gatekeeper even when they are Developer ID signed. For private/local test builds
+only, set `ALLOW_UNNOTARIZED=true`.
 
 When `BUMP` is set, the script updates `VERSION`, commits `Release vX.Y.Z`, tags
 the commit, pushes the branch and tag, then uploads the zip to GitHub Release.
@@ -55,6 +57,8 @@ Set `COMMIT_RELEASE=false` or `PUSH_RELEASE=false` to disable those steps.
 - `VERSION`: Override version without editing `VERSION`.
 - `BUILD_NUMBER`: Override build number. Defaults to a timestamp.
 - `NOTARY_PROFILE`: Keychain profile for `xcrun notarytool`.
+- `ALLOW_UNNOTARIZED=true`: Allow uploading a non-notarized build. Use only for
+  private testing.
 - `DRAFT=true`: Create a draft GitHub Release.
 - `PRERELEASE=true`: Mark the GitHub Release as a prerelease.
 - `ALLOW_DIRTY=true`: Allow release with uncommitted working tree changes.
