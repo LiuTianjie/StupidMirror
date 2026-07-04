@@ -25,10 +25,6 @@ enum DeviceMetadataService {
 
     static func bestMatch(for captureDevice: String, modelID: String, candidates: [DeviceMetadata]) -> DeviceMetadata? {
         guard !candidates.isEmpty else { return nil }
-        if candidates.count == 1 {
-            return candidates[0]
-        }
-
         let normalizedCaptureName = normalize(captureDevice)
         let exactNameMatches = candidates.filter { normalize($0.name) == normalizedCaptureName || normalizedCaptureName.contains(normalize($0.name)) }
         if exactNameMatches.count == 1 {

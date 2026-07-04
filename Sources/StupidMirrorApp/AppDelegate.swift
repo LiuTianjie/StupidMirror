@@ -10,4 +10,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DashboardWindowRegistry.shared.open(store: store)
         }
     }
+
+    @MainActor
+    func applicationWillTerminate(_ notification: Notification) {
+        guard let store = Self.store else { return }
+        store.stopAll()
+        store.appiumService.stop()
+    }
 }

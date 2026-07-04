@@ -118,6 +118,14 @@ final class DeviceGalleryStore: ObservableObject {
         return fallback
     }
 
+    nonisolated static func latestValueByID<Value>(_ values: [Value], id: (Value) -> String) -> [String: Value] {
+        var lookup: [String: Value] = [:]
+        for value in values {
+            lookup[id(value)] = value
+        }
+        return lookup
+    }
+
     private static var initialLanguage: AppLanguage {
         guard let rawValue = UserDefaults.standard.string(forKey: languageDefaultsKey),
               let language = AppLanguage(rawValue: rawValue) else {
@@ -199,7 +207,7 @@ final class DeviceGalleryStore: ObservableObject {
         AVFoundationMirrorBackend.warmUpDiscovery()
         let devices = AVFoundationMirrorBackend.discoverMuxedDevices()
         let metadata = DeviceMetadataService.connectedDevices()
-        let existingByID = Dictionary(uniqueKeysWithValues: sessions.map { ($0.id, $0) })
+        let existingByID = Self.latestValueByID(sessions) { $0.id }
         var nextSessions: [DeviceSession] = []
         var connectedIDs = Set<String>()
 
@@ -210,7 +218,7 @@ final class DeviceGalleryStore: ObservableObject {
                 candidates: metadata
             )
             let identity = AVFoundationMirrorBackend.identity(for: captureDevice, metadata: match)
-            connectedIDs.insert(identity.id)
+            guard connectedIDs.insert(identity.id).inserted else { continue }
 
             if let existing = existingByID[identity.id],
                existing.captureDevice.uniqueID == captureDevice.uniqueID,
