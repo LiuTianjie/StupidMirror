@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-08-10
+
+- Preserve trailing toolbar safe space so the activation badge stroke and shadow are not clipped at the right edge.
+
 ## 0.2.2 - 2026-08-10
 
 - Stabilize real-device Agent startup by reusing an installed WebDriverAgent first, keeping a single Appium-owned launch attempt, and preventing timed-out fallback requests from leaving overlapping WDA builds behind.

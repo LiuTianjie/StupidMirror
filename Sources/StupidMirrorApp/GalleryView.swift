@@ -234,6 +234,9 @@ struct GalleryView: View {
                             .stroke(licenseBadgeColor.opacity(0.28), lineWidth: 1)
                     }
                     .contentShape(Capsule(style: .continuous))
+                    // Keep the badge's stroke and toolbar shadow away from the
+                    // trailing clip edge of the final NSToolbar item.
+                    .padding(.trailing, 12)
                 }
                 .buttonStyle(.plain)
                 .help(store.t("license.badge.help"))
