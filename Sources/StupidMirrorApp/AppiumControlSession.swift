@@ -102,6 +102,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var state: ControlState = .unavailable
     @Published private(set) var screenSize: DeviceScreenSize?
     @Published private(set) var statusMessage: String = "Control not connected"
+    @Published private(set) var connectionPhase: ControlConnectionPhase?
+    @Published private(set) var connectionStartedAt: Date?
 
     private let device: DeviceIdentity
     private var sessionID: String?
@@ -132,6 +134,31 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             false
         }
     }
+
+    func beginPreparingService() {
+        guard sessionID == nil, connectionTask == nil else { return }
+        state = .connecting
+        connectionPhase = .startingService
+        connectionStartedAt = Date()
+        statusMessage = "Checking local Appium service..."
+    }
+
+    func failPreparation(_ message: String) {
+        guard sessionID == nil, connectionTask == nil else { return }
+        state = .failed(message)
+        connectionPhase = nil
+        connectionStartedAt = nil
+        statusMessage = message
+    }
+
+    #if DEBUG
+    func showConnectionPreview(phase: ControlConnectionPhase, elapsedSeconds: TimeInterval) {
+        state = .connecting
+        connectionPhase = phase
+        connectionStartedAt = Date().addingTimeInterval(-elapsedSeconds)
+        statusMessage = "Control connection preview"
+    }
+    #endif
 
     func prepare(
         serverURL: String,
@@ -176,6 +203,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         cleanupTask = nil
         connectionRequest = request
         state = .connecting
+        connectionPhase = .startingService
+        connectionStartedAt = connectionStartedAt ?? Date()
         statusMessage = "Checking local Appium service..."
         connectionTask = Task { [weak self] in
             if let previousConnection {
@@ -198,7 +227,11 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             var createdSessionID: String?
             let client = AppiumHTTPClient(baseURL: request.serverURL)
             do {
-                self.setStatus("Checking local Appium service...", generation: taskGeneration)
+                self.setProgress(
+                    "Checking local Appium service...",
+                    phase: .startingService,
+                    generation: taskGeneration
+                )
                 try await client.status(timeout: 5)
                 try Task.checkCancellation()
                 let sessionID = try await self.createReusableSession(
@@ -211,11 +244,19 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 createdSessionID = sessionID
                 try Task.checkCancellation()
                 guard self.generation == taskGeneration else { throw CancellationError() }
-                self.setStatus("Optimizing control latency...", generation: taskGeneration)
+                self.setProgress(
+                    "Optimizing control latency...",
+                    phase: .finishing,
+                    generation: taskGeneration
+                )
                 try await client.configureLowLatencyControl(sessionID: sessionID)
                 try Task.checkCancellation()
                 guard self.generation == taskGeneration else { throw CancellationError() }
-                self.setStatus("Reading device screen size...", generation: taskGeneration)
+                self.setProgress(
+                    "Reading device screen size...",
+                    phase: .finishing,
+                    generation: taskGeneration
+                )
                 let size = try await client.windowSize(sessionID: sessionID)
                 try Task.checkCancellation()
                 guard self.generation == taskGeneration else { throw CancellationError() }
@@ -223,6 +264,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 self.sessionServerURL = request.serverURL
                 self.screenSize = size
                 self.state = .ready
+                self.connectionPhase = nil
+                self.connectionStartedAt = nil
                 self.statusMessage = "Control ready: \(Int(size.width)) x \(Int(size.height))"
                 createdSessionID = nil
             } catch is CancellationError {
@@ -231,12 +274,16 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     self.sessionServerURL = nil
                     self.screenSize = nil
                     self.state = .unavailable
+                    self.connectionPhase = nil
+                    self.connectionStartedAt = nil
                     self.statusMessage = "Control not connected"
                 }
             } catch {
                 if self.generation == taskGeneration {
                     let message = AppiumError.controlFailureMessage(for: error)
                     self.state = .failed(message)
+                    self.connectionPhase = nil
+                    self.connectionStartedAt = nil
                     self.statusMessage = message
                     onSetupRequired?(message)
                 }
@@ -263,7 +310,11 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         if configuration.preferInstalledWDA {
             do {
                 let installedConfiguration = configuration.preinstalledProbeConfiguration
-                setStatus("Reusing installed WebDriverAgent control agent...", generation: generation)
+                setProgress(
+                    "Reusing installed WebDriverAgent control agent...",
+                    phase: .reusingAgent,
+                    generation: generation
+                )
                 return try await startSession(
                     client: client,
                     udid: udid,
@@ -275,16 +326,18 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     throw error
                 }
                 try Task.checkCancellation()
-                setStatus(
+                setProgress(
                     "Installed WebDriverAgent is not reusable; installing control agent...",
+                    phase: .installingAgent,
                     generation: generation
                 )
             }
         } else {
-            setStatus(
+            setProgress(
                 configuration.usePrebuiltWDA
                     ? "Starting installed WebDriverAgent control agent..."
                     : "Installing and starting WebDriverAgent control agent...",
+                phase: configuration.usePrebuiltWDA ? .reusingAgent : .installingAgent,
                 generation: generation
             )
         }
@@ -582,8 +635,13 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func setStatus(_ message: String, generation taskGeneration: UInt64) {
+    private func setProgress(
+        _ message: String,
+        phase: ControlConnectionPhase,
+        generation taskGeneration: UInt64
+    ) {
         guard generation == taskGeneration else { return }
+        connectionPhase = phase
         statusMessage = message
     }
 
@@ -605,6 +663,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         screenSize = nil
         pendingActions.removeAll()
         state = .unavailable
+        connectionPhase = nil
+        connectionStartedAt = nil
         statusMessage = "Control not connected"
 
         let task = Task {

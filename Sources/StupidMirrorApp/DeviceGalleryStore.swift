@@ -733,7 +733,7 @@ final class DeviceGalleryStore: ObservableObject {
               session.device.connectionState == .connected,
               session.device.udid?.isEmpty == false,
               !session.controlSession.isReady,
-              !session.controlSession.isConnecting else {
+              session.controlSession.isConnecting else {
             return
         }
 
@@ -767,14 +767,18 @@ final class DeviceGalleryStore: ObservableObject {
             return
         }
         statusMessage = t("status.controlPreparingAgent")
+        session.controlSession.beginPreparingService()
         Task {
             let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
             guard !isShuttingDown else { return }
             if ready {
+                guard session.controlSession.isConnecting else { return }
                 await detectSigningTeams()
+                guard session.controlSession.isConnecting else { return }
                 prepareControl(for: session)
             } else {
                 statusMessage = t("status.controlAppiumUnavailable")
+                session.controlSession.failPreparation("control.error.appiumUnavailable")
                 presentControlSetup(for: session)
             }
         }
@@ -789,10 +793,16 @@ final class DeviceGalleryStore: ObservableObject {
         }
         if session.controlSession.isReady { return }
 
+        session.controlSession.beginPreparingService()
         let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
         guard !isShuttingDown else { throw CancellationError() }
-        guard ready else { throw DeviceAutomationError.appiumUnavailable }
+        guard session.controlSession.isConnecting else { throw CancellationError() }
+        guard ready else {
+            session.controlSession.failPreparation("control.error.appiumUnavailable")
+            throw DeviceAutomationError.appiumUnavailable
+        }
         await detectSigningTeams()
+        guard session.controlSession.isConnecting else { throw CancellationError() }
         prepareControl(for: session)
 
         let deadline = ContinuousClock.now + .seconds(240)

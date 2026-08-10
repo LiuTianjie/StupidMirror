@@ -94,6 +94,31 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertTrue(AppiumControlConfiguration().preferInstalledWDA)
     }
 
+    @MainActor
+    func testControlSessionExposesImmediateCancelablePreparationProgress() {
+        let session = AppiumControlSession(device: DeviceIdentity(
+            id: "test-device",
+            udid: "00008110-001234567890001E",
+            name: "Test iPhone",
+            productType: "iPhone",
+            osVersion: "18.0",
+            connectionState: .connected,
+            trustState: .trusted
+        ))
+
+        session.beginPreparingService()
+
+        XCTAssertTrue(session.isConnecting)
+        XCTAssertEqual(session.connectionPhase, .startingService)
+        XCTAssertNotNil(session.connectionStartedAt)
+
+        session.stop(serverURL: "http://127.0.0.1:4723")
+
+        XCTAssertFalse(session.isConnecting)
+        XCTAssertNil(session.connectionPhase)
+        XCTAssertNil(session.connectionStartedAt)
+    }
+
     func testFirstInstallUsesAutomaticProvisioningAndTeamScopedBundleID() {
         var configuration = AppiumControlConfiguration()
         configuration.xcodeOrgID = "6XRHTPFUB6"

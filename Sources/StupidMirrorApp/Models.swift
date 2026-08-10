@@ -88,6 +88,13 @@ enum ControlState: Equatable {
     }
 }
 
+enum ControlConnectionPhase: Equatable, Sendable {
+    case startingService
+    case reusingAgent
+    case installingAgent
+    case finishing
+}
+
 struct DeviceSession: Identifiable {
     let id: String
     var device: DeviceIdentity

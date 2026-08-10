@@ -144,8 +144,17 @@ struct DeviceDetailView: View {
                 .frame(width: size.width, height: size.height)
                 .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                 .overlay(controlGestureLayer(aspectRatio: aspect))
+
+                if controlSession.isConnecting {
+                    ControlConnectionLoadingView(controlSession: controlSession) {
+                        store.stopControl(for: session)
+                    }
+                    .padding(Theme.Spacing.md)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .animation(.easeOut(duration: 0.18), value: controlSession.isConnecting)
         }
     }
 
@@ -195,6 +204,116 @@ struct DeviceDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+struct ControlConnectionLoadingView: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @ObservedObject var controlSession: AppiumControlSession
+    let cancel: () -> Void
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let elapsed = elapsedSeconds(at: timeline.date)
+
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.regular)
+
+                VStack(spacing: 4) {
+                    Text(store.t("control.loading.title"))
+                        .font(.headline)
+                    Text(store.t(phaseTitleKey))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                Text(store.t(expectationKey))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Text(String(
+                    format: store.t("control.loading.elapsed"),
+                    elapsed / 60,
+                    elapsed % 60
+                ))
+                .font(.system(.caption, design: .monospaced).weight(.medium))
+                .foregroundStyle(Theme.Palette.pending)
+
+                Text(store.t("control.loading.keepAwake"))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+
+                Button(store.t("common.cancel"), action: cancel)
+                    .controlSize(.small)
+            }
+            .padding(18)
+            .frame(maxWidth: 320)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+        }
+    }
+
+    private var phaseTitleKey: String {
+        switch controlSession.connectionPhase ?? .startingService {
+        case .startingService: "control.loading.startingService"
+        case .reusingAgent: "control.loading.reusingAgent"
+        case .installingAgent: "control.loading.installingAgent"
+        case .finishing: "control.loading.finishing"
+        }
+    }
+
+    private var expectationKey: String {
+        switch controlSession.connectionPhase ?? .startingService {
+        case .startingService: "control.loading.expectation.short"
+        case .reusingAgent: "control.loading.expectation.reuse"
+        case .installingAgent: "control.loading.expectation.install"
+        case .finishing: "control.loading.expectation.finishing"
+        }
+    }
+
+    private func elapsedSeconds(at date: Date) -> Int {
+        guard let startedAt = controlSession.connectionStartedAt else { return 0 }
+        return max(0, Int(date.timeIntervalSince(startedAt)))
+    }
+}
+
+#if DEBUG
+struct ControlConnectionLoadingDebugPreview: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @StateObject private var controlSession: AppiumControlSession
+
+    init() {
+        _controlSession = StateObject(wrappedValue: AppiumControlSession(device: DeviceIdentity(
+            id: "loading-preview",
+            udid: "00000000-0000000000000000",
+            name: "Preview iPhone",
+            productType: "iPhone",
+            osVersion: nil,
+            connectionState: .connected,
+            trustState: .trusted
+        )))
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.18)
+                .ignoresSafeArea()
+            ControlConnectionLoadingView(controlSession: controlSession) {}
+                .environmentObject(store)
+                .padding(24)
+        }
+        .onAppear {
+            controlSession.showConnectionPreview(phase: .installingAgent, elapsedSeconds: 73)
+        }
+    }
+}
+#endif
 
 // Lives in the full-width bottom bar. Status pills + actions for the
 // currently selected device.

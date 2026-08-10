@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.4 - 2026-08-10
+
+- Show an immediate, cancelable Agent loading card with the current startup phase, elapsed time, and realistic reuse or first-install expectations.
+- Prefer and clearly communicate reuse of the Agent already installed on the iPhone, only switching the UI to installation when reuse fails.
+- Keep loading feedback visible in both the dashboard preview and standalone mirror window, with localized Chinese and English guidance to keep the iPhone unlocked and connected.
+
 ## 0.2.3 - 2026-08-10
 
 - Preserve trailing toolbar safe space so the activation badge stroke and shadow are not clipped at the right edge.

@@ -158,6 +158,14 @@ struct StandaloneMirrorWindowView: View {
                     statusOverlay
                         .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
+
+                if controlSession.isConnecting {
+                    ControlConnectionLoadingView(controlSession: controlSession) {
+                        store.stopControl(for: session)
+                    }
+                    .padding(12)
+                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                }
             }
             .clipShape(phoneShape)
             .overlay(

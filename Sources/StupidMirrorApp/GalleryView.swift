@@ -28,6 +28,13 @@ struct GalleryView: View {
                 .zIndex(1)
         }
         .toolbar { toolbarContent }
+        #if DEBUG
+        .overlay {
+            if ProcessInfo.processInfo.environment["STUPIDMIRROR_CONTROL_LOADING_PREVIEW"] == "1" {
+                ControlConnectionLoadingDebugPreview()
+            }
+        }
+        #endif
         .sheet(item: activeSheetBinding) { sheet in
             switch sheet {
             case .diagnostics:
