@@ -326,13 +326,38 @@ final class AppiumServiceManager: ObservableObject {
         let endpoint = URL(string: serverURL)
         let host = endpoint?.host ?? "127.0.0.1"
         let port = endpoint?.port ?? 4723
-        let arguments = ["--address", host, "--port", "\(port)"]
+        let serverArguments = ["--address", host, "--port", "\(port)"]
         let instanceID = UUID().uuidString
 
+        let launch: AppiumLaunch
+        if let bundledRuntime = Self.bundledAppiumRuntime() {
+            do {
+                launch = try await Task.detached(priority: .utility) {
+                    try Self.prepareBundledAppiumLaunch(
+                        runtime: bundledRuntime,
+                        serverArguments: serverArguments
+                    )
+                }.value
+            } catch {
+                statusRevision &+= 1
+                state = .failed("Cannot prepare the bundled Appium runtime.")
+                message = "Cannot prepare the bundled Appium runtime: \(error.localizedDescription)"
+                return
+            }
+        } else {
+            launch = AppiumLaunch(
+                executablePath: appiumPath,
+                arguments: serverArguments,
+                environment: [:]
+            )
+        }
+
         let launched = Process()
-        launched.executableURL = URL(fileURLWithPath: appiumPath)
-        launched.arguments = arguments
-        launched.environment = ProcessInfo.processInfo.environment.merging([
+        launched.executableURL = URL(fileURLWithPath: launch.executablePath)
+        launched.arguments = launch.arguments
+        launched.environment = ProcessInfo.processInfo.environment
+            .merging(launch.environment) { _, new in new }
+            .merging([
             "STUPIDMIRROR_SKIP_WDA_ICON_EMBED": "1",
             ManagedProcessRecord.identityEnvironmentKey: instanceID
         ]) { _, new in new }
@@ -359,12 +384,23 @@ final class AppiumServiceManager: ObservableObject {
             // explicitly as well, then trust it only when the kernel confirms
             // the child is the group leader.
             _ = setpgid(pid, pid)
-            guard let record = Self.makeManagedProcessRecord(
-                pid: pid,
-                instanceID: instanceID,
-                appiumPath: appiumPath,
-                expectedArguments: arguments
-            ) else {
+            // KERN_PROCARGS2 can briefly be unavailable immediately after a
+            // process launch or executable transition. Retry the strong
+            // token/UID/start-time/argv verification for a bounded interval
+            // instead of treating that normal kernel snapshot race as failure.
+            var ownershipRecord: ManagedProcessRecord?
+            for _ in 0..<20 where ownershipRecord == nil && launched.isRunning {
+                ownershipRecord = Self.makeManagedProcessRecord(
+                    pid: pid,
+                    instanceID: instanceID,
+                    appiumPath: launch.executablePath,
+                    expectedArguments: launch.arguments
+                )
+                if ownershipRecord == nil {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+            }
+            guard let record = ownershipRecord else {
                 launched.terminate()
                 if launched.isRunning {
                     kill(pid, SIGKILL)
@@ -373,7 +409,12 @@ final class AppiumServiceManager: ObservableObject {
                 try? handle.close()
                 statusRevision &+= 1
                 state = .failed("Could not establish Appium process ownership.")
-                message = "Appium launched, but its exact process identity could not be verified."
+                let failureReason = Self.processOwnershipFailureReason(
+                    pid: pid,
+                    instanceID: instanceID,
+                    expectedArguments: launch.arguments
+                )
+                message = "Appium process verification failed: \(failureReason)"
                 return
             }
             do {
@@ -496,6 +537,26 @@ final class AppiumServiceManager: ObservableObject {
         )
     }
 
+    private nonisolated static func processOwnershipFailureReason(
+        pid: Int32,
+        instanceID: String,
+        expectedArguments: [String]
+    ) -> String {
+        guard let snapshot = processSnapshot(pid: pid) else {
+            return "the child process snapshot was unavailable"
+        }
+        guard snapshot.ownerUID == getuid() else {
+            return "the child process owner did not match"
+        }
+        guard snapshot.environment[ManagedProcessRecord.identityEnvironmentKey] == instanceID else {
+            return "the private instance marker was unavailable"
+        }
+        guard command(snapshot.arguments, contains: expectedArguments) else {
+            return "the child process arguments did not match"
+        }
+        return "the child process changed while it was being inspected"
+    }
+
     private nonisolated static func allowedExecutablePaths(
         initialExecutablePath: String,
         appiumPath: String
@@ -509,6 +570,74 @@ final class AppiumServiceManager: ObservableObject {
             paths.append(siblingNode)
         }
         return Array(Set(paths)).sorted()
+    }
+
+    private nonisolated static func bundledAppiumRuntime() -> BundledAppiumRuntime? {
+        guard let root = Bundle.main.resourceURL?.appendingPathComponent("Appium", isDirectory: true) else {
+            return nil
+        }
+        let node = root.appendingPathComponent("bin/node")
+        let main = root.appendingPathComponent("node_modules/appium/build/lib/main.js")
+        let sourceHome = root.appendingPathComponent("home", isDirectory: true)
+        let stamp = root.appendingPathComponent(".stupidmirror-runtime")
+        guard FileManager.default.isExecutableFile(atPath: node.path),
+              FileManager.default.fileExists(atPath: main.path),
+              FileManager.default.fileExists(atPath: sourceHome.path),
+              FileManager.default.fileExists(atPath: stamp.path) else {
+            return nil
+        }
+        return BundledAppiumRuntime(
+            rootPath: root.path,
+            nodePath: node.path,
+            mainPath: main.path,
+            sourceHomePath: sourceHome.path,
+            stampPath: stamp.path
+        )
+    }
+
+    private nonisolated static func prepareBundledAppiumLaunch(
+        runtime: BundledAppiumRuntime,
+        serverArguments: [String]
+    ) throws -> AppiumLaunch {
+        let fileManager = FileManager.default
+        let supportRoot = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        let productSupport = supportRoot.appendingPathComponent("StupidMirror", isDirectory: true)
+        let destinationHome = productSupport.appendingPathComponent("AppiumHome", isDirectory: true)
+        let destinationStamp = destinationHome.appendingPathComponent(".stupidmirror-runtime")
+        let sourceStamp = URL(fileURLWithPath: runtime.stampPath)
+        let stampMatches = try? Data(contentsOf: sourceStamp) == Data(contentsOf: destinationStamp)
+
+        if stampMatches != true {
+            try fileManager.createDirectory(at: productSupport, withIntermediateDirectories: true)
+            let staging = productSupport.appendingPathComponent(
+                ".AppiumHome-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            defer { try? fileManager.removeItem(at: staging) }
+            try fileManager.copyItem(
+                at: URL(fileURLWithPath: runtime.sourceHomePath, isDirectory: true),
+                to: staging
+            )
+            try fileManager.copyItem(at: sourceStamp, to: staging.appendingPathComponent(".stupidmirror-runtime"))
+            if fileManager.fileExists(atPath: destinationHome.path) {
+                _ = try fileManager.replaceItemAt(destinationHome, withItemAt: staging)
+            } else {
+                try fileManager.moveItem(at: staging, to: destinationHome)
+            }
+        }
+
+        let inheritedPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        let runtimeBin = URL(fileURLWithPath: runtime.rootPath)
+            .appendingPathComponent("bin", isDirectory: true).path
+        return AppiumLaunch(
+            executablePath: runtime.nodePath,
+            arguments: [runtime.mainPath] + serverArguments,
+            environment: [
+                "APPIUM_HOME": destinationHome.path,
+                "PATH": "\(runtimeBin):\(inheritedPath)"
+            ]
+        )
     }
 
     private nonisolated static func command(_ actual: [String], contains expected: [String]) -> Bool {
@@ -935,6 +1064,20 @@ private struct ManagedProcessRecord: Codable, Sendable {
     let expectedArguments: [String]
     let launchedAppiumPath: String
     let instanceID: String
+}
+
+private struct AppiumLaunch: Sendable {
+    let executablePath: String
+    let arguments: [String]
+    let environment: [String: String]
+}
+
+private struct BundledAppiumRuntime: Sendable {
+    let rootPath: String
+    let nodePath: String
+    let mainPath: String
+    let sourceHomePath: String
+    let stampPath: String
 }
 
 private struct ProcessSnapshot: Sendable {

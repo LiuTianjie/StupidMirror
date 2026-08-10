@@ -4,19 +4,22 @@ struct GalleryView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
-        } detail: {
-            detail
+        VStack(spacing: 0) {
+            NavigationSplitView {
+                sidebar
+                    .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
+            } detail: {
+                detail
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+
+            Divider()
+            bottomBar
+                .fixedSize(horizontal: false, vertical: true)
+                .zIndex(1)
         }
         .toolbar { toolbarContent }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
-                bottomBar
-            }
-        }
         .sheet(item: activeSheetBinding) { sheet in
             switch sheet {
             case .diagnostics:
@@ -31,6 +34,10 @@ struct GalleryView: View {
                 LicenseActivationView(licenseManager: store.licenseManager)
                     .environmentObject(store)
                     .frame(width: 540)
+            case .controlSetup:
+                ControlSetupGuideView()
+                    .environmentObject(store)
+                    .frame(width: 560)
             }
         }
     }
@@ -489,6 +496,109 @@ struct DiagnosticsView: View {
                     Text(store.t("diagnostics.controlHelp"))
                         .foregroundStyle(.secondary)
                 }
+            }
+        }
+    }
+}
+
+struct ControlSetupGuideView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: DeviceGalleryStore
+
+    private var selectedSession: DeviceSession? {
+        guard let id = store.selectedSessionID else { return nil }
+        return store.sessions.first { $0.id == id }
+    }
+
+    private var hasTeamID: Bool {
+        !store.controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "iphone.and.arrow.forward")
+                    .font(.title2)
+                    .foregroundStyle(Theme.Palette.accent)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(store.t("control.setup.title"))
+                        .font(.title2.weight(.semibold))
+                    Text(store.t("control.setup.subtitle"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Label(store.t("common.close"), systemImage: "xmark")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+            }
+            .padding(20)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 18) {
+                setupStep(number: 1, titleKey: "control.setup.step1.title", bodyKey: "control.setup.step1.body")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    setupStep(number: 2, titleKey: "control.setup.step2.title", bodyKey: "control.setup.step2.body")
+                    TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
+                        .textFieldStyle(.roundedBorder)
+                        .padding(.leading, 42)
+                }
+
+                setupStep(number: 3, titleKey: "control.setup.step3.title", bodyKey: "control.setup.step3.body")
+                setupStep(number: 4, titleKey: "control.setup.step4.title", bodyKey: "control.setup.step4.body")
+
+                Text(store.t("control.setup.mirrorNote"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            }
+            .padding(20)
+
+            Divider()
+
+            HStack {
+                Button(store.t("status.controlOpenDiagnostics")) {
+                    store.presentDiagnostics()
+                }
+                Spacer()
+                Button(store.t("common.cancel")) {
+                    dismiss()
+                }
+                Button(store.t("control.setup.retry")) {
+                    guard let session = selectedSession else { return }
+                    store.setActiveSheet(nil)
+                    store.connectControl(for: session)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Palette.accent)
+                .disabled(!hasTeamID || selectedSession == nil)
+            }
+            .padding(20)
+        }
+    }
+
+    private func setupStep(number: Int, titleKey: String, bodyKey: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.callout.bold())
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Theme.Palette.accent, in: Circle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.t(titleKey))
+                    .font(.headline)
+                Text(store.t(bodyKey))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

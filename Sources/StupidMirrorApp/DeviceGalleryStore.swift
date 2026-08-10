@@ -8,6 +8,7 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     case diagnostics
     case settings
     case activation
+    case controlSetup
 
     var id: String { rawValue }
 
@@ -489,6 +490,11 @@ final class DeviceGalleryStore: ObservableObject {
         setActiveSheet(.diagnostics)
     }
 
+    func presentControlSetup(for session: DeviceSession) {
+        select(session)
+        setActiveSheet(.controlSetup)
+    }
+
     func toggleSettings() {
         setActiveSheet(DashboardSheet.toggling(.settings, from: activeSheet))
     }
@@ -696,6 +702,7 @@ final class DeviceGalleryStore: ObservableObject {
               session.device.connectionState == .connected else { return }
         guard session.device.udid?.isEmpty == false else {
             statusMessage = t("status.controlNoUDID")
+            presentControlSetup(for: session)
             return
         }
         guard !session.controlSession.isReady, !session.controlSession.isConnecting else {
@@ -703,7 +710,7 @@ final class DeviceGalleryStore: ObservableObject {
         }
         guard !controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             statusMessage = t("status.controlSetupRequired")
-            presentSettings()
+            presentControlSetup(for: session)
             return
         }
 
@@ -715,6 +722,7 @@ final class DeviceGalleryStore: ObservableObject {
                 prepareControl(for: session)
             } else {
                 statusMessage = t("status.controlAppiumUnavailable")
+                presentControlSetup(for: session)
             }
         }
     }

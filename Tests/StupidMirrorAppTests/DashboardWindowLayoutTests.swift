@@ -8,6 +8,8 @@ final class DashboardWindowLayoutTests: XCTestCase {
         XCTAssertNil(DashboardSheet.toggling(.settings, from: .settings))
         XCTAssertEqual(DashboardSheet.toggling(.activation, from: .settings), .activation)
         XCTAssertEqual(DashboardSheet.toggling(.diagnostics, from: .activation), .diagnostics)
+        XCTAssertEqual(DashboardSheet.toggling(.controlSetup, from: .diagnostics), .controlSetup)
+        XCTAssertNil(DashboardSheet.toggling(.controlSetup, from: .controlSetup))
     }
 
     func testDashboardShowsActivationEntryUntilLicensed() {
