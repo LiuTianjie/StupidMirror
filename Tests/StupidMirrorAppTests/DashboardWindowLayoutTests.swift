@@ -53,4 +53,13 @@ final class DashboardWindowLayoutTests: XCTestCase {
         XCTAssertEqual(sizes.initial, DashboardWindowLayout.preferredContentSize)
         XCTAssertEqual(sizes.minimum, DashboardWindowLayout.minimumContentSize)
     }
+
+    func testMinimumWindowAlwaysReservesFixedBottomBar() {
+        let sizes = DashboardWindowLayout.sizes(
+            for: NSRect(x: 0, y: 0, width: 500, height: 220)
+        )
+
+        XCTAssertGreaterThan(sizes.minimum.height, DashboardWindowLayout.bottomBarHeight)
+        XCTAssertEqual(DashboardWindowLayout.bottomBarHeight, 44)
+    }
 }

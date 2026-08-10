@@ -20,12 +20,12 @@ final class DashboardWindowRegistry {
         let windowSizes = DashboardWindowLayout.sizes(
             for: (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
         )
+        // NSWindow owns the minimum size. Giving the SwiftUI root the same
+        // hard minimum is incorrect because the window toolbar consumes part
+        // of the content area; on shorter screens that made the root overflow
+        // and pushed the fixed footer below the visible bounds.
         let rootView = GalleryView()
             .environmentObject(store)
-            .frame(
-                minWidth: windowSizes.minimum.width,
-                minHeight: windowSizes.minimum.height
-            )
 
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: windowSizes.initial),
@@ -64,6 +64,7 @@ final class DashboardWindowRegistry {
 enum DashboardWindowLayout {
     static let preferredContentSize = NSSize(width: 1_100, height: 700)
     static let minimumContentSize = NSSize(width: 1_000, height: 640)
+    static let bottomBarHeight: CGFloat = 44
     private static let screenMargin: CGFloat = 48
 
     static func sizes(for visibleFrame: NSRect?) -> (initial: NSSize, minimum: NSSize) {

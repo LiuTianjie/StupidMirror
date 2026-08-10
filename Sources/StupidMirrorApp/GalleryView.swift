@@ -4,19 +4,26 @@ struct GalleryView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack(alignment: .bottom) {
             NavigationSplitView {
                 sidebar
                     .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
             } detail: {
                 detail
             }
+            // Reserve the footer inside the actual content bounds. The footer
+            // overlay cannot be pushed below the window even when split-view
+            // children report a larger intrinsic minimum height.
+            .padding(.bottom, DashboardWindowLayout.bottomBarHeight + 1)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
 
-            Divider()
-            bottomBar
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                Divider()
+                bottomBar
+            }
+                .frame(height: DashboardWindowLayout.bottomBarHeight + 1)
+                .frame(maxWidth: .infinity)
                 .zIndex(1)
         }
         .toolbar { toolbarContent }
@@ -92,7 +99,7 @@ struct GalleryView: View {
             }
         }
         .padding(.horizontal, Theme.Spacing.md)
-        .frame(height: 44)
+        .frame(height: DashboardWindowLayout.bottomBarHeight)
         .background(.bar)
     }
 
@@ -510,8 +517,15 @@ struct ControlSetupGuideView: View {
         return store.sessions.first { $0.id == id }
     }
 
-    private var hasTeamID: Bool {
-        !store.controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var selectedTeamBinding: Binding<String> {
+        Binding(
+            get: { store.controlXcodeOrgID },
+            set: { store.selectSigningTeam($0) }
+        )
+    }
+
+    private var selectedTeam: XcodeSigningTeam? {
+        store.detectedSigningTeams.first { $0.id == store.controlXcodeOrgID }
     }
 
     var body: some View {
@@ -542,16 +556,47 @@ struct ControlSetupGuideView: View {
 
             VStack(alignment: .leading, spacing: 18) {
                 setupStep(number: 1, titleKey: "control.setup.step1.title", bodyKey: "control.setup.step1.body")
+                setupStep(number: 2, titleKey: "control.setup.step2.title", bodyKey: "control.setup.step2.body")
 
-                VStack(alignment: .leading, spacing: 8) {
-                    setupStep(number: 2, titleKey: "control.setup.step2.title", bodyKey: "control.setup.step2.body")
-                    TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
-                        .textFieldStyle(.roundedBorder)
+                VStack(alignment: .leading, spacing: 10) {
+                    setupStep(number: 3, titleKey: "control.setup.step3.title", bodyKey: "control.setup.step3.body")
+
+                    HStack(spacing: 10) {
+                        signingStatus
+                        Spacer()
+                        Button {
+                            Task { await store.detectSigningTeams() }
+                        } label: {
+                            if store.isDetectingSigningTeams {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(store.t("control.setup.detectAccount"))
+                            }
+                        }
+                        .disabled(store.isDetectingSigningTeams)
+                    }
+                    .padding(.leading, 42)
+
+                    if store.detectedSigningTeams.count > 1 {
+                        Picker(store.t("control.setup.chooseAccount"), selection: selectedTeamBinding) {
+                            Text(store.t("control.setup.chooseAccountPlaceholder")).tag("")
+                            ForEach(store.detectedSigningTeams) { team in
+                                Text("\(team.name) · \(team.id)").tag(team.id)
+                            }
+                        }
                         .padding(.leading, 42)
-                }
+                    }
 
-                setupStep(number: 3, titleKey: "control.setup.step3.title", bodyKey: "control.setup.step3.body")
-                setupStep(number: 4, titleKey: "control.setup.step4.title", bodyKey: "control.setup.step4.body")
+                    DisclosureGroup(store.t("control.setup.manualEntry")) {
+                        TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
+                            .textFieldStyle(.roundedBorder)
+                        Text(store.t("control.setup.manualEntryHelp"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 42)
+                }
 
                 Text(store.t("control.setup.mirrorNote"))
                     .font(.callout)
@@ -574,14 +619,38 @@ struct ControlSetupGuideView: View {
                 }
                 Button(store.t("control.setup.retry")) {
                     guard let session = selectedSession else { return }
-                    store.setActiveSheet(nil)
-                    store.connectControl(for: session)
+                    Task {
+                        await store.detectSigningTeams()
+                        store.setActiveSheet(nil)
+                        store.connectControl(for: session)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.Palette.accent)
-                .disabled(!hasTeamID || selectedSession == nil)
+                .disabled(store.isDetectingSigningTeams || selectedSession == nil)
             }
             .padding(20)
+        }
+        .task {
+            await store.detectSigningTeams()
+        }
+    }
+
+    @ViewBuilder
+    private var signingStatus: some View {
+        if let selectedTeam {
+            Label(store.t("control.setup.accountReady"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(Theme.Palette.live)
+                .help("\(selectedTeam.name) · \(selectedTeam.id)")
+        } else if !store.controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Label(store.t("control.setup.accountConfigured"), systemImage: "checkmark.circle.fill")
+                .foregroundStyle(Theme.Palette.live)
+        } else if store.detectedSigningTeams.count > 1 {
+            Label(store.t("control.setup.chooseAccount"), systemImage: "person.2")
+                .foregroundStyle(Theme.Palette.pending)
+        } else {
+            Label(store.t("control.setup.accountMissing"), systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(Theme.Palette.pending)
         }
     }
 
@@ -649,13 +718,6 @@ struct SettingsView: View {
                 }
 
                 Section(store.t("settings.control")) {
-                    TextField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
-                    TextField(store.t("settings.bundleID"), text: $store.controlBundleID)
-                    TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
-                    TextField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
-                    TextField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
-                    Toggle(store.t("settings.usePrebuiltWDA"), isOn: $store.controlUsePrebuiltWDA)
-
                     HStack {
                         StatusPill(
                             title: store.appiumServiceStateLabel(store.appiumService.state),
@@ -690,6 +752,15 @@ struct SettingsView: View {
                     Text(store.t("settings.appiumHelp"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    DisclosureGroup(store.t("settings.controlAdvanced")) {
+                        TextField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
+                        TextField(store.t("settings.bundleID"), text: $store.controlBundleID)
+                        TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
+                        TextField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
+                        TextField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
+                        Toggle(store.t("settings.usePrebuiltWDA"), isOn: $store.controlUsePrebuiltWDA)
+                    }
                 }
             }
             .formStyle(.grouped)

@@ -97,7 +97,12 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func prepare(serverURL: String, bundleID: String, configuration: AppiumControlConfiguration = AppiumControlConfiguration()) {
+    func prepare(
+        serverURL: String,
+        bundleID: String,
+        configuration: AppiumControlConfiguration = AppiumControlConfiguration(),
+        onSetupRequired: (@MainActor @Sendable (String) -> Void)? = nil
+    ) {
         guard let udid = device.udid, !udid.isEmpty else {
             state = .failed("No UDID mapped for this mirror source.")
             statusMessage = "No UDID mapped for this mirror source."
@@ -193,6 +198,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     let message = AppiumError.controlFailureMessage(for: error)
                     self.state = .failed(message)
                     self.statusMessage = message
+                    onSetupRequired?(message)
                 }
             }
             if let createdSessionID {
@@ -252,6 +258,9 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
         var installConfiguration = configuration
         installConfiguration.usePreinstalledWDA = false
+        guard !installConfiguration.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AppiumError.signingConfigurationRequired
+        }
         do {
             return try await startSession(
                 client: client,
@@ -803,8 +812,12 @@ enum AppiumError: LocalizedError {
     case invalidResponse(String)
     case httpStatus(Int, String)
     case timeout(String)
+    case signingConfigurationRequired
 
     static func controlFailureMessage(for error: Error) -> String {
+        if case AppiumError.signingConfigurationRequired = error {
+            return "control.error.signingSetupRequired"
+        }
         let haystack = [String(describing: error), error.localizedDescription]
             .joined(separator: " ")
             .lowercased()
@@ -912,6 +925,8 @@ enum AppiumError: LocalizedError {
             "Appium HTTP \(status): \(Self.compactResponseBody(body))"
         case let .timeout(message):
             message
+        case .signingConfigurationRequired:
+            "Installing WebDriverAgent requires an Apple Development signing team."
         }
     }
 

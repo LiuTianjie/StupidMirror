@@ -17,4 +17,11 @@ final class AppiumErrorTests: XCTestCase {
 
         XCTAssertEqual(AppiumError.controlFailureMessage(for: error), "control.error.signing")
     }
+
+    func testMissingSigningConfigurationHasDedicatedSetupMessage() {
+        XCTAssertEqual(
+            AppiumError.controlFailureMessage(for: AppiumError.signingConfigurationRequired),
+            "control.error.signingSetupRequired"
+        )
+    }
 }

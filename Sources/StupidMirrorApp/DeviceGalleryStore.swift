@@ -84,6 +84,8 @@ final class DeviceGalleryStore: ObservableObject {
     ) {
         didSet { UserDefaults.standard.set(controlUsePrebuiltWDA, forKey: Self.controlUsePrebuiltWDADefaultsKey) }
     }
+    @Published private(set) var detectedSigningTeams: [XcodeSigningTeam] = []
+    @Published private(set) var isDetectingSigningTeams = false
     @Published private(set) var activeSheet: DashboardSheet?
     @Published var selectedSessionID: String?
     @Published var language: AppLanguage {
@@ -694,7 +696,11 @@ final class DeviceGalleryStore: ObservableObject {
                 useNewWDA: false,
                 derivedDataPath: wdaDerivedDataPath
             )
-        )
+        ) { [weak self] message in
+            guard let self, !self.isShuttingDown else { return }
+            self.statusMessage = self.t(message)
+            self.presentControlSetup(for: session)
+        }
     }
 
     func connectControl(for session: DeviceSession) {
@@ -708,23 +714,39 @@ final class DeviceGalleryStore: ObservableObject {
         guard !session.controlSession.isReady, !session.controlSession.isConnecting else {
             return
         }
-        guard !controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            statusMessage = t("status.controlSetupRequired")
-            presentControlSetup(for: session)
-            return
-        }
-
         statusMessage = t("status.controlPreparingAgent")
         Task {
             let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
             guard !isShuttingDown else { return }
             if ready {
+                if controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    await detectSigningTeams()
+                }
                 prepareControl(for: session)
             } else {
                 statusMessage = t("status.controlAppiumUnavailable")
                 presentControlSetup(for: session)
             }
         }
+    }
+
+    func detectSigningTeams() async {
+        guard !isDetectingSigningTeams else { return }
+        isDetectingSigningTeams = true
+        let teams = await XcodeSigningTeamDetector.detect()
+        detectedSigningTeams = teams
+        isDetectingSigningTeams = false
+
+        let savedID = controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard savedID.isEmpty else { return }
+        if teams.count == 1, let team = teams.first {
+            controlXcodeOrgID = team.id
+        }
+    }
+
+    func selectSigningTeam(_ teamID: String) {
+        guard detectedSigningTeams.contains(where: { $0.id == teamID }) else { return }
+        controlXcodeOrgID = teamID
     }
 
     func stopControl(for session: DeviceSession) {
