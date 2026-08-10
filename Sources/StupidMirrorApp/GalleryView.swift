@@ -28,6 +28,7 @@ struct GalleryView: View {
                 .zIndex(1)
         }
         .toolbar { toolbarContent }
+        .preferredColorScheme(debugPreviewColorScheme)
         #if DEBUG
         .overlay {
             if ProcessInfo.processInfo.environment["STUPIDMIRROR_CONTROL_LOADING_PREVIEW"] == "1" {
@@ -148,6 +149,18 @@ struct GalleryView: View {
     private var selectedSession: DeviceSession? {
         guard let id = store.selectedSessionID else { return nil }
         return store.sessions.first { $0.id == id }
+    }
+
+    private var debugPreviewColorScheme: ColorScheme? {
+        #if DEBUG
+        switch ProcessInfo.processInfo.environment["STUPIDMIRROR_COLOR_SCHEME_PREVIEW"] {
+        case "light": .light
+        case "dark": .dark
+        default: nil
+        }
+        #else
+        nil
+        #endif
     }
 
     private var activeSheetBinding: Binding<DashboardSheet?> {
@@ -904,7 +917,7 @@ struct MCPAutomationSettingsView: View {
                         if case let .failed(message) = manager.status {
                             Text(message)
                                 .font(.caption)
-                                .foregroundStyle(.red)
+                                .foregroundStyle(Theme.Palette.danger)
                                 .textSelection(.enabled)
                         }
                         HStack {

@@ -146,6 +146,11 @@ struct DeviceDetailView: View {
                 .overlay(controlGestureLayer(aspectRatio: aspect))
 
                 if controlSession.isConnecting {
+                    Color.black.opacity(0.42)
+                        .frame(width: size.width, height: size.height)
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                        .allowsHitTesting(false)
+
                     ControlConnectionLoadingView(controlSession: controlSession) {
                         store.stopControl(for: session)
                     }
@@ -217,19 +222,21 @@ struct ControlConnectionLoadingView: View {
             VStack(spacing: 12) {
                 ProgressView()
                     .controlSize(.regular)
+                    .tint(Theme.Palette.accent)
 
                 VStack(spacing: 4) {
                     Text(store.t("control.loading.title"))
                         .font(.headline)
+                        .foregroundStyle(Theme.Overlay.primaryText)
                     Text(store.t(phaseTitleKey))
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.Overlay.secondaryText)
                         .multilineTextAlignment(.center)
                 }
 
                 Text(store.t(expectationKey))
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.Overlay.secondaryText)
                     .multilineTextAlignment(.center)
 
                 Text(String(
@@ -242,20 +249,21 @@ struct ControlConnectionLoadingView: View {
 
                 Text(store.t("control.loading.keepAwake"))
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(Theme.Overlay.tertiaryText)
                     .multilineTextAlignment(.center)
 
                 Button(store.t("common.cancel"), action: cancel)
                     .controlSize(.small)
+                    .tint(Theme.Overlay.primaryText)
             }
             .padding(18)
             .frame(maxWidth: 320)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .background(Theme.Overlay.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    .stroke(Theme.Overlay.stroke, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+            .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
         }
     }
 
@@ -302,7 +310,12 @@ struct ControlConnectionLoadingDebugPreview: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.18)
+            HStack(spacing: 0) {
+                Color.white
+                Color(red: 0.75, green: 0.18, blue: 0.22)
+                Color(red: 0.08, green: 0.36, blue: 0.72)
+            }
+            Color.black.opacity(0.42)
                 .ignoresSafeArea()
             ControlConnectionLoadingView(controlSession: controlSession) {}
                 .environmentObject(store)

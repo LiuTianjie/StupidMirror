@@ -160,6 +160,9 @@ struct StandaloneMirrorWindowView: View {
                 }
 
                 if controlSession.isConnecting {
+                    Color.black.opacity(0.42)
+                        .allowsHitTesting(false)
+
                     ControlConnectionLoadingView(controlSession: controlSession) {
                         store.stopControl(for: session)
                     }

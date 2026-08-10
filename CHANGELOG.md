@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.5 - 2026-08-10
+
+- Replace the translucent Agent loading material with an opaque adaptive surface and dimmed phone backdrop so every loading message stays readable over any mirrored content.
+- Use light/dark adaptive accent, success, pending, danger, and control colors across status labels, badges, buttons, and MCP errors.
+- Add automated contrast regression coverage for both appearances, requiring normal text and all loading-overlay label levels to meet at least a 4.5:1 contrast ratio.
+
 ## 0.2.4 - 2026-08-10
 
 - Show an immediate, cancelable Agent loading card with the current startup phase, elapsed time, and realistic reuse or first-install expectations.
