@@ -144,6 +144,14 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertLessThanOrEqual(configuration.preinstalledWDAStartupTimeoutSeconds, 35)
     }
 
+    func testWDAStartupFailureHasABoundedUserVisibleWait() {
+        let configuration = AppiumControlConfiguration()
+
+        XCTAssertLessThanOrEqual(configuration.wdaLaunchTimeoutMS, 75_000)
+        XCTAssertLessThanOrEqual(configuration.wdaConnectionTimeoutMS, 75_000)
+        XCTAssertLessThanOrEqual(configuration.sessionStartupTimeoutSeconds, 105)
+    }
+
     func testPrebuiltWDAArtifactDetectionOnlyAcceptsBuiltApplicationDirectory() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

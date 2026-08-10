@@ -5,7 +5,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 destination="${1:?Usage: scripts/vendor-appium-runtime.sh <destination>}"
 cache_dir="${APPIUM_RUNTIME_CACHE:-${repo_root}/.build/appium-runtime}"
 appium_version="${APPIUM_VERSION:-3.5.2}"
-xcuitest_driver="${APPIUM_XCUITEST_DRIVER:-xcuitest}"
+xcuitest_driver_name="${APPIUM_XCUITEST_DRIVER_NAME:-xcuitest}"
+xcuitest_driver_version="${APPIUM_XCUITEST_DRIVER_VERSION:-12.3.0}"
+remote_xpc_version="${APPIUM_IOS_REMOTEXPC_VERSION:-5.13.2}"
 
 node_bin="${NODE_BINARY:-$(command -v node || true)}"
 npm_bin="${NPM_BINARY:-$(command -v npm || true)}"
@@ -24,8 +26,38 @@ runtime_stamp="${cache_dir}/.stupidmirror-runtime"
 node_version="$("$node_bin" --version)"
 wanted_stamp="appium=${appium_version}
 node=${node_version}
-driver=${xcuitest_driver}
-layout=6"
+driver=${xcuitest_driver_name}@${xcuitest_driver_version}
+remotexpc=${remote_xpc_version}
+layout=7"
+
+assert_runtime_versions() {
+  local driver_package="${cache_dir}/home/node_modules/appium-xcuitest-driver/package.json"
+  local remote_xpc_package="${cache_dir}/home/node_modules/appium-ios-remotexpc/package.json"
+  local actual_driver_version
+  local actual_remote_xpc_version
+
+  if [ ! -f "$driver_package" ] || [ ! -f "$remote_xpc_package" ]; then
+    echo "Bundled Appium runtime is missing the pinned XCUITest or RemoteXPC package." >&2
+    exit 1
+  fi
+
+  actual_driver_version="$("$node_bin" -p "require(process.argv[1]).version" "$driver_package")"
+  actual_remote_xpc_version="$("$node_bin" -p "require(process.argv[1]).version" "$remote_xpc_package")"
+  if [ "$actual_driver_version" != "$xcuitest_driver_version" ]; then
+    echo "XCUITest driver version mismatch: expected ${xcuitest_driver_version}, got ${actual_driver_version}." >&2
+    exit 1
+  fi
+  if [ "$actual_remote_xpc_version" != "$remote_xpc_version" ]; then
+    echo "RemoteXPC version mismatch: expected ${remote_xpc_version}, got ${actual_remote_xpc_version}." >&2
+    exit 1
+  fi
+
+  (
+    cd "${cache_dir}/home"
+    APPIUM_HOME="${cache_dir}/home" "$node_bin" --input-type=module -e \
+      'await import("appium-ios-remotexpc")'
+  )
+}
 
 prune_runtime() {
   if [ "${APPIUM_RUNTIME_PRUNE:-true}" != "true" ]; then
@@ -97,19 +129,25 @@ if [ ! -f "$runtime_stamp" ] || [ "$(cat "$runtime_stamp")" != "$wanted_stamp" ]
 JSON
 
   "$npm_bin" --prefix "$cache_dir" install --omit=dev --no-audit --no-fund
-  APPIUM_HOME="${cache_dir}/home" "${cache_dir}/bin/node" "${cache_dir}/node_modules/appium/build/lib/main.js" driver install "$xcuitest_driver"
+  APPIUM_HOME="${cache_dir}/home" "${cache_dir}/bin/node" "${cache_dir}/node_modules/appium/build/lib/main.js" \
+    driver install "${xcuitest_driver_name}@${xcuitest_driver_version}"
+  "$npm_bin" --prefix "${cache_dir}/home" install --save-dev --save-exact \
+    "appium-ios-remotexpc@${remote_xpc_version}" --no-audit --no-fund
   nested_appium="${cache_dir}/home/node_modules/appium-xcuitest-driver/node_modules/appium"
   if [ -L "$nested_appium" ]; then
     rm "$nested_appium"
     cp -R "${cache_dir}/node_modules/appium" "$nested_appium"
   fi
   APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
+  assert_runtime_versions
   prune_runtime
 
   printf '%s' "$wanted_stamp" > "$runtime_stamp"
 else
   echo "Using cached Appium runtime: ${cache_dir}"
 fi
+
+assert_runtime_versions
 
 mkdir -p "${cache_dir}/bin"
 cat > "${cache_dir}/bin/appium" <<'SH'

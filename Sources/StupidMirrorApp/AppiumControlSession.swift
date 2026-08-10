@@ -13,9 +13,9 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var mjpegServerPort: Int = 9100
     var wdaStartupRetries: Int = 3
     var wdaStartupRetryIntervalMS: Int = 15_000
-    var wdaLaunchTimeoutMS: Int = 180_000
-    var wdaConnectionTimeoutMS: Int = 180_000
-    var sessionStartupTimeoutSeconds: TimeInterval = 210
+    var wdaLaunchTimeoutMS: Int = 75_000
+    var wdaConnectionTimeoutMS: Int = 75_000
+    var sessionStartupTimeoutSeconds: TimeInterval = 105
     var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 35
     var newCommandTimeoutSeconds: Int = 300
     var allowProvisioningDeviceRegistration: Bool = true

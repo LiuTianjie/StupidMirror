@@ -8,6 +8,9 @@ official_bundle_id="com.gaojiua.StupidMirror"
 official_team_id="L95PYLFT86"
 official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1/stupidmirror-license"
 official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
+official_appium_version="3.5.2"
+official_xcuitest_driver_version="12.3.0"
+official_remote_xpc_version="5.13.2"
 tag="${1:-${TAG:-}}"
 version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
@@ -156,6 +159,7 @@ assert_release_app() {
   local signed_entitlements="${tmp_dir}/signed-entitlements.plist"
   local signed_node_entitlements="${tmp_dir}/signed-node-entitlements.plist"
   local bundled_node="${app}/Contents/Resources/Appium/bin/node"
+  local bundled_runtime="${app}/Contents/Resources/Appium"
   local nested_binary
   local nested_team_id
   local nested_count=0
@@ -242,6 +246,27 @@ assert_release_app() {
     echo "Release does not contain a signed bundled Node/Appium runtime." >&2
     exit 1
   fi
+
+  value="$("$bundled_node" -p "require(process.argv[1]).version" "${bundled_runtime}/node_modules/appium/package.json")"
+  if [ "$value" != "$official_appium_version" ]; then
+    echo "Bundled Appium version mismatch: expected ${official_appium_version}, got ${value:-<empty>}." >&2
+    exit 1
+  fi
+  value="$("$bundled_node" -p "require(process.argv[1]).version" "${bundled_runtime}/home/node_modules/appium-xcuitest-driver/package.json")"
+  if [ "$value" != "$official_xcuitest_driver_version" ]; then
+    echo "Bundled XCUITest driver version mismatch: expected ${official_xcuitest_driver_version}, got ${value:-<empty>}." >&2
+    exit 1
+  fi
+  value="$("$bundled_node" -p "require(process.argv[1]).version" "${bundled_runtime}/home/node_modules/appium-ios-remotexpc/package.json")"
+  if [ "$value" != "$official_remote_xpc_version" ]; then
+    echo "Bundled RemoteXPC version mismatch: expected ${official_remote_xpc_version}, got ${value:-<empty>}." >&2
+    exit 1
+  fi
+  (
+    cd "${bundled_runtime}/home"
+    APPIUM_HOME="${bundled_runtime}/home" "$bundled_node" --input-type=module -e \
+      'await import("appium-ios-remotexpc")'
+  )
 
   if ! codesign -d --entitlements :- "$bundled_node" > "$signed_node_entitlements" 2>/dev/null; then
     echo "Could not read bundled Node entitlements." >&2
