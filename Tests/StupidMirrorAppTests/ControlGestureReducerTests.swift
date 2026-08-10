@@ -3,37 +3,63 @@ import CoreGraphics
 import XCTest
 
 final class ControlGestureReducerTests: XCTestCase {
-    func testDraggingStreamsSwipeSegmentsWhileMouseMoves() {
+    func testDraggingEmitsOneCoherentSwipeOnMouseUp() {
         var reducer = ControlGestureReducer()
 
-        reducer.beginMouseDrag(at: CGPoint(x: 10, y: 20))
+        reducer.beginMouseDrag(at: CGPoint(x: 10, y: 20), timestamp: 0)
 
-        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 20, y: 25)))
-        XCTAssertEqual(
-            reducer.updateMouseDrag(to: CGPoint(x: 50, y: 45)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 50, y: 45), durationMS: 16)
-        )
-        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 66, y: 54)))
-        XCTAssertEqual(
-            reducer.updateMouseDrag(to: CGPoint(x: 90, y: 70)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 50, y: 45), to: CGPoint(x: 90, y: 70), durationMS: 16)
-        )
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 20, y: 25), timestamp: 0.05))
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 50, y: 45), timestamp: 0.30))
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 66, y: 54), timestamp: 0.45))
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 90, y: 70), timestamp: 0.60))
         XCTAssertEqual(
             reducer.endMouseDrag(at: CGPoint(x: 112, y: 83)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 90, y: 70), to: CGPoint(x: 112, y: 83), durationMS: 16)
+            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 112, y: 83), durationMS: 220)
         )
     }
 
-    func testMouseUpDoesNotReplayAlreadyStreamedDrag() {
+    func testShortCompletedDragUsesItsFullDistance() {
         var reducer = ControlGestureReducer()
 
-        reducer.beginMouseDrag(at: CGPoint(x: 10, y: 20))
+        reducer.beginMouseDrag(at: CGPoint(x: 10, y: 20), timestamp: 0)
 
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 18, y: 24), timestamp: 0.05))
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 50, y: 45), timestamp: 0.40))
         XCTAssertEqual(
-            reducer.updateMouseDrag(to: CGPoint(x: 50, y: 45)),
-            ControlGestureCommand.swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 50, y: 45), durationMS: 16)
+            reducer.endMouseDrag(at: CGPoint(x: 51, y: 46)),
+            .swipe(from: CGPoint(x: 10, y: 20), to: CGPoint(x: 51, y: 46), durationMS: 220)
         )
-        XCTAssertNil(reducer.endMouseDrag(at: CGPoint(x: 51, y: 46)))
+    }
+
+    func testFastSwipeIsEmittedBeforeMouseUpAndNotDuplicated() {
+        var reducer = ControlGestureReducer()
+        reducer.beginMouseDrag(at: CGPoint(x: 10, y: 20), timestamp: 0)
+
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 20, y: 24), timestamp: 0.02))
+        XCTAssertEqual(
+            reducer.updateMouseDrag(to: CGPoint(x: 80, y: 30), timestamp: 0.08),
+            .flick(from: CGPoint(x: 10, y: 20), toward: CGPoint(x: 80, y: 30), durationMS: 160)
+        )
+        XCTAssertNil(reducer.updateMouseDrag(to: CGPoint(x: 110, y: 35), timestamp: 0.10))
+        XCTAssertNil(reducer.endMouseDrag(at: CGPoint(x: 120, y: 40)))
+    }
+
+    func testFastHorizontalFlickUsesNativeFullScreenDirection() {
+        let direction = ControlGestureNSView.flickDirection(
+            from: CGPoint(x: 0.85, y: 0.5),
+            toward: CGPoint(x: 0.72, y: 0.49)
+        )
+
+        XCTAssertEqual(direction, .left)
+    }
+
+    func testFastVerticalFlickUsesNativeFullScreenDirection() {
+        let direction = ControlGestureNSView.flickDirection(
+            from: CGPoint(x: 0.5, y: 0.80),
+            toward: CGPoint(x: 0.51, y: 0.68)
+        )
+
+        XCTAssertEqual(direction, .up)
     }
 
     func testShortMouseGestureEmitsTap() {
@@ -51,12 +77,12 @@ final class ControlGestureReducerTests: XCTestCase {
         var reducer = ControlGestureReducer()
 
         reducer.beginScroll(at: CGPoint(x: 100, y: 200))
-        XCTAssertEqual(
-            reducer.appendScroll(delta: CGSize(width: 0, height: 14), precise: true),
-            .swipe(from: CGPoint(x: 100, y: 200), to: CGPoint(x: 100, y: 244.8), durationMS: 45)
-        )
+        XCTAssertNil(reducer.appendScroll(delta: CGSize(width: 0, height: 14), precise: true))
         XCTAssertNil(reducer.appendScroll(delta: CGSize(width: 0, height: 8), precise: true))
-        XCTAssertNil(reducer.flushScroll(precise: true))
+        XCTAssertEqual(
+            reducer.flushScroll(precise: true),
+            .swipe(from: CGPoint(x: 100, y: 200), to: CGPoint(x: 100, y: 270.4), durationMS: 180)
+        )
         XCTAssertNil(reducer.flushScroll(precise: true))
     }
 
@@ -66,6 +92,17 @@ final class ControlGestureReducerTests: XCTestCase {
 
     func testControlSessionPrefersInstalledWDAByDefault() {
         XCTAssertTrue(AppiumControlConfiguration().preferInstalledWDA)
+    }
+
+    func testFirstInstallUsesAutomaticProvisioningAndTeamScopedBundleID() {
+        var configuration = AppiumControlConfiguration()
+        configuration.xcodeOrgID = "6XRHTPFUB6"
+
+        XCTAssertTrue(configuration.allowProvisioningDeviceRegistration)
+        XCTAssertEqual(configuration.installationWDABundleID, "com.stupidmirror.wda.6xrhtpfub6")
+
+        configuration.wdaBundleID = "com.example.CustomWDA"
+        XCTAssertEqual(configuration.installationWDABundleID, "com.example.CustomWDA")
     }
 
     func testControlConfigurationIsolatesParallelDevicesDeterministically() {
@@ -97,6 +134,7 @@ final class ControlGestureReducerTests: XCTestCase {
         )
 
         XCTAssertEqual(capabilities["appium:wdaLocalPort"] as? Int, 18_123)
+        XCTAssertEqual(capabilities["appium:allowProvisioningDeviceRegistration"] as? Bool, true)
     }
 
     func testPreinstalledWDAReuseUsesShortProbeTimeout() {
@@ -104,6 +142,21 @@ final class ControlGestureReducerTests: XCTestCase {
 
         XCTAssertLessThan(configuration.preinstalledWDAStartupTimeoutSeconds, configuration.sessionStartupTimeoutSeconds)
         XCTAssertLessThanOrEqual(configuration.preinstalledWDAStartupTimeoutSeconds, 35)
+    }
+
+    func testPrebuiltWDAArtifactDetectionOnlyAcceptsBuiltApplicationDirectory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertFalse(AppiumControlSession.hasPrebuiltWDA(at: root.path))
+
+        let product = root
+            .appendingPathComponent("Build/Products/Debug-iphoneos", isDirectory: true)
+            .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: product, withIntermediateDirectories: true)
+
+        XCTAssertTrue(AppiumControlSession.hasPrebuiltWDA(at: root.path))
     }
 
     func testInstalledWDASessionUsesLaunchOnlyCapability() {
@@ -147,29 +200,55 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertFalse(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(400, #"{"value":{"message":"bad argument: x must be a number"}}"#)))
     }
 
-    func testAppiumDragUsesShortW3CPointerActionInsteadOfHalfSecondHold() throws {
+    func testAppiumDragUsesOneShortW3CGestureWithoutHalfSecondHold() throws {
         let payload = AppiumPointerAction.dragPayload(
             from: CGPoint(x: 10, y: 20),
             to: CGPoint(x: 80, y: 120),
-            durationMS: 16
+            durationMS: 200
         )
         let sequences = try XCTUnwrap(payload["actions"] as? [[String: Any]])
-        let pointer = try XCTUnwrap(sequences.first)
-        let actions = try XCTUnwrap(pointer["actions"] as? [[String: Any]])
+        let actions = try XCTUnwrap(sequences.first?["actions"] as? [[String: Any]])
 
-        XCTAssertEqual(pointer["type"] as? String, "pointer")
-        XCTAssertEqual((pointer["parameters"] as? [String: Any])?["pointerType"] as? String, "touch")
-        XCTAssertEqual(actions.compactMap { $0["type"] as? String }, [
-            "pointerMove",
-            "pointerDown",
-            "pointerMove",
-            "pointerUp"
+        XCTAssertEqual(actions.map { $0["type"] as? String }, [
+            "pointerMove", "pointerDown", "pointerMove", "pointerUp"
         ])
-        XCTAssertEqual(actions[0]["x"] as? Int, 10)
-        XCTAssertEqual(actions[0]["y"] as? Int, 20)
-        XCTAssertEqual(actions[2]["x"] as? Int, 80)
-        XCTAssertEqual(actions[2]["y"] as? Int, 120)
-        XCTAssertEqual(actions[2]["duration"] as? Int, 16)
+        XCTAssertEqual(actions[2]["duration"] as? Int, 200)
         XCTAssertLessThan(actions[2]["duration"] as? Int ?? 500, 500)
+    }
+
+    func testLowLatencyControlSettingsDisableTwoSecondAnimationWait() throws {
+        let settings = try XCTUnwrap(
+            AppiumControlSettings.lowLatencyPayload()["settings"] as? [String: Any]
+        )
+
+        XCTAssertEqual(settings["animationCoolOffTimeout"] as? Double, 0)
+        XCTAssertEqual(settings["waitForIdleTimeout"] as? Double, 0)
+    }
+
+    func testNativeFlickUsesAFullScreenW3CTrajectory() {
+        let points = AppiumControlSession.flickPoints(
+            direction: .left,
+            size: DeviceScreenSize(width: 420, height: 912)
+        )
+
+        XCTAssertEqual(points.start.x, 357, accuracy: 0.01)
+        XCTAssertEqual(points.end.x, 63, accuracy: 0.01)
+        XCTAssertEqual(points.start.y, 456, accuracy: 0.01)
+        XCTAssertEqual(points.end.y, 456, accuracy: 0.01)
+    }
+
+    func testSessionWithoutLaunchBundleStartsFromCurrentForegroundApp() {
+        let capabilities = AppiumSessionCapabilities.make(udid: "test-udid", bundleID: "  ")
+
+        XCTAssertNil(capabilities["appium:bundleId"])
+    }
+
+    func testSessionIncludesExplicitLaunchBundleWhenConfigured() {
+        let capabilities = AppiumSessionCapabilities.make(
+            udid: "test-udid",
+            bundleID: " com.example.App "
+        )
+
+        XCTAssertEqual(capabilities["appium:bundleId"] as? String, "com.example.App")
     }
 }

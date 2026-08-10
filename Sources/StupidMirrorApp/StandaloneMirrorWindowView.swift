@@ -220,6 +220,9 @@ struct StandaloneMirrorWindowView: View {
             },
             onSwipe: { start, end, durationMS in
                 store.swipeControl(for: session, from: start, to: end, durationMS: durationMS)
+            },
+            onFlick: { direction in
+                store.flickControl(for: session, direction: direction)
             }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct GalleryView: View {
@@ -34,9 +35,9 @@ struct GalleryView: View {
                     .environmentObject(store)
                     .frame(width: 560, height: 520)
             case .settings:
-                SettingsView()
+                SettingsView(initialTab: store.settingsTab)
                     .environmentObject(store)
-                    .frame(width: 540, height: 520)
+                    .frame(width: 720, height: 650)
             case .activation:
                 LicenseActivationView(licenseManager: store.licenseManager)
                     .environmentObject(store)
@@ -200,6 +201,13 @@ struct GalleryView: View {
                 Label(store.t("toolbar.settings"), systemImage: "gearshape")
             }
             .help(store.t("toolbar.settings"))
+
+            Button {
+                store.presentMCPSettings()
+            } label: {
+                MCPToolbarLabel(manager: store.mcpServer)
+            }
+            .help(store.t("toolbar.mcp"))
 
             Button {
                 store.toggleDiagnostics()
@@ -673,9 +681,23 @@ struct ControlSetupGuideView: View {
     }
 }
 
+private struct MCPToolbarLabel: View {
+    @ObservedObject var manager: MCPServerManager
+
+    var body: some View {
+        Label("MCP", systemImage: manager.status.isRunning ? "terminal.fill" : "terminal")
+            .foregroundStyle(manager.status.isRunning ? Theme.Palette.live : .secondary)
+    }
+}
+
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: DeviceGalleryStore
+    @State private var selectedTab: DashboardSettingsTab
+
+    init(initialTab: DashboardSettingsTab = .general) {
+        _selectedTab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -701,69 +723,78 @@ struct SettingsView: View {
 
             Divider()
 
-            Form {
-                LicenseSettingsSection(licenseManager: store.licenseManager)
+            TabView(selection: $selectedTab) {
+                Form {
+                    LicenseSettingsSection(licenseManager: store.licenseManager)
 
-                Section(store.t("settings.language")) {
-                    Picker(store.t("settings.language"), selection: $store.language) {
-                        ForEach(AppLanguage.allCases) { language in
-                            Text(language.displayName).tag(language)
+                    Section(store.t("settings.language")) {
+                        Picker(store.t("settings.language"), selection: $store.language) {
+                            ForEach(AppLanguage.allCases) { language in
+                                Text(language.displayName).tag(language)
+                            }
                         }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
-                }
 
-                Section(store.t("settings.mirroring")) {
-                    Toggle(store.t("settings.autoOpen"), isOn: $store.autoStartMirrors)
-                }
+                    Section(store.t("settings.mirroring")) {
+                        Toggle(store.t("settings.autoOpen"), isOn: $store.autoStartMirrors)
+                    }
 
-                Section(store.t("settings.control")) {
-                    HStack {
-                        StatusPill(
-                            title: store.appiumServiceStateLabel(store.appiumService.state),
-                            color: appiumServiceColor
-                        )
-                        Text(store.appiumService.message)
+                    Section(store.t("settings.control")) {
+                        HStack {
+                            StatusPill(
+                                title: store.appiumServiceStateLabel(store.appiumService.state),
+                                color: appiumServiceColor
+                            )
+                            Text(store.appiumService.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+
+                        HStack {
+                            Button {
+                                store.appiumService.check(serverURL: store.appiumServerURL)
+                            } label: {
+                                Label(store.t("settings.check"), systemImage: "waveform.path.ecg")
+                            }
+
+                            Button {
+                                store.appiumService.start(serverURL: store.appiumServerURL)
+                            } label: {
+                                Label(store.t("settings.startAppium"), systemImage: "play.fill")
+                            }
+
+                            Button {
+                                store.appiumService.stop()
+                            } label: {
+                                Label(store.t("settings.stop"), systemImage: "stop.fill")
+                            }
+                        }
+
+                        Text(store.t("settings.appiumHelp"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
 
-                    HStack {
-                        Button {
-                            store.appiumService.check(serverURL: store.appiumServerURL)
-                        } label: {
-                            Label(store.t("settings.check"), systemImage: "waveform.path.ecg")
+                        DisclosureGroup(store.t("settings.controlAdvanced")) {
+                            TextField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
+                            TextField(store.t("settings.bundleID"), text: $store.controlBundleID)
+                            TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
+                            TextField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
+                            TextField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
+                            Toggle(store.t("settings.usePrebuiltWDA"), isOn: $store.controlUsePrebuiltWDA)
                         }
-
-                        Button {
-                            store.appiumService.start(serverURL: store.appiumServerURL)
-                        } label: {
-                            Label(store.t("settings.startAppium"), systemImage: "play.fill")
-                        }
-
-                        Button {
-                            store.appiumService.stop()
-                        } label: {
-                            Label(store.t("settings.stop"), systemImage: "stop.fill")
-                        }
-                    }
-
-                    Text(store.t("settings.appiumHelp"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    DisclosureGroup(store.t("settings.controlAdvanced")) {
-                        TextField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
-                        TextField(store.t("settings.bundleID"), text: $store.controlBundleID)
-                        TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
-                        TextField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
-                        TextField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
-                        Toggle(store.t("settings.usePrebuiltWDA"), isOn: $store.controlUsePrebuiltWDA)
                     }
                 }
+                .formStyle(.grouped)
+                .tabItem { Label(store.t("settings.general"), systemImage: "gearshape") }
+                .tag(DashboardSettingsTab.general)
+
+                MCPAutomationSettingsView(manager: store.mcpServer)
+                    .environmentObject(store)
+                    .tabItem { Label(store.t("mcp.title"), systemImage: "terminal") }
+                    .tag(DashboardSettingsTab.mcp)
             }
-            .formStyle(.grouped)
             .padding(12)
         }
     }
@@ -779,5 +810,201 @@ struct SettingsView: View {
         case .unknown, .stopped:
             .secondary
         }
+    }
+}
+
+private enum MCPTutorialClient: String, CaseIterable, Identifiable {
+    case codex
+    case claude
+    var id: String { rawValue }
+}
+
+struct MCPAutomationSettingsView: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @ObservedObject var manager: MCPServerManager
+    @State private var portDraft = ""
+    @State private var tutorialClient: MCPTutorialClient = .codex
+    @State private var showToken = false
+    @State private var confirmRotation = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                GroupBox(store.t("mcp.server")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle(
+                            store.t("mcp.enabled"),
+                            isOn: Binding(
+                                get: { manager.enabled },
+                                set: { value in Task { await manager.setEnabled(value) } }
+                            )
+                        )
+                        HStack {
+                            StatusPill(title: statusTitle, color: statusColor)
+                            Text(manager.endpoint)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                            Spacer()
+                            Text(String(format: store.t("mcp.clients"), manager.connectedClientCount))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if case let .failed(message) = manager.status {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                                .textSelection(.enabled)
+                        }
+                        HStack {
+                            TextField(store.t("mcp.port"), text: $portDraft)
+                                .frame(width: 110)
+                            Button(store.t("mcp.applyPort")) {
+                                applyPort()
+                            }
+                            Text(store.t("mcp.localOnly"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(8)
+                }
+
+                GroupBox(store.t("mcp.token")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text(showToken ? manager.bearerToken : String(repeating: "•", count: 32))
+                                .font(.system(.caption, design: .monospaced))
+                                .lineLimit(1)
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button(showToken ? store.t("mcp.hide") : store.t("mcp.show")) {
+                                showToken.toggle()
+                            }
+                            Button(store.t("mcp.copyToken")) { copy(manager.bearerToken) }
+                            Button(store.t("mcp.rotateToken"), role: .destructive) {
+                                confirmRotation = true
+                            }
+                        }
+                        Text(store.t("mcp.tokenHelp"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                }
+
+                GroupBox(store.t("mcp.connect")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Picker("", selection: $tutorialClient) {
+                            Text("Codex").tag(MCPTutorialClient.codex)
+                            Text("Claude Code").tag(MCPTutorialClient.claude)
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text(tutorialClient == .codex ? store.t("mcp.codexSteps") : store.t("mcp.claudeSteps"))
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack(alignment: .top) {
+                            ScrollView(.horizontal) {
+                                Text(connectionText)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .padding(10)
+                            }
+                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                            Button(store.t("mcp.copyConfig")) { copy(connectionText) }
+                        }
+
+                        Text(store.t("mcp.verify"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("“\(store.t("mcp.testPrompt"))”")
+                            .font(.caption)
+                            .textSelection(.enabled)
+                    }
+                    .padding(8)
+                }
+
+                GroupBox(store.t("mcp.logs")) {
+                    if manager.callLog.isEmpty {
+                        Text(store.t("mcp.noLogs"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                    } else {
+                        VStack(spacing: 6) {
+                            ForEach(manager.callLog.prefix(20)) { entry in
+                                HStack {
+                                    Circle()
+                                        .fill(entry.succeeded ? Color.green : Color.red)
+                                        .frame(width: 7, height: 7)
+                                    Text(entry.tool).font(.system(.caption, design: .monospaced))
+                                    Spacer()
+                                    Text("\(entry.durationMilliseconds) ms")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(8)
+                    }
+                }
+            }
+            .padding(8)
+        }
+        .onAppear { portDraft = String(manager.port) }
+        .confirmationDialog(store.t("mcp.rotateConfirm"), isPresented: $confirmRotation) {
+            Button(store.t("mcp.rotateToken"), role: .destructive) {
+                do { try manager.rotateToken() } catch { errorMessage = error.localizedDescription }
+            }
+            Button(store.t("common.cancel"), role: .cancel) {}
+        }
+        .alert(store.t("mcp.error"), isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private var connectionText: String {
+        tutorialClient == .codex ? manager.codexConfiguration : manager.claudeCommand
+    }
+
+    private var statusTitle: String {
+        switch manager.status {
+        case .stopped: store.t("mcp.status.stopped")
+        case .starting: store.t("mcp.status.starting")
+        case .running: store.t("mcp.status.running")
+        case .failed: store.t("mcp.status.failed")
+        }
+    }
+
+    private var statusColor: Color {
+        switch manager.status {
+        case .running: .green
+        case .starting: .orange
+        case .failed: .red
+        case .stopped: .secondary
+        }
+    }
+
+    private func applyPort() {
+        guard let port = Int(portDraft) else {
+            errorMessage = store.t("mcp.invalidPort")
+            return
+        }
+        Task {
+            do { try await manager.setPort(port) }
+            catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    private func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
     }
 }

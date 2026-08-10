@@ -17,9 +17,16 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     }
 }
 
+enum DashboardSettingsTab: Hashable, Sendable {
+    case general
+    case mcp
+}
+
 @MainActor
 final class DeviceGalleryStore: ObservableObject {
     let licenseManager: LicenseManager
+    lazy var automationService = DeviceAutomationService(store: self)
+    lazy var mcpServer = MCPServerManager(automation: automationService)
 
     @Published private(set) var sessions: [DeviceSession] = []
     @Published private(set) var permissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
@@ -48,7 +55,7 @@ final class DeviceGalleryStore: ObservableObject {
         DeviceGalleryStore.controlBundleIDDefaultsKey,
         env: "STUPIDMIRROR_CONTROL_BUNDLE_ID",
         info: "StupidMirrorDefaultControlBundleID",
-        fallback: "com.apple.Preferences"
+        fallback: ""
     ) {
         didSet { UserDefaults.standard.set(controlBundleID, forKey: Self.controlBundleIDDefaultsKey) }
     }
@@ -87,6 +94,7 @@ final class DeviceGalleryStore: ObservableObject {
     @Published private(set) var detectedSigningTeams: [XcodeSigningTeam] = []
     @Published private(set) var isDetectingSigningTeams = false
     @Published private(set) var activeSheet: DashboardSheet?
+    @Published private(set) var settingsTab: DashboardSettingsTab = .general
     @Published var selectedSessionID: String?
     @Published var language: AppLanguage {
         didSet {
@@ -178,9 +186,10 @@ final class DeviceGalleryStore: ObservableObject {
             DiagnosticItem(name: t("diagnostic.appiumServer"), value: appiumServerURL),
             DiagnosticItem(name: t("diagnostic.appiumService"), value: appiumServiceStateLabel(appiumService.state)),
             DiagnosticItem(name: t("diagnostic.appiumDetail"), value: appiumService.message),
-            DiagnosticItem(name: t("diagnostic.controlBundle"), value: controlBundleID),
+            DiagnosticItem(name: t("diagnostic.deviceControlState"), value: deviceControlDiagnosticLabel),
+            DiagnosticItem(name: t("diagnostic.controlBundle"), value: controlBundleID.isEmpty ? t("common.notSet") : controlBundleID),
             DiagnosticItem(name: t("diagnostic.xcodeTeam"), value: controlXcodeOrgID.isEmpty ? t("common.notSet") : controlXcodeOrgID),
-            DiagnosticItem(name: t("diagnostic.wdaBundle"), value: controlWDABundleID.isEmpty ? t("common.default") : controlWDABundleID),
+            DiagnosticItem(name: t("diagnostic.wdaBundle"), value: effectiveControlWDABundleID.isEmpty ? t("common.default") : effectiveControlWDABundleID),
             DiagnosticItem(name: t("diagnostic.libimobiledevice"), value: DeviceMetadataService.isAvailable ? t("connection.connected") : t("appium.state.missing"))
         ]
     }
@@ -197,6 +206,22 @@ final class DeviceGalleryStore: ObservableObject {
         sessions.filter { $0.device.connectionState == .disconnected }
     }
 
+    private var deviceControlDiagnosticLabel: String {
+        if sessions.contains(where: { $0.controlSession.isReady }) {
+            return t("control.state.ready")
+        }
+        if sessions.contains(where: { $0.controlSession.isConnecting }) {
+            return t("control.state.connectingWDA")
+        }
+        if sessions.contains(where: {
+            if case .failed = $0.controlSession.state { return true }
+            return false
+        }) {
+            return t("control.state.failed")
+        }
+        return t("control.state.unavailable")
+    }
+
     init(licenseManager: LicenseManager? = nil) {
         self.licenseManager = licenseManager ?? LicenseManager.live()
         language = Self.initialLanguage
@@ -206,7 +231,9 @@ final class DeviceGalleryStore: ObservableObject {
         startPeriodicRefresh()
         refreshIfCameraAuthorized()
         Task { @MainActor [weak self] in
-            await self?.licenseManager.bootstrap()
+            guard let self else { return }
+            await self.licenseManager.bootstrap()
+            await self.mcpServer.startIfEnabled()
         }
     }
 
@@ -338,6 +365,21 @@ final class DeviceGalleryStore: ObservableObject {
             guard self.refreshGeneration == generation, !Task.isCancelled else { return }
             self.applyRefresh(devices: devices, metadata: metadata)
             self.finishRefresh(generation: generation)
+        }
+    }
+
+    func refreshForAutomation() async throws {
+        guard permissionStatus == .authorized else {
+            throw DeviceAutomationError.permissionRequired
+        }
+        refresh()
+        let deadline = ContinuousClock.now + .seconds(15)
+        while refreshTask != nil {
+            guard ContinuousClock.now < deadline else {
+                throw DeviceAutomationError.timedOut("Device refresh timed out.")
+            }
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(100))
         }
     }
 
@@ -485,6 +527,12 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func presentSettings() {
+        settingsTab = .general
+        setActiveSheet(.settings)
+    }
+
+    func presentMCPSettings() {
+        settingsTab = .mcp
         setActiveSheet(.settings)
     }
 
@@ -498,6 +546,7 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func toggleSettings() {
+        settingsTab = .general
         setActiveSheet(DashboardSheet.toggling(.settings, from: activeSheet))
     }
 
@@ -562,6 +611,9 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func performShutdown() async {
+        // Stop accepting automation first. In-flight MCP calls are allowed to
+        // finish or are cancelled before the underlying WDA/Appium sessions.
+        await mcpServer.shutdown()
         refreshGeneration &+= 1
         refreshTask?.cancel()
         refreshTask = nil
@@ -691,7 +743,7 @@ final class DeviceGalleryStore: ObservableObject {
             configuration: AppiumControlConfiguration(
                 xcodeOrgID: controlXcodeOrgID,
                 xcodeSigningID: controlXcodeSigningID,
-                wdaBundleID: controlWDABundleID,
+                wdaBundleID: effectiveControlWDABundleID,
                 usePrebuiltWDA: controlUsePrebuiltWDA,
                 useNewWDA: false,
                 derivedDataPath: wdaDerivedDataPath
@@ -719,15 +771,79 @@ final class DeviceGalleryStore: ObservableObject {
             let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
             guard !isShuttingDown else { return }
             if ready {
-                if controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    await detectSigningTeams()
-                }
+                await detectSigningTeams()
                 prepareControl(for: session)
             } else {
                 statusMessage = t("status.controlAppiumUnavailable")
                 presentControlSetup(for: session)
             }
         }
+    }
+
+    func connectControlForAutomation(for session: DeviceSession) async throws {
+        guard !isShuttingDown, session.device.connectionState == .connected else {
+            throw DeviceAutomationError.deviceUnavailable
+        }
+        guard session.device.udid?.isEmpty == false else {
+            throw DeviceAutomationError.deviceUnavailable
+        }
+        if session.controlSession.isReady { return }
+
+        let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
+        guard !isShuttingDown else { throw CancellationError() }
+        guard ready else { throw DeviceAutomationError.appiumUnavailable }
+        await detectSigningTeams()
+        prepareControl(for: session)
+
+        let deadline = ContinuousClock.now + .seconds(240)
+        while !session.controlSession.isReady {
+            if case let .failed(message) = session.controlSession.state {
+                throw DeviceAutomationError.controlFailed(t(message))
+            }
+            guard ContinuousClock.now < deadline else {
+                throw DeviceAutomationError.timedOut("Connecting iPhone control timed out.")
+            }
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(150))
+        }
+    }
+
+    func startMirrorForAutomation(for session: DeviceSession) async throws {
+        guard !isShuttingDown, session.device.connectionState == .connected else {
+            throw DeviceAutomationError.deviceUnavailable
+        }
+        if session.mirrorSession.state == .running { return }
+
+        switch await licenseManager.authorizeMirrorStart() {
+        case .allowed:
+            performAuthorizedStarts([session.id])
+        case .activationRequired:
+            showActivation(for: [session.id])
+            throw DeviceAutomationError.activationRequired
+        case let .unavailable(message):
+            throw DeviceAutomationError.licenseUnavailable(message)
+        }
+
+        let deadline = ContinuousClock.now + .seconds(20)
+        while session.mirrorSession.state != .running {
+            if case let .failed(message) = session.mirrorSession.state {
+                throw DeviceAutomationError.mirrorFailed(message)
+            }
+            guard ContinuousClock.now < deadline else {
+                throw DeviceAutomationError.timedOut("Starting mirror timed out.")
+            }
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
+    func setFloatingForAutomation(_ floating: Bool, session: DeviceSession) {
+        if floating {
+            floatingMirrorIDs.insert(session.id)
+        } else {
+            floatingMirrorIDs.remove(session.id)
+        }
+        MirrorWindowRegistry.shared.setFloating(floating, for: session)
     }
 
     func detectSigningTeams() async {
@@ -737,11 +853,11 @@ final class DeviceGalleryStore: ObservableObject {
         detectedSigningTeams = teams
         isDetectingSigningTeams = false
 
-        let savedID = controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard savedID.isEmpty else { return }
-        if teams.count == 1, let team = teams.first {
-            controlXcodeOrgID = team.id
-        }
+        controlXcodeOrgID = XcodeSigningTeamDetector.preferredTeamID(
+            savedID: controlXcodeOrgID,
+            applicationTeamID: XcodeSigningTeamDetector.currentApplicationTeamID(),
+            teams: teams
+        ) ?? ""
     }
 
     func selectSigningTeam(_ teamID: String) {
@@ -763,29 +879,74 @@ final class DeviceGalleryStore: ObservableObject {
         return url.path
     }
 
+    private var effectiveControlWDABundleID: String {
+        var configuration = AppiumControlConfiguration()
+        configuration.xcodeOrgID = controlXcodeOrgID
+        configuration.wdaBundleID = controlWDABundleID
+        return configuration.installationWDABundleID
+    }
+
     func tapControl(for session: DeviceSession, normalizedX: Double, normalizedY: Double) {
-        print("StupidMirror control tap \(session.device.name): \(normalizedX), \(normalizedY)")
-        session.controlSession.tapNormalized(x: normalizedX, y: normalizedY, serverURL: appiumServerURL)
+        performControlAction {
+            try await self.automationService.tap(
+                deviceID: session.id, x: normalizedX, y: normalizedY
+            )
+        }
     }
 
     func swipeControl(for session: DeviceSession, from start: CGPoint, to end: CGPoint, durationMS: Int) {
-        session.controlSession.swipeNormalized(from: start, to: end, durationMS: durationMS, serverURL: appiumServerURL)
+        performControlAction {
+            try await self.automationService.swipe(
+                deviceID: session.id,
+                startX: start.x,
+                startY: start.y,
+                endX: end.x,
+                endY: end.y,
+                durationMS: durationMS
+            )
+        }
+    }
+
+    func flickControl(for session: DeviceSession, direction: ControlFlickDirection) {
+        performControlAction {
+            try await self.automationService.flick(deviceID: session.id, direction: direction)
+        }
     }
 
     func typeControlText(_ text: String, for session: DeviceSession) {
-        session.controlSession.typeText(text, serverURL: appiumServerURL)
+        performControlAction {
+            try await self.automationService.typeText(deviceID: session.id, text: text)
+        }
     }
 
     func pressHome(for session: DeviceSession) {
-        session.controlSession.pressHome(serverURL: appiumServerURL)
+        performControlAction {
+            try await self.automationService.pressButton(deviceID: session.id, name: "home")
+        }
     }
 
     func openAppSwitcher(for session: DeviceSession) {
-        session.controlSession.openAppSwitcher(serverURL: appiumServerURL)
+        performControlAction {
+            try await self.automationService.appSwitcher(deviceID: session.id)
+        }
     }
 
     func pressBack(for session: DeviceSession) {
-        session.controlSession.pressBack(serverURL: appiumServerURL)
+        performControlAction {
+            try await self.automationService.back(deviceID: session.id)
+        }
+    }
+
+    private func performControlAction(_ action: @escaping @MainActor () async throws -> Void) {
+        Task { @MainActor [weak self] in
+            do {
+                try await action()
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
     }
 
     func select(_ session: DeviceSession) {

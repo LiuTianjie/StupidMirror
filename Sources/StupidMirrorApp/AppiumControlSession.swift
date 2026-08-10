@@ -18,6 +18,21 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var sessionStartupTimeoutSeconds: TimeInterval = 210
     var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 35
     var newCommandTimeoutSeconds: Int = 300
+    var allowProvisioningDeviceRegistration: Bool = true
+
+    var installationWDABundleID: String {
+        let configured = wdaBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configured.isEmpty {
+            return configured
+        }
+
+        let team = xcodeOrgID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        guard !team.isEmpty else { return "" }
+        return "com.stupidmirror.wda.\(team)"
+    }
 
     /// Appium's default WDA ports and a shared DerivedData directory cannot be
     /// used safely by simultaneous devices. Keep the two port ranges disjoint
@@ -175,6 +190,10 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 createdSessionID = sessionID
                 try Task.checkCancellation()
                 guard self.generation == taskGeneration else { throw CancellationError() }
+                self.setStatus("Optimizing control latency...", generation: taskGeneration)
+                try await client.configureLowLatencyControl(sessionID: sessionID)
+                try Task.checkCancellation()
+                guard self.generation == taskGeneration else { throw CancellationError() }
                 self.setStatus("Reading device screen size...", generation: taskGeneration)
                 let size = try await client.windowSize(sessionID: sessionID)
                 try Task.checkCancellation()
@@ -221,31 +240,56 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         generation: UInt64
     ) async throws -> String {
         if configuration.preferInstalledWDA {
-            do {
-                var installedConfiguration = configuration
-                installedConfiguration.usePreinstalledWDA = true
-                installedConfiguration.usePrebuiltWDA = false
-                installedConfiguration.useNewWDA = false
-                installedConfiguration.sessionStartupTimeoutSeconds = min(
-                    configuration.sessionStartupTimeoutSeconds,
-                    configuration.preinstalledWDAStartupTimeoutSeconds
-                )
-                setStatus("Reusing installed WebDriverAgent control agent...", generation: generation)
-                return try await startSession(
-                    client: client,
-                    udid: udid,
-                    bundleID: bundleID,
-                    configuration: installedConfiguration
-                )
-            } catch {
-                guard AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: error) else {
-                    throw error
+            if Self.hasPrebuiltWDA(at: configuration.derivedDataPath) {
+                do {
+                    var cachedConfiguration = configuration
+                    cachedConfiguration.usePreinstalledWDA = false
+                    cachedConfiguration.usePrebuiltWDA = true
+                    cachedConfiguration.useNewWDA = false
+                    setStatus("Starting cached WebDriverAgent control agent...", generation: generation)
+                    return try await startSession(
+                        client: client,
+                        udid: udid,
+                        bundleID: bundleID,
+                        configuration: cachedConfiguration
+                    )
+                } catch {
+                    guard AppiumError.shouldRetryWithFreshWDA(afterSessionError: error) else {
+                        throw error
+                    }
+                    try Task.checkCancellation()
+                    setStatus(
+                        "Cached WebDriverAgent could not start; rebuilding control agent...",
+                        generation: generation
+                    )
                 }
-                try Task.checkCancellation()
-                setStatus(
-                    "Installed WebDriverAgent is not reusable; installing control agent...",
-                    generation: generation
-                )
+            } else {
+                do {
+                    var installedConfiguration = configuration
+                    installedConfiguration.usePreinstalledWDA = true
+                    installedConfiguration.usePrebuiltWDA = false
+                    installedConfiguration.useNewWDA = false
+                    installedConfiguration.sessionStartupTimeoutSeconds = min(
+                        configuration.sessionStartupTimeoutSeconds,
+                        configuration.preinstalledWDAStartupTimeoutSeconds
+                    )
+                    setStatus("Reusing installed WebDriverAgent control agent...", generation: generation)
+                    return try await startSession(
+                        client: client,
+                        udid: udid,
+                        bundleID: bundleID,
+                        configuration: installedConfiguration
+                    )
+                } catch {
+                    guard AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: error) else {
+                        throw error
+                    }
+                    try Task.checkCancellation()
+                    setStatus(
+                        "Installed WebDriverAgent is not reusable; installing control agent...",
+                        generation: generation
+                    )
+                }
             }
         } else {
             setStatus(
@@ -261,6 +305,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         guard !installConfiguration.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw AppiumError.signingConfigurationRequired
         }
+        installConfiguration.wdaBundleID = installConfiguration.installationWDABundleID
         do {
             return try await startSession(
                 client: client,
@@ -283,6 +328,26 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 bundleID: bundleID,
                 configuration: freshConfiguration
             )
+        }
+    }
+
+    nonisolated static func hasPrebuiltWDA(
+        at derivedDataPath: String,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        let path = derivedDataPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return false }
+
+        let productsURL = URL(fileURLWithPath: path, isDirectory: true)
+            .appendingPathComponent("Build/Products", isDirectory: true)
+        let configurations = ["Debug-iphoneos", "Release-iphoneos"]
+        return configurations.contains { configuration in
+            let appURL = productsURL
+                .appendingPathComponent(configuration, isDirectory: true)
+                .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
+            var isDirectory: ObjCBool = false
+            return fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory)
+                && isDirectory.boolValue
         }
     }
 
@@ -345,6 +410,143 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         guard let sessionID, let screenSize else { return }
         let point = CGPoint(x: screenSize.width * 0.09, y: screenSize.height * 0.075)
         enqueueAction(.tap(point), sessionID: sessionID, serverURL: serverURL)
+    }
+
+    func tapNormalizedAwaiting(x: Double, y: Double, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.tap(
+            sessionID: context.sessionID,
+            point: CGPoint(x: x * context.size.width, y: y * context.size.height)
+        )
+    }
+
+    func doubleTapNormalizedAwaiting(x: Double, y: Double, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.doubleTap(
+            sessionID: context.sessionID,
+            point: CGPoint(x: x * context.size.width, y: y * context.size.height)
+        )
+    }
+
+    func longPressNormalizedAwaiting(
+        x: Double,
+        y: Double,
+        durationSeconds: Double,
+        serverURL: String
+    ) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.longPress(
+            sessionID: context.sessionID,
+            point: CGPoint(x: x * context.size.width, y: y * context.size.height),
+            durationSeconds: durationSeconds
+        )
+    }
+
+    func swipeNormalizedAwaiting(
+        from start: CGPoint,
+        to end: CGPoint,
+        durationMS: Int,
+        serverURL: String
+    ) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.swipe(
+            sessionID: context.sessionID,
+            from: CGPoint(x: start.x * context.size.width, y: start.y * context.size.height),
+            to: CGPoint(x: end.x * context.size.width, y: end.y * context.size.height),
+            durationMS: durationMS
+        )
+    }
+
+    func flickAwaiting(direction: ControlFlickDirection, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        let points = Self.flickPoints(direction: direction, size: context.size)
+        try await context.client.swipe(
+            sessionID: context.sessionID,
+            from: points.start,
+            to: points.end,
+            durationMS: 120
+        )
+    }
+
+    nonisolated static func flickPoints(
+        direction: ControlFlickDirection,
+        size: DeviceScreenSize
+    ) -> (start: CGPoint, end: CGPoint) {
+        let left = size.width * 0.15
+        let right = size.width * 0.85
+        let top = size.height * 0.18
+        let bottom = size.height * 0.82
+        let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+        switch direction {
+        case .left:
+            return (CGPoint(x: right, y: center.y), CGPoint(x: left, y: center.y))
+        case .right:
+            return (CGPoint(x: left, y: center.y), CGPoint(x: right, y: center.y))
+        case .up:
+            return (CGPoint(x: center.x, y: bottom), CGPoint(x: center.x, y: top))
+        case .down:
+            return (CGPoint(x: center.x, y: top), CGPoint(x: center.x, y: bottom))
+        }
+    }
+
+    func typeTextAwaiting(_ text: String, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.typeText(sessionID: context.sessionID, text: text)
+    }
+
+    func pressButtonAwaiting(_ name: String, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.pressButton(sessionID: context.sessionID, name: name)
+    }
+
+    func pressBackAwaiting(serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.tap(
+            sessionID: context.sessionID,
+            point: CGPoint(x: context.size.width * 0.09, y: context.size.height * 0.075)
+        )
+    }
+
+    func openAppSwitcherAwaiting(serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.pressButton(sessionID: context.sessionID, name: "home")
+        try await Task.sleep(for: .milliseconds(180))
+        try await context.client.pressButton(sessionID: context.sessionID, name: "home")
+    }
+
+    func screenshot(serverURL: String) async throws -> Data {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.screenshot(sessionID: context.sessionID)
+    }
+
+    func pageSource(serverURL: String) async throws -> String {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.pageSource(sessionID: context.sessionID)
+    }
+
+    func activateApp(bundleID: String, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.activateApp(sessionID: context.sessionID, bundleID: bundleID)
+    }
+
+    func terminateApp(bundleID: String, serverURL: String) async throws -> Bool {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.terminateApp(sessionID: context.sessionID, bundleID: bundleID)
+    }
+
+    private func readyContext(serverURL: String) throws -> (
+        client: AppiumHTTPClient,
+        sessionID: String,
+        size: DeviceScreenSize
+    ) {
+        guard let sessionID, let screenSize, isReady else {
+            throw AppiumError.controlNotReady
+        }
+        return (
+            AppiumHTTPClient(baseURL: sessionServerURL ?? serverURL),
+            sessionID,
+            screenSize
+        )
     }
 
     private func enqueueAction(_ action: ControlAction, sessionID: String, serverURL: String) {
@@ -589,6 +791,14 @@ struct AppiumHTTPClient: Sendable {
         return DeviceScreenSize(width: width, height: height)
     }
 
+    func configureLowLatencyControl(sessionID: String) async throws {
+        _ = try await jsonRequest(
+            method: "POST",
+            path: "/session/\(sessionID)/appium/settings",
+            payload: AppiumControlSettings.lowLatencyPayload()
+        )
+    }
+
     func tap(sessionID: String, point: CGPoint) async throws {
         try await executeMobile(
             sessionID: sessionID,
@@ -634,6 +844,76 @@ struct AppiumHTTPClient: Sendable {
                 ]
             ]
         )
+    }
+
+    func doubleTap(sessionID: String, point: CGPoint) async throws {
+        try await executeMobile(
+            sessionID: sessionID,
+            script: "mobile: doubleTap",
+            arguments: [
+                "x": Double(point.x.rounded()),
+                "y": Double(point.y.rounded())
+            ]
+        )
+    }
+
+    func longPress(
+        sessionID: String,
+        point: CGPoint,
+        durationSeconds: Double
+    ) async throws {
+        try await executeMobile(
+            sessionID: sessionID,
+            script: "mobile: touchAndHold",
+            arguments: [
+                "x": Double(point.x.rounded()),
+                "y": Double(point.y.rounded()),
+                "duration": durationSeconds
+            ]
+        )
+    }
+
+    func screenshot(sessionID: String) async throws -> Data {
+        let response = try await jsonRequest(
+            method: "GET",
+            path: "/session/\(sessionID)/screenshot"
+        )
+        guard let encoded = response["value"] as? String,
+              let data = Data(base64Encoded: encoded) else {
+            throw AppiumError.invalidResponse("Missing PNG screenshot data.")
+        }
+        return data
+    }
+
+    func pageSource(sessionID: String) async throws -> String {
+        let response = try await jsonRequest(
+            method: "GET",
+            path: "/session/\(sessionID)/source"
+        )
+        guard let source = response["value"] as? String else {
+            throw AppiumError.invalidResponse("Missing accessibility source.")
+        }
+        return source
+    }
+
+    func activateApp(sessionID: String, bundleID: String) async throws {
+        try await executeMobile(
+            sessionID: sessionID,
+            script: "mobile: activateApp",
+            arguments: ["bundleId": bundleID]
+        )
+    }
+
+    func terminateApp(sessionID: String, bundleID: String) async throws -> Bool {
+        let response = try await jsonRequest(
+            method: "POST",
+            path: "/session/\(sessionID)/execute/sync",
+            payload: [
+                "script": "mobile: terminateApp",
+                "args": [["bundleId": bundleID]]
+            ]
+        )
+        return response["value"] as? Bool ?? true
     }
 
     private func executeMobile(sessionID: String, script: String, arguments: [String: Any]) async throws {
@@ -698,47 +978,44 @@ struct AppiumHTTPClient: Sendable {
 
 enum AppiumPointerAction {
     static func dragPayload(from start: CGPoint, to end: CGPoint, durationMS: Int) -> [String: Any] {
-        let duration = min(max(durationMS, 0), 300)
+        let duration = min(max(durationMS, 50), 5_000)
         return [
-            "actions": [
-                [
-                    "type": "pointer",
-                    "id": "stupidmirror-finger",
-                    "parameters": [
-                        "pointerType": "touch"
+            "actions": [[
+                "type": "pointer",
+                "id": "stupidmirror-finger",
+                "parameters": ["pointerType": "touch"],
+                "actions": [
+                    [
+                        "type": "pointerMove", "duration": 0,
+                        "origin": "viewport", "x": rounded(start.x), "y": rounded(start.y)
                     ],
-                    "actions": [
-                        [
-                            "type": "pointerMove",
-                            "duration": 0,
-                            "origin": "viewport",
-                            "x": rounded(start.x),
-                            "y": rounded(start.y)
-                        ],
-                        [
-                            "type": "pointerDown",
-                            "button": 0
-                        ],
-                        [
-                            "type": "pointerMove",
-                            "duration": duration,
-                            "origin": "viewport",
-                            "x": rounded(end.x),
-                            "y": rounded(end.y)
-                        ],
-                        [
-                            "type": "pointerUp",
-                            "button": 0
-                        ]
-                    ]
+                    ["type": "pointerDown", "button": 0],
+                    [
+                        "type": "pointerMove", "duration": duration,
+                        "origin": "viewport", "x": rounded(end.x), "y": rounded(end.y)
+                    ],
+                    ["type": "pointerUp", "button": 0]
                 ]
-            ]
+            ]]
         ]
     }
 
     private static func rounded(_ value: CGFloat) -> Int {
         Int(value.rounded())
     }
+}
+
+enum AppiumControlSettings {
+    static func lowLatencyPayload() -> [String: Any] { [
+        "settings": [
+            // WDA defaults to waiting up to two seconds for animations after
+            // every event. The live stream is the visual confirmation.
+            "animationCoolOffTimeout": 0.0,
+            // Retain a small allowance for source queries without the default
+            // ten-second quiescence wait.
+            "waitForIdleTimeout": 0.0
+        ]
+    ] }
 }
 
 enum AppiumSessionCapabilities {
@@ -751,7 +1028,6 @@ enum AppiumSessionCapabilities {
             "platformName": "iOS",
             "appium:automationName": "XCUITest",
             "appium:udid": udid,
-            "appium:bundleId": bundleID,
             "appium:noReset": true,
             "appium:wdaLocalPort": configuration.wdaLocalPort,
             "appium:mjpegServerPort": configuration.mjpegServerPort,
@@ -760,8 +1036,13 @@ enum AppiumSessionCapabilities {
             "appium:wdaStartupRetryInterval": configuration.wdaStartupRetryIntervalMS,
             "appium:wdaLaunchTimeout": configuration.wdaLaunchTimeoutMS,
             "appium:wdaConnectionTimeout": configuration.wdaConnectionTimeoutMS,
-            "appium:newCommandTimeout": configuration.newCommandTimeoutSeconds
+            "appium:newCommandTimeout": configuration.newCommandTimeoutSeconds,
+            "appium:allowProvisioningDeviceRegistration": configuration.allowProvisioningDeviceRegistration
         ]
+        let launchBundleID = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !launchBundleID.isEmpty {
+            capabilities["appium:bundleId"] = launchBundleID
+        }
         if configuration.usePreinstalledWDA {
             capabilities["appium:usePreinstalledWDA"] = true
         } else {
@@ -808,6 +1089,7 @@ private func withTimeout<T: Sendable>(
 }
 
 enum AppiumError: LocalizedError {
+    case controlNotReady
     case missingSessionID
     case invalidResponse(String)
     case httpStatus(Int, String)
@@ -821,7 +1103,9 @@ enum AppiumError: LocalizedError {
         let haystack = [String(describing: error), error.localizedDescription]
             .joined(separator: " ")
             .lowercased()
-        if haystack.contains("unlock") && (haystack.contains("to continue") || haystack.contains("device is locked")) {
+        if haystack.contains("unlock")
+            || haystack.contains("reason: locked")
+            || haystack.contains("device is locked") {
             return "control.error.unlockDevice"
         }
         if haystack.contains("developer mode") {
@@ -917,6 +1201,8 @@ enum AppiumError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .controlNotReady:
+            "iPhone control is not connected. Call connect_control first."
         case .missingSessionID:
             "Appium did not return a session id."
         case let .invalidResponse(message):

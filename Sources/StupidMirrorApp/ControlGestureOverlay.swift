@@ -6,6 +6,7 @@ struct ControlGestureOverlay: NSViewRepresentable {
     var aspectRatio: Double
     var onTap: (CGPoint) -> Void
     var onSwipe: (CGPoint, CGPoint, Int) -> Void
+    var onFlick: (ControlFlickDirection) -> Void
 
     func makeNSView(context: Context) -> ControlGestureNSView {
         let view = ControlGestureNSView()
@@ -13,6 +14,7 @@ struct ControlGestureOverlay: NSViewRepresentable {
         view.aspectRatio = aspectRatio
         view.onTap = onTap
         view.onSwipe = onSwipe
+        view.onFlick = onFlick
         return view
     }
 
@@ -21,6 +23,7 @@ struct ControlGestureOverlay: NSViewRepresentable {
         nsView.aspectRatio = aspectRatio
         nsView.onTap = onTap
         nsView.onSwipe = onSwipe
+        nsView.onFlick = onFlick
         if !isEnabled {
             nsView.cancelPendingGestures()
         }
@@ -32,9 +35,12 @@ final class ControlGestureNSView: NSView {
     var aspectRatio = 1.0
     var onTap: (CGPoint) -> Void = { _ in }
     var onSwipe: (CGPoint, CGPoint, Int) -> Void = { _, _, _ in }
+    var onFlick: (ControlFlickDirection) -> Void = { _ in }
 
     private var gestureReducer = ControlGestureReducer()
     private var scrollFlushWorkItem: DispatchWorkItem?
+    private var gestureStart: CGPoint?
+    private var gestureCurrent: CGPoint?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -63,13 +69,18 @@ final class ControlGestureNSView: NSView {
         window?.makeFirstResponder(self)
         let location = convert(event.locationInWindow, from: nil)
         cancelScrollFlush()
-        gestureReducer.beginMouseDrag(at: location)
+        gestureStart = location
+        gestureCurrent = location
+        needsDisplay = true
+        gestureReducer.beginMouseDrag(at: location, timestamp: event.timestamp)
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard isEnabled else { return }
         let location = convert(event.locationInWindow, from: nil)
-        if let command = gestureReducer.updateMouseDrag(to: location) {
+        gestureCurrent = location
+        needsDisplay = true
+        if let command = gestureReducer.updateMouseDrag(to: location, timestamp: event.timestamp) {
             sendCommand(command)
         }
     }
@@ -81,6 +92,9 @@ final class ControlGestureNSView: NSView {
         if let command = gestureReducer.endMouseDrag(at: endLocation) {
             sendCommand(command)
         }
+        gestureStart = nil
+        gestureCurrent = nil
+        needsDisplay = true
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -119,6 +133,31 @@ final class ControlGestureNSView: NSView {
     func cancelPendingGestures() {
         cancelScrollFlush()
         gestureReducer.cancel()
+        gestureStart = nil
+        gestureCurrent = nil
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let start = gestureStart, let current = gestureCurrent else { return }
+        let path = NSBezierPath()
+        path.move(to: start)
+        path.line(to: current)
+        path.lineWidth = 3
+        path.lineCapStyle = .round
+        NSColor.controlAccentColor.withAlphaComponent(0.65).setStroke()
+        path.stroke()
+
+        let radius: CGFloat = 7
+        let marker = NSBezierPath(ovalIn: NSRect(
+            x: current.x - radius,
+            y: current.y - radius,
+            width: radius * 2,
+            height: radius * 2
+        ))
+        NSColor.controlAccentColor.withAlphaComponent(0.8).setFill()
+        marker.fill()
     }
 
     private func scheduleScrollFlush(precise: Bool) {
@@ -153,7 +192,23 @@ final class ControlGestureNSView: NSView {
                 return
             }
             onSwipe(startPoint, endPoint, durationMS)
+        case let .flick(start, current, durationMS):
+            guard let startPoint = normalizedPoint(start),
+                  let currentPoint = normalizedPoint(current) else {
+                return
+            }
+            _ = durationMS
+            onFlick(Self.flickDirection(from: startPoint, toward: currentPoint))
         }
+    }
+
+    nonisolated static func flickDirection(from start: CGPoint, toward current: CGPoint) -> ControlFlickDirection {
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        if abs(dx) >= abs(dy) {
+            return dx < 0 ? .left : .right
+        }
+        return dy < 0 ? .up : .down
     }
 
     private func normalizedPoint(_ point: CGPoint) -> CGPoint? {

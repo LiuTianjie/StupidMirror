@@ -1,17 +1,23 @@
 import CoreGraphics
 import Foundation
 
+enum ControlFlickDirection: String, Equatable, Sendable {
+    case up, down, left, right
+}
+
 enum ControlGestureCommand: Equatable {
     case tap(CGPoint)
     case swipe(from: CGPoint, to: CGPoint, durationMS: Int)
+    case flick(from: CGPoint, toward: CGPoint, durationMS: Int)
 }
 
 struct ControlGestureReducer {
     var tapDistance: CGFloat = 8
-    var dragEmitDistance: CGFloat = 22
-    var dragFinishDistance: CGFloat = 3
-    var dragDurationMS = 16
-    var scrollDurationMS = 45
+    var dragDurationMS = 220
+    var earlySwipeDurationMS = 160
+    var earlySwipeDistance: CGFloat = 28
+    var earlySwipeSamplingWindow: TimeInterval = 0.14
+    var scrollDurationMS = 180
     var scrollMinimumDistance: CGFloat = 14
     var preciseScrollScale: CGFloat = 3.2
     var discreteScrollScale: CGFloat = 1.8
@@ -20,7 +26,8 @@ struct ControlGestureReducer {
 
     private var mouseStartLocation: CGPoint?
     private var lastMouseDragLocation: CGPoint?
-    private var hasEmittedMouseDrag = false
+    private var firstMouseMotionTimestamp: TimeInterval?
+    private var didCommitMouseSwipe = false
     private var scrollLocation: CGPoint?
     private var accumulatedScroll = CGSize.zero
 
@@ -28,41 +35,60 @@ struct ControlGestureReducer {
         scrollLocation != nil
     }
 
-    mutating func beginMouseDrag(at location: CGPoint) {
+    mutating func beginMouseDrag(
+        at location: CGPoint,
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) {
         mouseStartLocation = location
         lastMouseDragLocation = location
-        hasEmittedMouseDrag = false
+        firstMouseMotionTimestamp = nil
+        didCommitMouseSwipe = false
     }
 
-    mutating func updateMouseDrag(to location: CGPoint) -> ControlGestureCommand? {
-        guard let start = mouseStartLocation,
-              let last = lastMouseDragLocation else {
+    mutating func updateMouseDrag(
+        to location: CGPoint,
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> ControlGestureCommand? {
+        guard let start = mouseStartLocation, !didCommitMouseSwipe else { return nil }
+        lastMouseDragLocation = location
+        let totalDistance = distance(from: start, to: location)
+        if firstMouseMotionTimestamp == nil, totalDistance >= tapDistance {
+            firstMouseMotionTimestamp = timestamp
+        }
+        guard totalDistance >= earlySwipeDistance,
+              let firstMouseMotionTimestamp,
+              timestamp - firstMouseMotionTimestamp <= earlySwipeSamplingWindow else {
             return nil
         }
 
-        let totalDistance = distance(from: start, to: location)
-        guard totalDistance >= tapDistance else { return nil }
-        guard distance(from: last, to: location) >= dragEmitDistance else { return nil }
-
-        lastMouseDragLocation = location
-        hasEmittedMouseDrag = true
-        return .swipe(from: last, to: location, durationMS: dragDurationMS)
+        // A fast gesture is a flick/page swipe. Send it while the mouse is
+        // still down. Slow, precise drags retain their exact mouse-up endpoint.
+        didCommitMouseSwipe = true
+        return .flick(from: start, toward: location, durationMS: earlySwipeDurationMS)
     }
 
     mutating func endMouseDrag(at location: CGPoint) -> ControlGestureCommand? {
         guard let start = mouseStartLocation else { return nil }
-        let last = lastMouseDragLocation ?? start
-        let didEmit = hasEmittedMouseDrag
-        mouseStartLocation = nil
-        lastMouseDragLocation = nil
-        hasEmittedMouseDrag = false
+        let wasCommitted = didCommitMouseSwipe
+        resetMouseDrag()
+
+        if wasCommitted {
+            // The fast swipe was already sent before mouse-up.
+            return nil
+        }
 
         let totalDistance = distance(from: start, to: location)
-        if !didEmit, totalDistance < tapDistance {
+        if totalDistance < tapDistance {
             return .tap(location)
         }
-        guard distance(from: last, to: location) >= dragFinishDistance else { return nil }
-        return .swipe(from: didEmit ? last : start, to: location, durationMS: dragDurationMS)
+        return .swipe(from: start, to: location, durationMS: dragDurationMS)
+    }
+
+    private mutating func resetMouseDrag() {
+        mouseStartLocation = nil
+        lastMouseDragLocation = nil
+        firstMouseMotionTimestamp = nil
+        didCommitMouseSwipe = false
     }
 
     mutating func beginScroll(at location: CGPoint) {
@@ -73,7 +99,9 @@ struct ControlGestureReducer {
     mutating func appendScroll(delta: CGSize, precise: Bool) -> ControlGestureCommand? {
         accumulatedScroll.width += delta.width
         accumulatedScroll.height += delta.height
-        return makeScrollCommand(precise: precise, clearsScroll: false)
+        // Trackpads also emit many samples. Coalesce the entire burst and send
+        // one WDA gesture after the 35 ms idle flush.
+        return nil
     }
 
     mutating func flushScroll(precise: Bool) -> ControlGestureCommand? {
@@ -108,9 +136,7 @@ struct ControlGestureReducer {
     }
 
     mutating func cancel() {
-        mouseStartLocation = nil
-        lastMouseDragLocation = nil
-        hasEmittedMouseDrag = false
+        resetMouseDrag()
         scrollLocation = nil
         accumulatedScroll = .zero
     }
