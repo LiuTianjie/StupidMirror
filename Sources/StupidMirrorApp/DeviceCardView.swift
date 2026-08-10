@@ -240,6 +240,7 @@ struct DeviceActionBar: View {
             }
             .controlSize(.small)
             .disabled(session.device.udid == nil || !isConnected)
+            .help(store.t("detail.controlHelp"))
 
             Button {
                 store.pressBack(for: session)

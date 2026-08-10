@@ -4,17 +4,18 @@ struct GalleryView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
 
     var body: some View {
-        VStack(spacing: 0) {
-            NavigationSplitView {
-                sidebar
-                    .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
-            } detail: {
-                detail
+        NavigationSplitView {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
+        } detail: {
+            detail
+        }
+        .toolbar { toolbarContent }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                bottomBar
             }
-            .toolbar { toolbarContent }
-
-            Divider()
-            bottomBar
         }
         .sheet(item: activeSheetBinding) { sheet in
             switch sheet {
@@ -29,7 +30,7 @@ struct GalleryView: View {
             case .activation:
                 LicenseActivationView(licenseManager: store.licenseManager)
                     .environmentObject(store)
-                    .frame(width: 540, height: 540)
+                    .frame(width: 540)
             }
         }
     }
@@ -67,6 +68,15 @@ struct GalleryView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+
+            if store.shouldOfferControlDiagnostics {
+                Button {
+                    store.presentDiagnostics()
+                } label: {
+                    Label(store.t("status.controlOpenDiagnostics"), systemImage: "wrench.and.screwdriver")
+                }
+                .controlSize(.small)
+            }
 
             Spacer(minLength: Theme.Spacing.md)
 
@@ -144,6 +154,32 @@ struct GalleryView: View {
             }
             .help(store.t("menu.stopAll"))
 
+            if store.licenseManager.state.showsDashboardActivationEntry {
+                Button {
+                    store.presentActivation()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: licenseBadgeIcon)
+                        Text(store.t("license.badge.unactivated"))
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(licenseBadgeColor)
+                    .padding(.horizontal, 9)
+                    .frame(height: 26)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(licenseBadgeColor.opacity(0.14))
+                    )
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(licenseBadgeColor.opacity(0.28), lineWidth: 1)
+                    }
+                    .contentShape(Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help(store.t("license.badge.help"))
+            }
+
             Button {
                 store.toggleSettings()
             } label: {
@@ -165,6 +201,26 @@ struct GalleryView: View {
             }
             .keyboardShortcut("r", modifiers: [.command])
             .help(store.t("toolbar.refresh"))
+        }
+    }
+
+    private var licenseBadgeColor: Color {
+        switch store.licenseManager.state {
+        case .expired, .unavailable:
+            Theme.Palette.danger
+        case .trialNotStarted, .trial:
+            Theme.Palette.pending
+        case .checking, .licensed:
+            .secondary
+        }
+    }
+
+    private var licenseBadgeIcon: String {
+        switch store.licenseManager.state {
+        case .expired, .unavailable:
+            "lock.fill"
+        case .trialNotStarted, .trial, .checking, .licensed:
+            "key.fill"
         }
     }
 }

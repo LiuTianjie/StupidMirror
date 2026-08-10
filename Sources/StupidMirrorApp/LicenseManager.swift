@@ -10,6 +10,15 @@ enum LicenseState: Equatable, Sendable {
     case expired(expiresAt: Date)
     case licensed(lastValidatedAt: Date?)
     case unavailable(String)
+
+    var showsDashboardActivationEntry: Bool {
+        switch self {
+        case .checking, .licensed:
+            false
+        case .trialNotStarted, .trial, .expired, .unavailable:
+            true
+        }
+    }
 }
 
 enum MirrorStartAuthorization: Equatable, Sendable {

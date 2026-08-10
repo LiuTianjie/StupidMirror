@@ -10,6 +10,15 @@ final class DashboardWindowLayoutTests: XCTestCase {
         XCTAssertEqual(DashboardSheet.toggling(.diagnostics, from: .activation), .diagnostics)
     }
 
+    func testDashboardShowsActivationEntryUntilLicensed() {
+        XCTAssertFalse(LicenseState.checking.showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.trialNotStarted.showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.trial(expiresAt: .distantFuture).showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.expired(expiresAt: .distantPast).showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.unavailable("offline").showsDashboardActivationEntry)
+        XCTAssertFalse(LicenseState.licensed(lastValidatedAt: nil).showsDashboardActivationEntry)
+    }
+
     func testLargeScreenUsesPreferredContentSize() {
         let sizes = DashboardWindowLayout.sizes(
             for: NSRect(x: 0, y: 0, width: 2_560, height: 1_345)

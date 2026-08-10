@@ -174,11 +174,16 @@ final class DeviceGalleryStore: ObservableObject {
             DiagnosticItem(name: t("diagnostic.autoStart"), value: autoStartMirrors ? t("common.on") : t("common.off")),
             DiagnosticItem(name: t("diagnostic.appiumServer"), value: appiumServerURL),
             DiagnosticItem(name: t("diagnostic.appiumService"), value: appiumServiceStateLabel(appiumService.state)),
+            DiagnosticItem(name: t("diagnostic.appiumDetail"), value: appiumService.message),
             DiagnosticItem(name: t("diagnostic.controlBundle"), value: controlBundleID),
             DiagnosticItem(name: t("diagnostic.xcodeTeam"), value: controlXcodeOrgID.isEmpty ? t("common.notSet") : controlXcodeOrgID),
             DiagnosticItem(name: t("diagnostic.wdaBundle"), value: controlWDABundleID.isEmpty ? t("common.default") : controlWDABundleID),
             DiagnosticItem(name: t("diagnostic.libimobiledevice"), value: DeviceMetadataService.isAvailable ? t("connection.connected") : t("appium.state.missing"))
         ]
+    }
+
+    var shouldOfferControlDiagnostics: Bool {
+        statusMessage == t("status.controlAppiumUnavailable")
     }
 
     var connectedSessions: [DeviceSession] {
@@ -694,6 +699,11 @@ final class DeviceGalleryStore: ObservableObject {
             return
         }
         guard !session.controlSession.isReady, !session.controlSession.isConnecting else {
+            return
+        }
+        guard !controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            statusMessage = t("status.controlSetupRequired")
+            presentSettings()
             return
         }
 
