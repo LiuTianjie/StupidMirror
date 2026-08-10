@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-08-10
+
+- Stabilize real-device Agent startup by reusing an installed WebDriverAgent first, keeping a single Appium-owned launch attempt, and preventing timed-out fallback requests from leaving overlapping WDA builds behind.
+- Keep Agent startup within the MCP request budget while preserving enough launch headroom for slower physical iPhones.
+- Add compact text captions to the toolbar, use a clearer network icon for MCP, and place activation immediately to the right of MCP.
+
 ## 0.1.5 - 2026-08-10
 
 - Make Camera and optional Microphone permission requests explicit, deduplicated, and stable across upgrades by pinning the production app identity.

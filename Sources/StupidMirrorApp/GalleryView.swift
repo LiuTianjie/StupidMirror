@@ -156,7 +156,10 @@ struct GalleryView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .automatic) {
             Toggle(isOn: $store.autoStartMirrors) {
-                Label(store.t("toolbar.autoStart"), systemImage: "bolt.badge.a")
+                ToolbarIconLabel(
+                    title: store.t("toolbar.autoStart"),
+                    systemImage: "bolt.badge.a"
+                )
             }
             .toggleStyle(.button)
             .help(store.t("settings.autoOpen"))
@@ -165,9 +168,50 @@ struct GalleryView: View {
             Button {
                 store.stopAll()
             } label: {
-                Label(store.t("toolbar.stop"), systemImage: "stop.fill")
+                ToolbarIconLabel(
+                    title: store.t("toolbar.stop"),
+                    systemImage: "stop.fill"
+                )
             }
             .help(store.t("menu.stopAll"))
+
+            Button {
+                store.toggleSettings()
+            } label: {
+                ToolbarIconLabel(
+                    title: store.t("toolbar.settings"),
+                    systemImage: "gearshape"
+                )
+            }
+            .help(store.t("toolbar.settings"))
+
+            Button {
+                store.toggleDiagnostics()
+            } label: {
+                ToolbarIconLabel(
+                    title: store.t("toolbar.diagnostics"),
+                    systemImage: "stethoscope"
+                )
+            }
+            .help(store.t("toolbar.diagnostics"))
+
+            Button {
+                store.refresh()
+            } label: {
+                ToolbarIconLabel(
+                    title: store.t("toolbar.refresh"),
+                    systemImage: "arrow.clockwise"
+                )
+            }
+            .keyboardShortcut("r", modifiers: [.command])
+            .help(store.t("toolbar.refresh"))
+
+            Button {
+                store.presentMCPSettings()
+            } label: {
+                MCPToolbarLabel(manager: store.mcpServer)
+            }
+            .help(store.t("toolbar.mcp"))
 
             if store.licenseManager.state.showsDashboardActivationEntry {
                 Button {
@@ -194,35 +238,6 @@ struct GalleryView: View {
                 .buttonStyle(.plain)
                 .help(store.t("license.badge.help"))
             }
-
-            Button {
-                store.toggleSettings()
-            } label: {
-                Label(store.t("toolbar.settings"), systemImage: "gearshape")
-            }
-            .help(store.t("toolbar.settings"))
-
-            Button {
-                store.presentMCPSettings()
-            } label: {
-                MCPToolbarLabel(manager: store.mcpServer)
-            }
-            .help(store.t("toolbar.mcp"))
-
-            Button {
-                store.toggleDiagnostics()
-            } label: {
-                Label(store.t("toolbar.diagnostics"), systemImage: "stethoscope")
-            }
-            .help(store.t("toolbar.diagnostics"))
-
-            Button {
-                store.refresh()
-            } label: {
-                Label(store.t("toolbar.refresh"), systemImage: "arrow.clockwise")
-            }
-            .keyboardShortcut("r", modifiers: [.command])
-            .help(store.t("toolbar.refresh"))
         }
     }
 
@@ -681,12 +696,38 @@ struct ControlSetupGuideView: View {
     }
 }
 
+private struct ToolbarIconLabel: View {
+    let title: String
+    let systemImage: String
+    var iconColor: Color = .primary
+
+    var body: some View {
+        VStack(spacing: 1) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(iconColor)
+                .frame(height: 17)
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .frame(minWidth: 48)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
 private struct MCPToolbarLabel: View {
     @ObservedObject var manager: MCPServerManager
 
     var body: some View {
-        Label("MCP", systemImage: manager.status.isRunning ? "terminal.fill" : "terminal")
-            .foregroundStyle(manager.status.isRunning ? Theme.Palette.live : .secondary)
+        ToolbarIconLabel(
+            title: "MCP",
+            systemImage: "network",
+            iconColor: manager.status.isRunning ? Theme.Palette.live : .primary
+        )
     }
 }
 

@@ -11,12 +11,12 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var derivedDataPath: String = ""
     var wdaLocalPort: Int = 8100
     var mjpegServerPort: Int = 9100
-    var wdaStartupRetries: Int = 3
-    var wdaStartupRetryIntervalMS: Int = 15_000
-    var wdaLaunchTimeoutMS: Int = 75_000
-    var wdaConnectionTimeoutMS: Int = 75_000
-    var sessionStartupTimeoutSeconds: TimeInterval = 105
-    var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 35
+    var wdaStartupRetries: Int = 1
+    var wdaStartupRetryIntervalMS: Int = 0
+    var wdaLaunchTimeoutMS: Int = 90_000
+    var wdaConnectionTimeoutMS: Int = 45_000
+    var sessionStartupTimeoutSeconds: TimeInterval = 125
+    var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 80
     var newCommandTimeoutSeconds: Int = 300
     var allowProvisioningDeviceRegistration: Bool = true
 
@@ -32,6 +32,27 @@ struct AppiumControlConfiguration: Hashable, Sendable {
             .filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
         guard !team.isEmpty else { return "" }
         return "com.stupidmirror.wda.\(team)"
+    }
+
+    /// Launching an already-installed WDA should never spill into the full
+    /// source-build budget. Keep one Appium-owned attempt and leave enough
+    /// HTTP headroom for Appium to report the result before our request times
+    /// out. This prevents a fallback build from overlapping a still-running
+    /// preinstalled-WDA request on the same device.
+    var preinstalledProbeConfiguration: Self {
+        var result = self
+        result.usePreinstalledWDA = true
+        result.usePrebuiltWDA = false
+        result.useNewWDA = false
+        result.wdaStartupRetries = 1
+        result.wdaStartupRetryIntervalMS = 0
+        result.wdaLaunchTimeoutMS = min(result.wdaLaunchTimeoutMS, 70_000)
+        result.wdaConnectionTimeoutMS = min(result.wdaConnectionTimeoutMS, 30_000)
+        result.sessionStartupTimeoutSeconds = min(
+            result.sessionStartupTimeoutSeconds,
+            result.preinstalledWDAStartupTimeoutSeconds
+        )
+        return result
     }
 
     /// Appium's default WDA ports and a shared DerivedData directory cannot be
@@ -240,56 +261,24 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         generation: UInt64
     ) async throws -> String {
         if configuration.preferInstalledWDA {
-            if Self.hasPrebuiltWDA(at: configuration.derivedDataPath) {
-                do {
-                    var cachedConfiguration = configuration
-                    cachedConfiguration.usePreinstalledWDA = false
-                    cachedConfiguration.usePrebuiltWDA = true
-                    cachedConfiguration.useNewWDA = false
-                    setStatus("Starting cached WebDriverAgent control agent...", generation: generation)
-                    return try await startSession(
-                        client: client,
-                        udid: udid,
-                        bundleID: bundleID,
-                        configuration: cachedConfiguration
-                    )
-                } catch {
-                    guard AppiumError.shouldRetryWithFreshWDA(afterSessionError: error) else {
-                        throw error
-                    }
-                    try Task.checkCancellation()
-                    setStatus(
-                        "Cached WebDriverAgent could not start; rebuilding control agent...",
-                        generation: generation
-                    )
+            do {
+                let installedConfiguration = configuration.preinstalledProbeConfiguration
+                setStatus("Reusing installed WebDriverAgent control agent...", generation: generation)
+                return try await startSession(
+                    client: client,
+                    udid: udid,
+                    bundleID: bundleID,
+                    configuration: installedConfiguration
+                )
+            } catch {
+                guard AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: error) else {
+                    throw error
                 }
-            } else {
-                do {
-                    var installedConfiguration = configuration
-                    installedConfiguration.usePreinstalledWDA = true
-                    installedConfiguration.usePrebuiltWDA = false
-                    installedConfiguration.useNewWDA = false
-                    installedConfiguration.sessionStartupTimeoutSeconds = min(
-                        configuration.sessionStartupTimeoutSeconds,
-                        configuration.preinstalledWDAStartupTimeoutSeconds
-                    )
-                    setStatus("Reusing installed WebDriverAgent control agent...", generation: generation)
-                    return try await startSession(
-                        client: client,
-                        udid: udid,
-                        bundleID: bundleID,
-                        configuration: installedConfiguration
-                    )
-                } catch {
-                    guard AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: error) else {
-                        throw error
-                    }
-                    try Task.checkCancellation()
-                    setStatus(
-                        "Installed WebDriverAgent is not reusable; installing control agent...",
-                        generation: generation
-                    )
-                }
+                try Task.checkCancellation()
+                setStatus(
+                    "Installed WebDriverAgent is not reusable; installing control agent...",
+                    generation: generation
+                )
             }
         } else {
             setStatus(
@@ -306,49 +295,13 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             throw AppiumError.signingConfigurationRequired
         }
         installConfiguration.wdaBundleID = installConfiguration.installationWDABundleID
-        do {
-            return try await startSession(
-                client: client,
-                udid: udid,
-                bundleID: bundleID,
-                configuration: installConfiguration
-            )
-        } catch {
-            guard AppiumError.shouldRetryWithFreshWDA(afterSessionError: error) else {
-                throw error
-            }
-            try Task.checkCancellation()
-            var freshConfiguration = installConfiguration
-            freshConfiguration.useNewWDA = true
-            freshConfiguration.usePrebuiltWDA = false
-            setStatus("Restarting WebDriverAgent control agent...", generation: generation)
-            return try await startSession(
-                client: client,
-                udid: udid,
-                bundleID: bundleID,
-                configuration: freshConfiguration
-            )
-        }
-    }
-
-    nonisolated static func hasPrebuiltWDA(
-        at derivedDataPath: String,
-        fileManager: FileManager = .default
-    ) -> Bool {
-        let path = derivedDataPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return false }
-
-        let productsURL = URL(fileURLWithPath: path, isDirectory: true)
-            .appendingPathComponent("Build/Products", isDirectory: true)
-        let configurations = ["Debug-iphoneos", "Release-iphoneos"]
-        return configurations.contains { configuration in
-            let appURL = productsURL
-                .appendingPathComponent(configuration, isDirectory: true)
-                .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
-            var isDirectory: ObjCBool = false
-            return fileManager.fileExists(atPath: appURL.path, isDirectory: &isDirectory)
-                && isDirectory.boolValue
-        }
+        installConfiguration.useNewWDA = false
+        return try await startSession(
+            client: client,
+            udid: udid,
+            bundleID: bundleID,
+            configuration: installConfiguration
+        )
     }
 
     private func startSession(
@@ -357,13 +310,11 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         bundleID: String,
         configuration: AppiumControlConfiguration
     ) async throws -> String {
-        try await withTimeout(seconds: configuration.sessionStartupTimeoutSeconds) {
-            try await client.createSession(
-                udid: udid,
-                bundleID: bundleID,
-                configuration: configuration
-            )
-        }
+        try await client.createSession(
+            udid: udid,
+            bundleID: bundleID,
+            configuration: configuration
+        )
     }
 
     func stop(serverURL: String) {
@@ -1068,32 +1019,11 @@ enum AppiumSessionCapabilities {
     }
 }
 
-private func withTimeout<T: Sendable>(
-    seconds: TimeInterval,
-    operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask {
-            try await operation()
-        }
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(max(seconds, 1) * 1_000_000_000))
-            throw AppiumError.timeout("Timed out while starting WebDriverAgent after \(Int(seconds))s.")
-        }
-        guard let value = try await group.next() else {
-            throw AppiumError.timeout("Timed out while starting WebDriverAgent.")
-        }
-        group.cancelAll()
-        return value
-    }
-}
-
 enum AppiumError: LocalizedError {
     case controlNotReady
     case missingSessionID
     case invalidResponse(String)
     case httpStatus(Int, String)
-    case timeout(String)
     case signingConfigurationRequired
 
     static func controlFailureMessage(for error: Error) -> String {
@@ -1160,31 +1090,6 @@ enum AppiumError: LocalizedError {
             || haystack.contains("devicectl")
     }
 
-    static func shouldRetryWithFreshWDA(afterSessionError error: Error) -> Bool {
-        let haystack = [String(describing: error), error.localizedDescription]
-            .joined(separator: " ")
-            .lowercased()
-        if haystack.contains("unlock")
-            || haystack.contains("developer mode")
-            || haystack.contains("ui automation")
-            || haystack.contains("not trusted")
-            || haystack.contains("trust this computer")
-            || haystack.contains("pairing")
-            || haystack.contains("provisioning profile")
-            || haystack.contains("code signing")
-            || haystack.contains("requires a development team") {
-            return false
-        }
-        return haystack.contains("connection was refused")
-            || haystack.contains("econnrefused")
-            || haystack.contains("8100")
-            || haystack.contains("did not become ready")
-            || haystack.contains("wda is not listening")
-            || haystack.contains("timed out while starting webdriveragent")
-            || haystack.contains("xctestmanager")
-            || haystack.contains("socket hang up")
-    }
-
     static func shouldInvalidateActiveSession(afterActionError error: Error) -> Bool {
         let haystack = [String(describing: error), error.localizedDescription]
             .joined(separator: " ")
@@ -1209,8 +1114,6 @@ enum AppiumError: LocalizedError {
             message
         case let .httpStatus(status, body):
             "Appium HTTP \(status): \(Self.compactResponseBody(body))"
-        case let .timeout(message):
-            message
         case .signingConfigurationRequired:
             "Installing WebDriverAgent requires an Apple Development signing team."
         }

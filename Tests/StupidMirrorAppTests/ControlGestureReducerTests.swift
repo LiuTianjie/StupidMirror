@@ -139,32 +139,31 @@ final class ControlGestureReducerTests: XCTestCase {
 
     func testPreinstalledWDAReuseUsesShortProbeTimeout() {
         let configuration = AppiumControlConfiguration()
+        let probe = configuration.preinstalledProbeConfiguration
 
         XCTAssertLessThan(configuration.preinstalledWDAStartupTimeoutSeconds, configuration.sessionStartupTimeoutSeconds)
-        XCTAssertLessThanOrEqual(configuration.preinstalledWDAStartupTimeoutSeconds, 35)
+        XCTAssertEqual(probe.wdaStartupRetries, 1)
+        XCTAssertEqual(probe.wdaStartupRetryIntervalMS, 0)
+        XCTAssertTrue(probe.usePreinstalledWDA)
+        XCTAssertFalse(probe.usePrebuiltWDA)
+        XCTAssertFalse(probe.useNewWDA)
+        XCTAssertLessThan(
+            TimeInterval(probe.wdaLaunchTimeoutMS) / 1_000,
+            probe.sessionStartupTimeoutSeconds
+        )
     }
 
-    func testWDAStartupFailureHasABoundedUserVisibleWait() {
+    func testWDAStartupUsesOneAppiumOwnedAttemptWithRequestHeadroom() {
         let configuration = AppiumControlConfiguration()
 
-        XCTAssertLessThanOrEqual(configuration.wdaLaunchTimeoutMS, 75_000)
-        XCTAssertLessThanOrEqual(configuration.wdaConnectionTimeoutMS, 75_000)
-        XCTAssertLessThanOrEqual(configuration.sessionStartupTimeoutSeconds, 105)
-    }
-
-    func testPrebuiltWDAArtifactDetectionOnlyAcceptsBuiltApplicationDirectory() throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        XCTAssertFalse(AppiumControlSession.hasPrebuiltWDA(at: root.path))
-
-        let product = root
-            .appendingPathComponent("Build/Products/Debug-iphoneos", isDirectory: true)
-            .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
-        try FileManager.default.createDirectory(at: product, withIntermediateDirectories: true)
-
-        XCTAssertTrue(AppiumControlSession.hasPrebuiltWDA(at: root.path))
+        XCTAssertEqual(configuration.wdaStartupRetries, 1)
+        XCTAssertEqual(configuration.wdaStartupRetryIntervalMS, 0)
+        XCTAssertFalse(configuration.useNewWDA)
+        XCTAssertLessThan(
+            TimeInterval(configuration.wdaLaunchTimeoutMS) / 1_000,
+            configuration.sessionStartupTimeoutSeconds
+        )
+        XCTAssertLessThanOrEqual(configuration.sessionStartupTimeoutSeconds, 125)
     }
 
     func testInstalledWDASessionUsesLaunchOnlyCapability() {
@@ -191,14 +190,6 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertTrue(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"connect ECONNREFUSED 127.0.0.1:8100"}}"#)))
         XCTAssertFalse(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"Unlock iPhone to Continue"}}"#)))
         XCTAssertFalse(AppiumError.shouldFallbackToWDAInstall(afterInstalledWDAError: AppiumError.httpStatus(500, #"{"value":{"message":"Developer Mode is disabled"}}"#)))
-    }
-
-    func testFreshWDARetryOnlyHandlesRecoverableAgentFailures() {
-        XCTAssertTrue(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.timeout("Timed out while starting WebDriverAgent after 210s.")))
-        XCTAssertTrue(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.httpStatus(500, #"{"value":{"message":"WebDriverAgent did not become ready and WDA is not listening on 8100"}}"#)))
-
-        XCTAssertFalse(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.httpStatus(500, #"{"value":{"message":"Unlock iPhone Air to Continue"}}"#)))
-        XCTAssertFalse(AppiumError.shouldRetryWithFreshWDA(afterSessionError: AppiumError.httpStatus(500, #"{"value":{"message":"xcodebuild failed because no provisioning profile was found"}}"#)))
     }
 
     func testActionFailureInvalidatesDeadSessionsButNotOrdinaryBadInput() {
