@@ -12,6 +12,9 @@ The app may process:
 - Optional Appium/WebDriverAgent control events such as taps, swipes, and typed
   text.
 - Local thumbnails used in the dashboard.
+- A random StupidMirror installation identifier, the local trial timestamps, and
+  an activation receipt stored in the macOS Keychain. These values are not an
+  iPhone UDID, Mac serial number, or advertising identifier.
 
 ## Network Behavior
 
@@ -20,6 +23,21 @@ metadata, or control events to a remote service.
 
 Optional control support talks to the configured Appium server URL. The default
 is `http://127.0.0.1:4723`.
+
+License activation and periodic validation send the random installation
+identifier, activation code (only while activating), activation receipt, and app
+version to the configured StupidMirror license endpoint hosted on Supabase.
+Screen frames, thumbnails, iPhone metadata, control events, and typed text are
+not included in license requests. Activated installations can continue to work
+from the locally cached receipt when the license endpoint is temporarily
+unavailable.
+
+The license endpoint also applies abuse rate limits using the request's network
+address. Before a rate-limit identifier reaches the licensing database, the Edge
+Function transforms it with a server-secret HMAC. The licensing tables never
+store a plaintext network address; their short-lived rate-limit buckets are
+eligible for bounded cleanup after two days. Supabase may separately process
+normal request metadata as the hosting provider.
 
 ## Permissions
 

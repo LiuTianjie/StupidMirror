@@ -4,8 +4,22 @@ import Combine
 import Foundation
 import SwiftUI
 
+enum DashboardSheet: String, Identifiable, Equatable, Sendable {
+    case diagnostics
+    case settings
+    case activation
+
+    var id: String { rawValue }
+
+    static func toggling(_ target: DashboardSheet, from current: DashboardSheet?) -> DashboardSheet? {
+        current == target ? nil : target
+    }
+}
+
 @MainActor
 final class DeviceGalleryStore: ObservableObject {
+    let licenseManager: LicenseManager
+
     @Published private(set) var sessions: [DeviceSession] = []
     @Published private(set) var permissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
     @Published private(set) var microphonePermissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
@@ -69,8 +83,7 @@ final class DeviceGalleryStore: ObservableObject {
     ) {
         didSet { UserDefaults.standard.set(controlUsePrebuiltWDA, forKey: Self.controlUsePrebuiltWDADefaultsKey) }
     }
-    @Published var showsDiagnostics = false
-    @Published var showsSettings = false
+    @Published private(set) var activeSheet: DashboardSheet?
     @Published var selectedSessionID: String?
     @Published var language: AppLanguage {
         didSet {
@@ -87,6 +100,10 @@ final class DeviceGalleryStore: ObservableObject {
     private var refreshRequestedWhileRunning = false
     private var thumbnailCaptures: [String: ThumbnailCapture] = [:]
     private var desiredMirrorIDs = Set<String>()
+    private var pendingAuthorizationMirrorIDs = Set<String>()
+    private var pendingActivationMirrorIDs = Set<String>()
+    private var startAuthorizationTask: Task<Void, Never>?
+    private var startAuthorizationGeneration: UInt64 = 0
     private var disconnectedSince: [String: Date] = [:]
     private var lastConnectedCount = 0
     private var lastReconnectingCount = 0
@@ -172,13 +189,17 @@ final class DeviceGalleryStore: ObservableObject {
         sessions.filter { $0.device.connectionState == .disconnected }
     }
 
-    init() {
+    init(licenseManager: LicenseManager? = nil) {
+        self.licenseManager = licenseManager ?? LicenseManager.live()
         language = Self.initialLanguage
         let status = AVFoundationMirrorBackend.allowScreenCaptureDevices()
         statusMessage = "CoreMediaIO screen capture devices enabled: \(status)"
         installDeviceObservers()
         startPeriodicRefresh()
         refreshIfCameraAuthorized()
+        Task { @MainActor [weak self] in
+            await self?.licenseManager.bootstrap()
+        }
     }
 
     func refreshIfCameraAuthorized() {
@@ -249,6 +270,12 @@ final class DeviceGalleryStore: ObservableObject {
         refreshTask = nil
         refreshRequestedWhileRunning = false
         desiredMirrorIDs.removeAll()
+        pendingAuthorizationMirrorIDs.removeAll()
+        pendingActivationMirrorIDs.removeAll()
+        startAuthorizationTask?.cancel()
+        startAuthorizationTask = nil
+        startAuthorizationGeneration &+= 1
+        dismissActivationSheetIfPresented()
         MirrorWindowRegistry.shared.closeAll(sessions: sessions)
         for session in sessions {
             session.mirrorSession.dispose()
@@ -318,6 +345,7 @@ final class DeviceGalleryStore: ObservableObject {
         let existingByID = Self.latestValueByID(sessions) { $0.id }
         var nextSessions: [DeviceSession] = []
         var connectedIDs = Set<String>()
+        var autoStartIDs = Set<String>()
         let now = Date()
 
         for captureDevice in devices {
@@ -346,8 +374,7 @@ final class DeviceGalleryStore: ObservableObject {
                 session.mirrorSession.setAudioEnabled(microphonePermissionStatus == .authorized)
                 nextSessions.append(session)
                 if autoStartMirrors && !wasReconnecting {
-                    desiredMirrorIDs.insert(session.id)
-                    MirrorWindowRegistry.shared.open(session: session, store: self)
+                    autoStartIDs.insert(session.id)
                 }
             }
         }
@@ -394,6 +421,7 @@ final class DeviceGalleryStore: ObservableObject {
         }
 
         sessions = nextSessions.sorted { $0.device.name.localizedStandardCompare($1.device.name) == .orderedAscending }
+        requestMirrorStarts(autoStartIDs)
         if let selectedSessionID, !sessions.contains(where: { $0.id == selectedSessionID }) {
             self.selectedSessionID = sessions.first?.id
         } else if selectedSessionID == nil {
@@ -420,6 +448,8 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func retire(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
+        pendingAuthorizationMirrorIDs.remove(session.id)
+        pendingActivationMirrorIDs.remove(session.id)
         floatingMirrorIDs.remove(session.id)
         thumbnailCaptures[session.id]?.cancel()
         thumbnailCaptures[session.id] = nil
@@ -434,17 +464,68 @@ final class DeviceGalleryStore: ObservableObject {
         guard permissionStatus == .authorized,
               session.device.connectionState == .connected else { return }
         select(session)
-        desiredMirrorIDs.insert(session.id)
-        MirrorWindowRegistry.shared.open(session: session, store: self)
+        requestMirrorStarts([session.id])
+    }
+
+    func startAll() {
+        guard permissionStatus == .authorized else { return }
+        requestMirrorStarts(Set(connectedSessions.map(\.id)))
+    }
+
+    func presentActivation() {
+        showActivation(for: [])
+    }
+
+    func presentSettings() {
+        setActiveSheet(.settings)
+    }
+
+    func presentDiagnostics() {
+        setActiveSheet(.diagnostics)
+    }
+
+    func toggleSettings() {
+        setActiveSheet(DashboardSheet.toggling(.settings, from: activeSheet))
+    }
+
+    func toggleDiagnostics() {
+        setActiveSheet(DashboardSheet.toggling(.diagnostics, from: activeSheet))
+    }
+
+    func setActiveSheet(_ sheet: DashboardSheet?) {
+        if activeSheet == .activation, sheet != .activation {
+            pendingActivationMirrorIDs.removeAll()
+        }
+        activeSheet = sheet
+    }
+
+    func cancelActivation() {
+        setActiveSheet(nil)
+    }
+
+    func activateLicense(code: String) async throws {
+        try await licenseManager.activate(code: code)
+        let pending = pendingActivationMirrorIDs
+        pendingActivationMirrorIDs.removeAll()
+        setActiveSheet(nil)
+        requestMirrorStarts(pending)
     }
 
     func stop(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
+        pendingAuthorizationMirrorIDs.remove(session.id)
+        pendingActivationMirrorIDs.remove(session.id)
         MirrorWindowRegistry.shared.close(session: session)
     }
 
     func stopAll() {
         desiredMirrorIDs.removeAll()
+        pendingAuthorizationMirrorIDs.removeAll()
+        pendingActivationMirrorIDs.removeAll()
+        startAuthorizationTask?.cancel()
+        startAuthorizationTask = nil
+        startAuthorizationGeneration &+= 1
+        dismissActivationSheetIfPresented()
         MirrorWindowRegistry.shared.closeAll(sessions: sessions)
         for session in sessions {
             session.controlSession.stop(serverURL: appiumServerURL)
@@ -472,6 +553,14 @@ final class DeviceGalleryStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = nil
         refreshRequestedWhileRunning = false
+        startAuthorizationTask?.cancel()
+        startAuthorizationTask = nil
+        startAuthorizationGeneration &+= 1
+        pendingAuthorizationMirrorIDs.removeAll()
+        pendingActivationMirrorIDs.removeAll()
+        setActiveSheet(nil)
+        licenseManager.checkpointTrustedTime()
+        licenseManager.cancel()
         refreshTimer?.invalidate()
         refreshTimer = nil
         for observer in observers {
@@ -503,6 +592,62 @@ final class DeviceGalleryStore: ObservableObject {
         disconnectedSince.removeAll()
         floatingMirrorIDs.removeAll()
         selectedSessionID = nil
+    }
+
+    private func requestMirrorStarts(_ sessionIDs: Set<String>) {
+        guard !isShuttingDown, permissionStatus == .authorized, !sessionIDs.isEmpty else { return }
+
+        let connectedIDs = Set(connectedSessions.map(\.id))
+        pendingAuthorizationMirrorIDs.formUnion(sessionIDs.intersection(connectedIDs))
+        guard !pendingAuthorizationMirrorIDs.isEmpty, startAuthorizationTask == nil else { return }
+
+        startAuthorizationGeneration &+= 1
+        let generation = startAuthorizationGeneration
+        startAuthorizationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let authorization = await self.licenseManager.authorizeMirrorStart()
+            guard generation == self.startAuthorizationGeneration else { return }
+            guard !Task.isCancelled, !self.isShuttingDown else {
+                self.startAuthorizationTask = nil
+                return
+            }
+
+            let requestedIDs = self.pendingAuthorizationMirrorIDs
+            self.pendingAuthorizationMirrorIDs.removeAll()
+            self.startAuthorizationTask = nil
+
+            switch authorization {
+            case .allowed:
+                self.performAuthorizedStarts(requestedIDs)
+            case .activationRequired:
+                self.showActivation(for: requestedIDs)
+            case let .unavailable(message):
+                self.statusMessage = message
+            }
+        }
+    }
+
+    private func performAuthorizedStarts(_ sessionIDs: Set<String>) {
+        guard permissionStatus == .authorized, !isShuttingDown else { return }
+        for session in sessions where sessionIDs.contains(session.id)
+            && session.device.connectionState == .connected {
+            desiredMirrorIDs.insert(session.id)
+            MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+        }
+    }
+
+    private func showActivation(for sessionIDs: Set<String>) {
+        pendingActivationMirrorIDs.formUnion(sessionIDs)
+        DashboardWindowRegistry.shared.open(store: self)
+        guard !isShuttingDown else { return }
+        setActiveSheet(.activation)
+    }
+
+    private func dismissActivationSheetIfPresented() {
+        pendingActivationMirrorIDs.removeAll()
+        if activeSheet == .activation {
+            activeSheet = nil
+        }
     }
 
     func toggleFloating(for session: DeviceSession) {

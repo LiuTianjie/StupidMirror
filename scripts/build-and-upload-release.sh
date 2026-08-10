@@ -6,6 +6,8 @@ cd "$repo_root"
 
 official_bundle_id="com.gaojiua.StupidMirror"
 official_team_id="L95PYLFT86"
+official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1/stupidmirror-license"
+official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
 tag="${1:-${TAG:-}}"
 version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
@@ -39,24 +41,34 @@ MSG
   exit 0
 fi
 
+commit_release="${COMMIT_RELEASE:-true}"
+push_release="${PUSH_RELEASE:-true}"
+
+if [ -n "${BUMP:-}" ] && [ "$commit_release" != "true" ]; then
+  echo "BUMP requires COMMIT_RELEASE=true so the release tag records the packaged version." >&2
+  exit 1
+fi
+
 if [ -n "${BUNDLE_ID:-}" ] && [ "$BUNDLE_ID" != "$official_bundle_id" ]; then
-  echo "Public releases must use bundle ID ${official_bundle_id}; got ${BUNDLE_ID}." >&2
+  echo "Distributed releases must use bundle ID ${official_bundle_id}; got ${BUNDLE_ID}." >&2
   exit 1
 fi
 if [ -n "${TEAM_ID:-}" ] && [ "$TEAM_ID" != "$official_team_id" ]; then
-  echo "Public releases must use Apple Team ${official_team_id}; got ${TEAM_ID}." >&2
+  echo "Distributed releases must use Apple Team ${official_team_id}; got ${TEAM_ID}." >&2
   exit 1
 fi
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "GitHub CLI is required. Install it first: https://cli.github.com/" >&2
-  exit 1
-fi
+if [ "$push_release" = "true" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "GitHub CLI is required. Install it first: https://cli.github.com/" >&2
+    exit 1
+  fi
 
-gh auth status >/dev/null
-if ! git remote get-url origin >/dev/null 2>&1; then
-  echo "No git remote named 'origin' found. Add the GitHub repo remote before uploading releases." >&2
-  exit 1
+  gh auth status >/dev/null
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    echo "No git remote named 'origin' found. Add the GitHub repo remote before uploading releases." >&2
+    exit 1
+  fi
 fi
 
 if [ "${ALLOW_DIRTY:-false}" != "true" ] \
@@ -74,8 +86,6 @@ release_name="${RELEASE_NAME:-${app_name} ${tag}}"
 release_notes="${RELEASE_NOTES:-Local macOS build for ${tag}.}"
 notary_profile="${NOTARY_PROFILE:-}"
 sign_identity="${SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:-}}"
-commit_release="${COMMIT_RELEASE:-true}"
-push_release="${PUSH_RELEASE:-true}"
 
 if [ -z "$sign_identity" ]; then
   sign_identity="$(
@@ -111,7 +121,12 @@ if [ "$tag" != "v${version}" ]; then
 fi
 
 echo "Building app..."
-BUNDLE_ID="$official_bundle_id" SIGN_IDENTITY="$sign_identity" VERSION="$version" bash scripts/build-app.sh
+BUNDLE_ID="$official_bundle_id" \
+  SIGN_IDENTITY="$sign_identity" \
+  VERSION="$version" \
+  LICENSE_ENDPOINT="$official_license_endpoint" \
+  LICENSE_PUBLISHABLE_KEY="$official_license_publishable_key" \
+  bash scripts/build-app.sh
 
 if [ ! -d "$app_path" ]; then
   echo "App bundle not found: $app_path" >&2
@@ -168,6 +183,17 @@ assert_release_app() {
       exit 1
     fi
   done
+
+  value="$(/usr/libexec/PlistBuddy -c 'Print :StupidMirrorLicenseEndpoint' "$info_plist" 2>/dev/null || true)"
+  if [ "$value" != "$official_license_endpoint" ]; then
+    echo "Release license endpoint mismatch." >&2
+    exit 1
+  fi
+  value="$(/usr/libexec/PlistBuddy -c 'Print :StupidMirrorLicensePublishableKey' "$info_plist" 2>/dev/null || true)"
+  if [ "$value" != "$official_license_publishable_key" ]; then
+    echo "Release license publishable key mismatch." >&2
+    exit 1
+  fi
 
   for locale in en zh-Hans; do
     local strings_file="${app}/Contents/Resources/${locale}.lproj/InfoPlist.strings"
@@ -325,6 +351,36 @@ if [ "$push_release" = "true" ]; then
     git push origin "$current_branch"
   fi
   git push origin "$tag"
+else
+  echo "PUSH_RELEASE=false; keeping the artifact and tag local without creating or updating a GitHub Release."
+  echo "Created ${artifact_path} for local tag ${tag}."
+  echo "Version: ${version}"
+  echo "Bundle ID: ${official_bundle_id}"
+  echo "Apple Team: ${official_team_id}"
+  echo "Signing identity: ${sign_identity}"
+  exit 0
+fi
+
+remote_tag_refs="$(git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}")" || {
+  echo "Could not read release tag ${tag} from origin after push." >&2
+  exit 1
+}
+remote_tag_commit="$(
+  printf '%s\n' "$remote_tag_refs" \
+    | awk -v direct="refs/tags/${tag}" -v peeled="refs/tags/${tag}^{}" '
+        $2 == peeled { print $1; found = 1; exit }
+        $2 == direct { fallback = $1 }
+        END { if (!found && fallback != "") print fallback }
+      '
+)"
+head_commit="$(git rev-parse HEAD)"
+if [ -z "$remote_tag_commit" ]; then
+  echo "Release tag ${tag} is missing from origin after push; refusing GitHub Release upload." >&2
+  exit 1
+fi
+if [ "$remote_tag_commit" != "$head_commit" ]; then
+  echo "Origin tag ${tag} points to ${remote_tag_commit}, not current HEAD ${head_commit}; refusing GitHub Release upload." >&2
+  exit 1
 fi
 
 release_create_args=(

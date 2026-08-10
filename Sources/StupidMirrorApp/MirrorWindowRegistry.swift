@@ -38,9 +38,11 @@ final class MirrorWindowRegistry {
 
     private init() {}
 
-    func open(session: DeviceSession, store: DeviceGalleryStore) {
+    /// Opens a mirror after `DeviceGalleryStore` has granted the license gate.
+    /// Callers must never use this as an alternative start path.
+    func openAuthorized(session: DeviceSession, store: DeviceGalleryStore) {
         if let window = windows[session.id] {
-            session.mirrorSession.start()
+            startCapture(session: session, store: store)
             update(window: window, session: session, store: store)
             resize(window: window, session: session, aspectRatio: resolvedAspectRatio(for: session, fallback: store.displayAspectRatio(for: session)), centerIfNeeded: false)
             window.makeKeyAndOrderFront(nil)
@@ -78,9 +80,15 @@ final class MirrorWindowRegistry {
             window.level = .floating
         }
 
-        session.mirrorSession.start()
+        startCapture(session: session, store: store)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func startCapture(session: DeviceSession, store: DeviceGalleryStore) {
+        session.mirrorSession.start { [weak licenseManager = store.licenseManager] in
+            licenseManager?.noteMirrorDidStart()
+        }
     }
 
     func close(session: DeviceSession) {

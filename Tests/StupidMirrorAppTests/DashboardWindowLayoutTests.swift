@@ -3,6 +3,13 @@ import AppKit
 import XCTest
 
 final class DashboardWindowLayoutTests: XCTestCase {
+    func testDashboardUsesOneToggleableSheetState() {
+        XCTAssertEqual(DashboardSheet.toggling(.settings, from: nil), .settings)
+        XCTAssertNil(DashboardSheet.toggling(.settings, from: .settings))
+        XCTAssertEqual(DashboardSheet.toggling(.activation, from: .settings), .activation)
+        XCTAssertEqual(DashboardSheet.toggling(.diagnostics, from: .activation), .diagnostics)
+    }
+
     func testLargeScreenUsesPreferredContentSize() {
         let sizes = DashboardWindowLayout.sizes(
             for: NSRect(x: 0, y: 0, width: 2_560, height: 1_345)

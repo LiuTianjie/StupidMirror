@@ -29,13 +29,17 @@ struct StupidMirrorApp: App {
                 }
                 .keyboardShortcut(".", modifiers: [.command])
 
+                Button(store.t("license.menu")) {
+                    store.presentActivation()
+                }
+
                 Button(store.t("toolbar.diagnostics")) {
-                    store.showsDiagnostics.toggle()
+                    store.toggleDiagnostics()
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
 
                 Button(store.t("toolbar.settings")) {
-                    store.showsSettings.toggle()
+                    store.toggleSettings()
                 }
                 .keyboardShortcut(",", modifiers: [.command])
             }
@@ -75,9 +79,7 @@ struct MenuBarContentView: View {
             }
 
             Button(store.t("menu.openAll")) {
-                for session in store.sessions {
-                    store.start(session)
-                }
+                store.startAll()
             }
         }
 
@@ -87,14 +89,18 @@ struct MenuBarContentView: View {
             store.stopAll()
         }
 
+        Button(store.t("license.menu")) {
+            store.presentActivation()
+        }
+
         Button(store.t("toolbar.settings")) {
             showDashboard()
-            store.showsSettings = true
+            store.presentSettings()
         }
 
         Button(store.t("toolbar.diagnostics")) {
             showDashboard()
-            store.showsDiagnostics = true
+            store.presentDiagnostics()
         }
 
         Divider()

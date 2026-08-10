@@ -19,6 +19,8 @@ Appium/WebDriverAgent control agent.
 - Optional Appium/XCUITest control support for tap, swipe, text input, clipboard
   paste, Home, and app switcher actions.
 - Bundled Mac-side Appium runtime for packaged release builds.
+- Three-day trial and one-time activation through a private Supabase license
+  service; the purchase QR area is currently an explicit placeholder.
 - Local probes for AVFoundation discovery, frame capture, device discovery, and
   WebDriverAgent readiness.
 
@@ -92,7 +94,7 @@ NOTARY_PROFILE="stupidmirror-notary" \
 make release-local
 ```
 
-Public releases have a fixed identity: bundle ID `com.gaojiua.StupidMirror` and
+Distributed releases have a fixed identity: bundle ID `com.gaojiua.StupidMirror` and
 Apple Team `L95PYLFT86`. The release script rejects identity drift before upload
 so macOS does not treat an update as a different app and ask for permissions
 again.
@@ -102,7 +104,7 @@ and audio-input entitlements are required. The bundled Node runtime is signed
 separately with the JIT entitlements in `NodeRuntime.entitlements`; the release
 script verifies all nested Mach-O code without relying on `codesign --deep`.
 
-Public uploads require `NOTARY_PROFILE`. After notarization, the script staples
+Release uploads require `NOTARY_PROFILE`. After notarization, the script staples
 the ticket and validates the app with `codesign`, `stapler`, Gatekeeper, and
 `syspolicy_check`. `ALLOW_UNNOTARIZED=true` is only for private test artifacts.
 
@@ -182,6 +184,11 @@ content, thumbnails, device metadata, or control events to any remote service.
 Optional Appium control talks to the configured Appium server URL, which defaults
 to `http://127.0.0.1:4723`.
 
+License activation sends only the random installation ID, entered activation
+code, app version, and the returned receipt to the Supabase license endpoint.
+It never includes mirrored frames, thumbnails, iPhone identifiers, or control
+input. See [PRIVACY.md](PRIVACY.md) for details.
+
 ## Documentation
 
 - [MVP architecture](docs/mvp-architecture.md)
@@ -190,6 +197,7 @@ to `http://127.0.0.1:4723`.
 - [Contributing guide](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Release process](RELEASING.md)
+- [License activation and local code generator](LICENSING.md)
 
 ## License
 

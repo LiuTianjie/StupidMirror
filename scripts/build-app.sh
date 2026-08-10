@@ -23,6 +23,10 @@ default_xcode_org_id="${DEFAULT_XCODE_ORG_ID:-${STUPIDMIRROR_XCODE_ORG_ID:-}}"
 default_xcode_signing_id="${DEFAULT_XCODE_SIGNING_ID:-${STUPIDMIRROR_XCODE_SIGNING_ID:-Apple Development}}"
 default_wda_bundle_id="${DEFAULT_WDA_BUNDLE_ID:-${STUPIDMIRROR_WDA_BUNDLE_ID:-}}"
 default_use_prebuilt_wda="${DEFAULT_USE_PREBUILT_WDA:-false}"
+official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1/stupidmirror-license"
+official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
+license_endpoint="${LICENSE_ENDPOINT:-${STUPIDMIRROR_LICENSE_ENDPOINT:-$official_license_endpoint}}"
+license_publishable_key="${LICENSE_PUBLISHABLE_KEY:-${STUPIDMIRROR_LICENSE_PUBLISHABLE_KEY:-$official_license_publishable_key}}"
 app_path="dist/${app_name}.app"
 build_work_dir="$(mktemp -d)"
 build_app_path="${build_work_dir}/${app_name}.app"
@@ -30,6 +34,19 @@ trap 'rm -rf -- "$build_work_dir"' EXIT
 contents_path="${app_path}/Contents"
 macos_path="${contents_path}/MacOS"
 icon_path="${ICON_PATH:-Assets/AppIcon.icns}"
+
+xml_escape() {
+  local value="$1"
+  value="${value//&/&amp;}"
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  value="${value//\"/&quot;}"
+  value="${value//\'/&apos;}"
+  printf '%s' "$value"
+}
+
+license_endpoint_xml="$(xml_escape "$license_endpoint")"
+license_publishable_key_xml="$(xml_escape "$license_publishable_key")"
 
 echo "Building ${product_name} (${configuration})..."
 swift build -c "$configuration" --product "$product_name"
@@ -101,6 +118,10 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <string>${default_wda_bundle_id}</string>
   <key>StupidMirrorDefaultUsePrebuiltWDA</key>
   <${default_use_prebuilt_wda}/>
+  <key>StupidMirrorLicenseEndpoint</key>
+  <string>${license_endpoint_xml}</string>
+  <key>StupidMirrorLicensePublishableKey</key>
+  <string>${license_publishable_key_xml}</string>
 </dict>
 </plist>
 PLIST

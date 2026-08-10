@@ -89,11 +89,6 @@ struct StandaloneMirrorWindowView: View {
                 store.stop(session)
             }
         }
-        .onAppear {
-            if mirrorSession.state == .stopped {
-                mirrorSession.start()
-            }
-        }
         .onChange(of: mirrorSession.frameAspectRatio) { _, newRatio in
             guard let newRatio else { return }
             MirrorWindowRegistry.shared.applyLiveAspectRatio(newRatio, for: session)

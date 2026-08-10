@@ -16,15 +16,21 @@ struct GalleryView: View {
             Divider()
             bottomBar
         }
-        .sheet(isPresented: $store.showsDiagnostics) {
-            DiagnosticsView()
-                .environmentObject(store)
-                .frame(width: 560, height: 520)
-        }
-        .sheet(isPresented: $store.showsSettings) {
-            SettingsView()
-                .environmentObject(store)
-                .frame(width: 540, height: 440)
+        .sheet(item: activeSheetBinding) { sheet in
+            switch sheet {
+            case .diagnostics:
+                DiagnosticsView()
+                    .environmentObject(store)
+                    .frame(width: 560, height: 520)
+            case .settings:
+                SettingsView()
+                    .environmentObject(store)
+                    .frame(width: 540, height: 520)
+            case .activation:
+                LicenseActivationView(licenseManager: store.licenseManager)
+                    .environmentObject(store)
+                    .frame(width: 540, height: 540)
+            }
         }
     }
 
@@ -112,6 +118,13 @@ struct GalleryView: View {
         return store.sessions.first { $0.id == id }
     }
 
+    private var activeSheetBinding: Binding<DashboardSheet?> {
+        Binding(
+            get: { store.activeSheet },
+            set: { store.setActiveSheet($0) }
+        )
+    }
+
     // MARK: Toolbar
 
     @ToolbarContentBuilder
@@ -132,14 +145,14 @@ struct GalleryView: View {
             .help(store.t("menu.stopAll"))
 
             Button {
-                store.showsSettings.toggle()
+                store.toggleSettings()
             } label: {
                 Label(store.t("toolbar.settings"), systemImage: "gearshape")
             }
             .help(store.t("toolbar.settings"))
 
             Button {
-                store.showsDiagnostics.toggle()
+                store.toggleDiagnostics()
             } label: {
                 Label(store.t("toolbar.diagnostics"), systemImage: "stethoscope")
             }
@@ -454,6 +467,8 @@ struct SettingsView: View {
             Divider()
 
             Form {
+                LicenseSettingsSection(licenseManager: store.licenseManager)
+
                 Section(store.t("settings.language")) {
                     Picker(store.t("settings.language"), selection: $store.language) {
                         ForEach(AppLanguage.allCases) { language in

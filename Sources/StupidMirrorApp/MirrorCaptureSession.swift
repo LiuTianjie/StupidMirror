@@ -41,8 +41,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     }
 
     @MainActor
-    func start() {
-        guard state != .running && state != .starting else { return }
+    func start(onRunning: @escaping @MainActor @Sendable () -> Void = {}) {
+        if state == .running {
+            onRunning()
+            return
+        }
+        guard state != .starting else { return }
         state = .starting
 
         sessionQueue.async { [self] in
@@ -61,6 +65,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                     // session; don't resurrect the running state in that case.
                     guard self.state == .starting else { return }
                     self.state = .running
+                    onRunning()
                 }
             } catch {
                 Task { @MainActor in

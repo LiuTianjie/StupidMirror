@@ -1,0 +1,11 @@
+[functions.stupidmirror-license]
+# The desktop client uses a modern sb_publishable key in the apikey header,
+# not a Supabase Auth JWT. The handler validates that exact named key before
+# accepting a request.
+verify_jwt = false
+
+[functions.stupidmirror-license-admin]
+# This endpoint performs two checks in its handler: the same publishable-key
+# gate and a dedicated 256-bit administrator token. The latter is never
+# embedded in the app or repository.
+verify_jwt = false

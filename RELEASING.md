@@ -3,6 +3,13 @@
 StupidMirror releases are built locally on macOS. GitHub Actions only runs CI;
 it does not hold signing certificates or Apple credentials.
 
+The source repository may remain private. That does not prevent GitHub Actions
+from running CI, but every signed distribution build is still created,
+notarized, and uploaded from the release Mac. A Release in a private repository
+is downloadable only by GitHub users who have read access. If customer downloads
+must be public later, publish the notarized zip to a separate binary-only public
+repository or download host; do not make the source repository public.
+
 ## One-Time Setup
 
 1. Install and authenticate GitHub CLI:
@@ -46,8 +53,13 @@ Gatekeeper even when they are Developer ID signed. For private/local test builds
 only, set `ALLOW_UNNOTARIZED=true`.
 
 When `BUMP` is set, the script updates `VERSION`, commits `Release vX.Y.Z`, tags
-the commit, pushes the branch and tag, then uploads the zip to GitHub Release.
-Set `COMMIT_RELEASE=false` or `PUSH_RELEASE=false` to disable those steps.
+the commit, pushes the branch and tag, verifies that the tag on `origin` points
+to the packaged commit, then uploads the zip to GitHub Release.
+
+`BUMP` requires `COMMIT_RELEASE=true`; otherwise the tag would not record the
+version packaged in the artifact, so the script rejects that combination.
+Set `PUSH_RELEASE=false` for a local-only run: the signed artifact and local tag
+are created, but nothing is pushed and no GitHub Release is created or updated.
 
 Public releases are intentionally locked to bundle ID
 `com.gaojiua.StupidMirror` and Apple Team `L95PYLFT86`. Do not override either
@@ -57,6 +69,7 @@ updates.
 Before an artifact is uploaded, the release script asserts:
 
 - the fixed bundle ID and signing Team ID;
+- the fixed HTTPS license endpoint and non-secret Supabase publishable key;
 - non-empty Camera and Microphone usage descriptions in the base, English, and
   Simplified Chinese resources;
 - Camera and audio-input entitlements on the app;
@@ -80,5 +93,7 @@ Before an artifact is uploaded, the release script asserts:
 - `DRAFT=true`: Create a draft GitHub Release.
 - `PRERELEASE=true`: Mark the GitHub Release as a prerelease.
 - `ALLOW_DIRTY=true`: Allow release with uncommitted working tree changes.
-- `COMMIT_RELEASE=false`: Do not auto-commit `VERSION` after a bump.
-- `PUSH_RELEASE=false`: Do not push the branch and tag before uploading.
+- `COMMIT_RELEASE=false`: Allowed only without `BUMP`; `BUMP` must commit the
+  updated `VERSION` before tagging.
+- `PUSH_RELEASE=false`: Keep the artifact and tag local; skip all pushes and
+  GitHub Release creation or upload.
