@@ -29,6 +29,12 @@ final class AppLocalizationTests: XCTestCase {
             "permission.requestAccess",
             "permission.openSettings",
             "permission.recheck",
+            "permission.requesting",
+            "permission.microphone.title",
+            "permission.microphone.body.notDetermined",
+            "permission.microphone.body.denied",
+            "permission.microphone.requestAccess",
+            "permission.microphone.openSettings",
             "status.controlPreparingAgent",
             "menu.showDashboard",
             "menu.devices",
@@ -45,7 +51,8 @@ final class AppLocalizationTests: XCTestCase {
             "control.error.unlockDevice",
             "control.error.signing",
             "status.deviceDisconnectedRefreshing",
-            "diagnostic.mirror"
+            "diagnostic.mirror",
+            "diagnostic.microphone"
         ]
     }
 }

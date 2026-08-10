@@ -86,11 +86,36 @@ struct DeviceDetailView: View {
     private var isLive: Bool { mirrorSession.state == .running && isConnected }
 
     var body: some View {
-        preview
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(Theme.Spacing.xl)
-            .navigationTitle(session.device.name)
-            .navigationSubtitle(session.device.subtitle)
+        VStack(spacing: 0) {
+            detailHeader
+            Divider()
+            preview
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(Theme.Spacing.xl)
+        }
+    }
+
+    private var detailHeader: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            Image(systemName: "iphone.gen3")
+                .font(.title2)
+                .foregroundStyle(Theme.Palette.accent)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.device.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(session.device.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .frame(height: 56)
+        .background(.bar)
     }
 
     // MARK: Preview

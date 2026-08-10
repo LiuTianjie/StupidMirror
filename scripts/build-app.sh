@@ -7,12 +7,14 @@ cd "$repo_root"
 configuration="${CONFIGURATION:-release}"
 app_name="${APP_NAME:-StupidMirror}"
 product_name="${PRODUCT_NAME:-StupidMirrorApp}"
-bundle_id="${BUNDLE_ID:-dev.stupidmirror.app}"
+official_bundle_id="com.gaojiua.StupidMirror"
+bundle_id="${BUNDLE_ID:-$official_bundle_id}"
 version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
 build_number="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 sign_identity="${SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}"
 entitlements="${ENTITLEMENTS:-StupidMirror.entitlements}"
+node_entitlements="${NODE_ENTITLEMENTS:-NodeRuntime.entitlements}"
 skip_codesign="${SKIP_CODESIGN:-false}"
 bundle_appium="${BUNDLE_APPIUM:-true}"
 default_appium_url="${DEFAULT_APPIUM_URL:-http://127.0.0.1:4723}"
@@ -80,7 +82,9 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <key>LSUIElement</key>
   <true/>
   <key>NSCameraUsageDescription</key>
-  <string>StupidMirror uses AVFoundation camera capture APIs to read the USB iPhone screen source exposed by macOS.</string>
+  <string>StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>StupidMirror uses microphone access to receive the optional audio track of an iPhone connected over USB.</string>
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>StupidMirrorDefaultAppiumServerURL</key>
@@ -99,24 +103,105 @@ cat > "${contents_path}/Info.plist" <<PLIST
 </plist>
 PLIST
 
+resources_path="${contents_path}/Resources"
+mkdir -p "${resources_path}/en.lproj" "${resources_path}/zh-Hans.lproj"
+cat > "${resources_path}/en.lproj/InfoPlist.strings" <<'STRINGS'
+"NSCameraUsageDescription" = "StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.";
+"NSMicrophoneUsageDescription" = "StupidMirror uses microphone access to receive the optional audio track of an iPhone connected over USB.";
+STRINGS
+cat > "${resources_path}/zh-Hans.lproj/InfoPlist.strings" <<'STRINGS'
+"NSCameraUsageDescription" = "StupidMirror 使用相机权限接收通过 USB 连接的 iPhone 视频画面，不会采集 Mac 摄像头。";
+"NSMicrophoneUsageDescription" = "StupidMirror 使用麦克风权限接收通过 USB 连接的 iPhone 可选音轨。";
+STRINGS
+
+assert_nonempty_plist_value() {
+  local plist="$1"
+  local key="$2"
+  local value
+  value="$(/usr/libexec/PlistBuddy -c "Print :${key}" "$plist" 2>/dev/null || true)"
+  if [ -z "$value" ]; then
+    echo "Required Info.plist value is missing or empty: ${key}" >&2
+    exit 1
+  fi
+}
+
+assert_true_entitlement() {
+  local plist="$1"
+  local key="$2"
+  local value
+  value="$(/usr/libexec/PlistBuddy -c "Print :${key}" "$plist" 2>/dev/null || true)"
+  if [ "$value" != "true" ]; then
+    echo "Required capture entitlement is missing or false: ${key}" >&2
+    exit 1
+  fi
+}
+
+assert_nonempty_plist_value "${contents_path}/Info.plist" CFBundleIdentifier
+assert_nonempty_plist_value "${contents_path}/Info.plist" NSCameraUsageDescription
+assert_nonempty_plist_value "${contents_path}/Info.plist" NSMicrophoneUsageDescription
+
 if [ "$skip_codesign" != "true" ] && command -v codesign >/dev/null 2>&1; then
+  if [ -z "$entitlements" ] || [ ! -f "$entitlements" ]; then
+    echo "Entitlements file not found: ${entitlements:-<empty>}" >&2
+    exit 1
+  fi
+  assert_true_entitlement "$entitlements" com.apple.security.device.camera
+  assert_true_entitlement "$entitlements" com.apple.security.device.audio-input
+  if [ "$bundle_appium" = "true" ]; then
+    if [ ! -f "$node_entitlements" ]; then
+      echo "Node runtime entitlements file not found: ${node_entitlements}" >&2
+      exit 1
+    fi
+    assert_true_entitlement "$node_entitlements" com.apple.security.cs.allow-jit
+    assert_true_entitlement "$node_entitlements" com.apple.security.cs.allow-unsigned-executable-memory
+  fi
+
   strip_and_sign() {
     if command -v xattr >/dev/null 2>&1; then
       find "$build_app_path" -xattr -print0 | xargs -0 xattr -c 2>/dev/null || true
     fi
-    sign_args=(--force --deep --sign "$sign_identity")
+    nested_sign_args=(--force --sign "$sign_identity")
+    app_sign_args=(--force --sign "$sign_identity")
     if [ "$sign_identity" != "-" ]; then
-      sign_args+=(--timestamp --options runtime)
+      nested_sign_args+=(--timestamp --options runtime)
+      app_sign_args+=(--timestamp --options runtime)
     fi
-    if [ -n "$entitlements" ]; then
-      if [ ! -f "$entitlements" ]; then
-        echo "Entitlements file not found: ${entitlements}" >&2
-        exit 1
-      fi
-      sign_args+=(--entitlements "$entitlements")
+
+    if [ "$bundle_appium" = "true" ]; then
+      while IFS= read -r -d '' nested_binary; do
+        nested_args=("${nested_sign_args[@]}")
+        if [ "$nested_binary" = "${contents_path}/Resources/Appium/bin/node" ]; then
+          nested_args+=(--entitlements "$node_entitlements")
+        fi
+        codesign "${nested_args[@]}" "$nested_binary" || return 1
+      done < <(
+        find "${contents_path}/Resources/Appium" -type f -print0 \
+          | while IFS= read -r -d '' candidate; do
+              if file -b "$candidate" | grep -q 'Mach-O'; then
+                printf '%s\0' "$candidate"
+              fi
+            done
+      )
     fi
-    codesign "${sign_args[@]}" "$build_app_path"
-    codesign --verify --deep --strict --verbose=2 "$build_app_path" >/dev/null
+
+    app_sign_args+=(--entitlements "$entitlements")
+    codesign "${app_sign_args[@]}" "$build_app_path" || return 1
+
+    if [ "$bundle_appium" = "true" ]; then
+      while IFS= read -r -d '' nested_binary; do
+        codesign --verify --strict --verbose=2 "$nested_binary" >/dev/null || return 1
+      done < <(
+        find "${contents_path}/Resources/Appium" -type f -print0 \
+          | while IFS= read -r -d '' candidate; do
+              if file -b "$candidate" | grep -q 'Mach-O'; then
+                printf '%s\0' "$candidate"
+              fi
+            done
+      )
+    fi
+    # Verifies the main signature and the bundle's sealed resources without
+    # asking codesign to recursively infer how nested code should be signed.
+    codesign --verify --strict --verbose=2 "$build_app_path" >/dev/null || return 1
   }
   strip_and_sign || strip_and_sign || strip_and_sign || {
     echo "codesign failed after retries." >&2

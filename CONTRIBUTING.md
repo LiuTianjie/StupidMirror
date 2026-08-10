@@ -43,7 +43,7 @@ make app
 Maintainers can create signed local release uploads with:
 
 ```sh
-SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+SIGN_IDENTITY="Developer ID Application: Gaojiua Technology (Beijing) Co., Ltd. (L95PYLFT86)" \
 NOTARY_PROFILE="stupidmirror-notary" \
 make release-local BUMP=patch
 ```
@@ -53,9 +53,14 @@ See [RELEASING.md](RELEASING.md) for notarization setup and release options.
 ## Device and Permission Notes
 
 The app needs Camera permission because USB iPhone screen sources are exposed
-through AVFoundation capture APIs. Contributors testing permission flows should
-check both the packaged app and `swift run`, because macOS stores permissions per
-binary/app identity.
+through AVFoundation capture APIs. Microphone permission is optional and must
+not block video-only mirroring. Permission requests belong behind explicit user
+actions, must coalesce concurrent requests, and must never be triggered during
+startup or periodic refresh.
+
+Contributors testing permission flows should check both the packaged app and
+`swift run`, because macOS stores permissions per binary/app identity. Public
+release identity is fixed to `com.gaojiua.StupidMirror` / Team `L95PYLFT86`.
 
 ## Code Style
 

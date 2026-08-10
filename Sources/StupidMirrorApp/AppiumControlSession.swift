@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppiumControlConfiguration {
+struct AppiumControlConfiguration: Hashable, Sendable {
     var xcodeOrgID: String = ""
     var xcodeSigningID: String = "Apple Development"
     var wdaBundleID: String = ""
@@ -9,6 +9,7 @@ struct AppiumControlConfiguration {
     var usePrebuiltWDA: Bool = false
     var useNewWDA: Bool = false
     var derivedDataPath: String = ""
+    var wdaLocalPort: Int = 8100
     var mjpegServerPort: Int = 9100
     var wdaStartupRetries: Int = 3
     var wdaStartupRetryIntervalMS: Int = 15_000
@@ -17,6 +18,47 @@ struct AppiumControlConfiguration {
     var sessionStartupTimeoutSeconds: TimeInterval = 210
     var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 35
     var newCommandTimeoutSeconds: Int = 300
+
+    /// Appium's default WDA ports and a shared DerivedData directory cannot be
+    /// used safely by simultaneous devices. Keep the two port ranges disjoint
+    /// and derive a stable per-device directory from the complete UDID.
+    func isolated(forDeviceUDID udid: String) -> Self {
+        let normalizedUDID = udid.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedUDID.isEmpty else { return self }
+
+        let hash = StableDeviceHash.fnv1a64(normalizedUDID)
+        let slot = Int(hash % 20_000)
+        var result = self
+        result.wdaLocalPort = 10_000 + slot
+        result.mjpegServerPort = 30_000 + slot
+
+        let basePath = derivedDataPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL: URL
+        if basePath.isEmpty {
+            let applicationSupport = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support")
+            baseURL = applicationSupport
+                .appendingPathComponent("StupidMirror", isDirectory: true)
+                .appendingPathComponent("WebDriverAgentDerivedData", isDirectory: true)
+        } else {
+            baseURL = URL(fileURLWithPath: basePath, isDirectory: true)
+        }
+        result.derivedDataPath = baseURL
+            .appendingPathComponent(String(format: "device-%016llx", hash), isDirectory: true)
+            .path
+        return result
+    }
+}
+
+private enum StableDeviceHash {
+    static func fnv1a64(_ value: String) -> UInt64 {
+        value.utf8.reduce(UInt64(14_695_981_039_346_656_037)) { partial, byte in
+            (partial ^ UInt64(byte)) &* 1_099_511_628_211
+        }
+    }
 }
 
 @MainActor
@@ -27,9 +69,13 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
     private let device: DeviceIdentity
     private var sessionID: String?
+    private var sessionServerURL: String?
     private var connectionTask: Task<Void, Never>?
+    private var connectionRequest: ConnectionRequest?
+    private var cleanupTask: Task<Void, Never>?
+    private var actionPumpTask: Task<Void, Never>?
     private var pendingActions: [ControlAction] = []
-    private var isActionPumpRunning = false
+    private var generation: UInt64 = 0
 
     init(device: DeviceIdentity) {
         self.device = device
@@ -58,44 +104,106 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             return
         }
 
-        connectionTask?.cancel()
+        let isolatedConfiguration = configuration.isolated(forDeviceUDID: udid)
+        let request = ConnectionRequest(
+            serverURL: AppiumHTTPClient.normalizedBaseURLString(serverURL),
+            bundleID: bundleID,
+            configuration: isolatedConfiguration
+        )
+        if connectionTask != nil, connectionRequest == request {
+            return
+        }
+        if sessionID != nil, sessionServerURL == request.serverURL, connectionRequest == request {
+            return
+        }
+
+        let previousConnection = connectionTask
+        previousConnection?.cancel()
+        let previousCleanup = cleanupTask
+        let previousPump = actionPumpTask
+        previousPump?.cancel()
+        let previousSessionID = sessionID
+        let previousServerURL = sessionServerURL
+
+        generation &+= 1
+        let taskGeneration = generation
+        sessionID = nil
+        sessionServerURL = nil
+        screenSize = nil
+        pendingActions.removeAll()
+        actionPumpTask = nil
+        cleanupTask = nil
+        connectionRequest = request
         state = .connecting
         statusMessage = "Checking local Appium service..."
-        connectionTask = Task {
+        connectionTask = Task { [weak self] in
+            if let previousConnection {
+                await previousConnection.value
+            }
+            if let previousPump {
+                await previousPump.value
+            }
+            if let previousCleanup {
+                await previousCleanup.value
+            }
+            if let previousSessionID, let previousServerURL {
+                await Self.deleteSessionIgnoringCancellation(
+                    serverURL: previousServerURL,
+                    sessionID: previousSessionID
+                )
+            }
+
+            guard let self, self.generation == taskGeneration else { return }
+            var createdSessionID: String?
+            let client = AppiumHTTPClient(baseURL: request.serverURL)
             do {
-                let client = AppiumHTTPClient(baseURL: serverURL)
-                await MainActor.run {
-                    self.statusMessage = "Checking local Appium service..."
-                }
-                try await client.status()
+                self.setStatus("Checking local Appium service...", generation: taskGeneration)
+                try await client.status(timeout: 5)
                 try Task.checkCancellation()
                 let sessionID = try await self.createReusableSession(
                     client: client,
                     udid: udid,
-                    bundleID: bundleID,
-                    configuration: configuration
+                    bundleID: request.bundleID,
+                    configuration: request.configuration,
+                    generation: taskGeneration
                 )
+                createdSessionID = sessionID
                 try Task.checkCancellation()
-                await MainActor.run {
-                    self.statusMessage = "Reading device screen size..."
-                }
+                guard self.generation == taskGeneration else { throw CancellationError() }
+                self.setStatus("Reading device screen size...", generation: taskGeneration)
                 let size = try await client.windowSize(sessionID: sessionID)
                 try Task.checkCancellation()
+                guard self.generation == taskGeneration else { throw CancellationError() }
                 self.sessionID = sessionID
+                self.sessionServerURL = request.serverURL
                 self.screenSize = size
                 self.state = .ready
                 self.statusMessage = "Control ready: \(Int(size.width)) x \(Int(size.height))"
+                createdSessionID = nil
             } catch is CancellationError {
-                self.sessionID = nil
-                self.screenSize = nil
-                self.state = .unavailable
-                self.statusMessage = "Control not connected"
+                if self.generation == taskGeneration {
+                    self.sessionID = nil
+                    self.sessionServerURL = nil
+                    self.screenSize = nil
+                    self.state = .unavailable
+                    self.statusMessage = "Control not connected"
+                }
             } catch {
-                let message = AppiumError.controlFailureMessage(for: error)
-                self.state = .failed(message)
-                self.statusMessage = message
+                if self.generation == taskGeneration {
+                    let message = AppiumError.controlFailureMessage(for: error)
+                    self.state = .failed(message)
+                    self.statusMessage = message
+                }
             }
-            self.connectionTask = nil
+            if let createdSessionID {
+                await Self.deleteSessionIgnoringCancellation(
+                    serverURL: request.serverURL,
+                    sessionID: createdSessionID
+                )
+            }
+            if self.generation == taskGeneration {
+                self.connectionTask = nil
+            }
         }
     }
 
@@ -103,7 +211,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         client: AppiumHTTPClient,
         udid: String,
         bundleID: String,
-        configuration: AppiumControlConfiguration
+        configuration: AppiumControlConfiguration,
+        generation: UInt64
     ) async throws -> String {
         if configuration.preferInstalledWDA {
             do {
@@ -115,9 +224,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     configuration.sessionStartupTimeoutSeconds,
                     configuration.preinstalledWDAStartupTimeoutSeconds
                 )
-                await MainActor.run {
-                    self.statusMessage = "Reusing installed WebDriverAgent control agent..."
-                }
+                setStatus("Reusing installed WebDriverAgent control agent...", generation: generation)
                 return try await startSession(
                     client: client,
                     udid: udid,
@@ -129,16 +236,18 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     throw error
                 }
                 try Task.checkCancellation()
-                await MainActor.run {
-                    self.statusMessage = "Installed WebDriverAgent is not reusable; installing control agent..."
-                }
+                setStatus(
+                    "Installed WebDriverAgent is not reusable; installing control agent...",
+                    generation: generation
+                )
             }
         } else {
-            await MainActor.run {
-                self.statusMessage = configuration.usePrebuiltWDA
+            setStatus(
+                configuration.usePrebuiltWDA
                     ? "Starting installed WebDriverAgent control agent..."
-                    : "Installing and starting WebDriverAgent control agent..."
-            }
+                    : "Installing and starting WebDriverAgent control agent...",
+                generation: generation
+            )
         }
 
         var installConfiguration = configuration
@@ -158,9 +267,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             var freshConfiguration = installConfiguration
             freshConfiguration.useNewWDA = true
             freshConfiguration.usePrebuiltWDA = false
-            await MainActor.run {
-                self.statusMessage = "Restarting WebDriverAgent control agent..."
-            }
+            setStatus("Restarting WebDriverAgent control agent...", generation: generation)
             return try await startSession(
                 client: client,
                 udid: udid,
@@ -186,26 +293,15 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     }
 
     func stop(serverURL: String) {
-        connectionTask?.cancel()
-        connectionTask = nil
-        pendingActions.removeAll()
-        isActionPumpRunning = false
+        _ = beginShutdown(serverURL: serverURL)
+    }
 
-        guard let sessionID else {
-            screenSize = nil
-            state = .unavailable
-            statusMessage = "Control not connected"
-            return
-        }
-
-        self.sessionID = nil
-        screenSize = nil
-        state = .unavailable
-        statusMessage = "Control not connected"
-
-        Task {
-            try? await AppiumHTTPClient(baseURL: serverURL).deleteSession(sessionID: sessionID)
-        }
+    /// Awaitable teardown for app termination and tests. The connection task
+    /// owns any session it creates until adoption, so waiting it also waits for
+    /// cancellation-time DELETE cleanup.
+    func shutdown(serverURL: String) async {
+        let task = beginShutdown(serverURL: serverURL)
+        await task.value
     }
 
     func tapNormalized(x: Double, y: Double, serverURL: String) {
@@ -254,55 +350,56 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         if pendingActions.count > 4 {
             pendingActions.removeFirst(pendingActions.count - 4)
         }
-        pumpActions(sessionID: sessionID, serverURL: serverURL)
+        pumpActions(sessionID: sessionID, serverURL: serverURL, generation: generation)
     }
 
-    private func pumpActions(sessionID: String, serverURL: String) {
-        guard !isActionPumpRunning else { return }
-        isActionPumpRunning = true
-        Task {
+    private func pumpActions(sessionID: String, serverURL: String, generation taskGeneration: UInt64) {
+        guard actionPumpTask == nil else { return }
+        actionPumpTask = Task { [weak self] in
+            guard let self else { return }
             let client = AppiumHTTPClient(baseURL: serverURL)
             while true {
                 guard !Task.isCancelled else { break }
-                guard let action = await MainActor.run(body: { () -> ControlAction? in
-                    guard !self.pendingActions.isEmpty else { return nil }
-                    return self.pendingActions.removeFirst()
-                }) else {
+                guard self.generation == taskGeneration, self.sessionID == sessionID else { break }
+                guard !self.pendingActions.isEmpty else { break }
+                let action = self.pendingActions.removeFirst()
+                guard self.generation == taskGeneration, self.sessionID == sessionID else {
                     break
                 }
                 do {
                     switch action {
                     case let .tap(point):
                         try await client.tap(sessionID: sessionID, point: point)
-                        await MainActor.run {
+                        if self.generation == taskGeneration, self.sessionID == sessionID {
                             self.statusMessage = "Tap \(Int(point.x)), \(Int(point.y))"
                         }
                     case let .swipe(start, end, durationMS):
                         try await client.swipe(sessionID: sessionID, from: start, to: end, durationMS: durationMS)
                     case let .typeText(text):
                         try await client.typeText(sessionID: sessionID, text: text)
-                        await MainActor.run {
+                        if self.generation == taskGeneration, self.sessionID == sessionID {
                             self.statusMessage = "Typed \(text.count) character\(text.count == 1 ? "" : "s")"
                         }
                     case let .pressButton(name):
                         try await client.pressButton(sessionID: sessionID, name: name)
-                        await MainActor.run {
+                        if self.generation == taskGeneration, self.sessionID == sessionID {
                             self.statusMessage = "Pressed \(name.capitalized)"
                         }
                     case .appSwitcher:
                         try await client.pressButton(sessionID: sessionID, name: "home")
                         try await Task.sleep(nanoseconds: 180_000_000)
                         try await client.pressButton(sessionID: sessionID, name: "home")
-                        await MainActor.run {
+                        if self.generation == taskGeneration, self.sessionID == sessionID {
                             self.statusMessage = "Sent best-effort App Switcher gesture"
                         }
                     }
                 } catch {
-                    await MainActor.run {
+                    if self.generation == taskGeneration, self.sessionID == sessionID {
                         let message = AppiumError.controlFailureMessage(for: error)
                         self.statusMessage = message
                         if AppiumError.shouldInvalidateActiveSession(afterActionError: error) {
                             self.sessionID = nil
+                            self.sessionServerURL = nil
                             self.screenSize = nil
                             self.pendingActions.removeAll()
                             self.state = .failed(message)
@@ -310,14 +407,80 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     }
                 }
             }
-            await MainActor.run {
-                self.isActionPumpRunning = false
-                if !self.pendingActions.isEmpty, self.sessionID == sessionID {
-                    self.pumpActions(sessionID: sessionID, serverURL: serverURL)
+            if self.generation == taskGeneration {
+                self.actionPumpTask = nil
+                if !Task.isCancelled, !self.pendingActions.isEmpty, self.sessionID == sessionID {
+                    self.pumpActions(
+                        sessionID: sessionID,
+                        serverURL: serverURL,
+                        generation: taskGeneration
+                    )
                 }
             }
         }
     }
+
+    private func setStatus(_ message: String, generation taskGeneration: UInt64) {
+        guard generation == taskGeneration else { return }
+        statusMessage = message
+    }
+
+    private func beginShutdown(serverURL: String) -> Task<Void, Never> {
+        generation &+= 1
+        let previousConnection = connectionTask
+        previousConnection?.cancel()
+        let previousPump = actionPumpTask
+        previousPump?.cancel()
+        let previousCleanup = cleanupTask
+        let activeSessionID = sessionID
+        let activeServerURL = sessionServerURL ?? AppiumHTTPClient.normalizedBaseURLString(serverURL)
+
+        connectionTask = nil
+        connectionRequest = nil
+        actionPumpTask = nil
+        sessionID = nil
+        sessionServerURL = nil
+        screenSize = nil
+        pendingActions.removeAll()
+        state = .unavailable
+        statusMessage = "Control not connected"
+
+        let task = Task {
+            if let previousConnection {
+                await previousConnection.value
+            }
+            if let previousPump {
+                await previousPump.value
+            }
+            if let previousCleanup {
+                await previousCleanup.value
+            }
+            if let activeSessionID {
+                await Self.deleteSessionIgnoringCancellation(
+                    serverURL: activeServerURL,
+                    sessionID: activeSessionID
+                )
+            }
+        }
+        cleanupTask = task
+        return task
+    }
+
+    private nonisolated static func deleteSessionIgnoringCancellation(serverURL: String, sessionID: String) async {
+        let cleanup = Task.detached(priority: .utility) {
+            try? await AppiumHTTPClient(baseURL: serverURL).deleteSession(
+                sessionID: sessionID,
+                timeout: 5
+            )
+        }
+        await cleanup.value
+    }
+}
+
+private struct ConnectionRequest: Hashable, Sendable {
+    let serverURL: String
+    let bundleID: String
+    let configuration: AppiumControlConfiguration
 }
 
 private enum ControlAction {
@@ -344,16 +507,28 @@ private enum ControlAction {
     }
 }
 
-struct AppiumHTTPClient {
+struct AppiumHTTPClient: Sendable {
     let baseURL: URL
 
     init(baseURL: String) {
-        let cleaned = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.baseURL = URL(string: cleaned.isEmpty ? "http://127.0.0.1:4723" : cleaned) ?? URL(string: "http://127.0.0.1:4723")!
+        self.baseURL = URL(string: Self.normalizedBaseURLString(baseURL))!
     }
 
-    func status() async throws {
-        _ = try await jsonRequest(method: "GET", path: "/status")
+    static func normalizedBaseURLString(_ value: String) -> String {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = "http://127.0.0.1:4723"
+        guard let url = URL(string: cleaned.isEmpty ? fallback : cleaned),
+              let scheme = url.scheme,
+              let host = url.host,
+              !scheme.isEmpty,
+              !host.isEmpty else {
+            return fallback
+        }
+        return url.absoluteString
+    }
+
+    func status(timeout: TimeInterval = 30) async throws {
+        _ = try await jsonRequest(method: "GET", path: "/status", timeout: timeout)
     }
 
     func createSession(
@@ -463,8 +638,12 @@ struct AppiumHTTPClient {
         )
     }
 
-    func deleteSession(sessionID: String) async throws {
-        _ = try await jsonRequest(method: "DELETE", path: "/session/\(sessionID)")
+    func deleteSession(sessionID: String, timeout: TimeInterval = 30) async throws {
+        _ = try await jsonRequest(
+            method: "DELETE",
+            path: "/session/\(sessionID)",
+            timeout: timeout
+        )
     }
 
     private func jsonRequest(
@@ -565,6 +744,7 @@ enum AppiumSessionCapabilities {
             "appium:udid": udid,
             "appium:bundleId": bundleID,
             "appium:noReset": true,
+            "appium:wdaLocalPort": configuration.wdaLocalPort,
             "appium:mjpegServerPort": configuration.mjpegServerPort,
             "appium:useNewWDA": configuration.useNewWDA,
             "appium:wdaStartupRetries": configuration.wdaStartupRetries,

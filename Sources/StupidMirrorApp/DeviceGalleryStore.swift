@@ -7,7 +7,10 @@ import SwiftUI
 @MainActor
 final class DeviceGalleryStore: ObservableObject {
     @Published private(set) var sessions: [DeviceSession] = []
-    @Published private(set) var permissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.authorizationStatus()
+    @Published private(set) var permissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
+    @Published private(set) var microphonePermissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
+    @Published private(set) var isRequestingCameraPermission = false
+    @Published private(set) var isRequestingMicrophonePermission = false
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var statusMessage: String = AppCopy.text("status.ready", language: DeviceGalleryStore.initialLanguage)
     @Published private(set) var thumbnails: [String: NSImage] = [:]
@@ -78,10 +81,20 @@ final class DeviceGalleryStore: ObservableObject {
 
     private var observers: [NSObjectProtocol] = []
     private var refreshTimer: Timer?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshGeneration: UInt64 = 0
+    private var shutdownTask: Task<Void, Never>?
+    private var refreshRequestedWhileRunning = false
     private var thumbnailCaptures: [String: ThumbnailCapture] = [:]
     private var desiredMirrorIDs = Set<String>()
+    private var disconnectedSince: [String: Date] = [:]
     private var lastConnectedCount = 0
     private var lastReconnectingCount = 0
+    private var isShuttingDown = false
+
+    private static let periodicRefreshInterval: TimeInterval = 10
+    private static let reconnectRetentionInterval: TimeInterval = 30
+    private static let maxRetainedDisconnectedSessions = 4
 
     private static let languageDefaultsKey = "StupidMirror.language"
     private static let autoStartMirrorsDefaultsKey = "StupidMirror.autoStartMirrors"
@@ -137,6 +150,7 @@ final class DeviceGalleryStore: ObservableObject {
     var diagnostics: [DiagnosticItem] {
         [
             DiagnosticItem(name: t("diagnostic.camera"), value: authorizationLabel(permissionStatus)),
+            DiagnosticItem(name: t("diagnostic.microphone"), value: authorizationLabel(microphonePermissionStatus)),
             DiagnosticItem(name: t("diagnostic.backend"), value: "CoreMediaIO + AVFoundation"),
             DiagnosticItem(name: t("diagnostic.detected"), value: "\(connectedSessions.count)"),
             DiagnosticItem(name: t("diagnostic.reconnecting"), value: "\(reconnectingSessions.count)"),
@@ -168,7 +182,8 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func refreshIfCameraAuthorized() {
-        permissionStatus = AVFoundationMirrorBackend.authorizationStatus()
+        permissionStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
+        microphonePermissionStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
         guard permissionStatus == .authorized else {
             statusMessage = t("status.permissionRequired")
             return
@@ -184,8 +199,11 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func requestCameraPermission() async {
+        guard !isRequestingCameraPermission else { return }
+        isRequestingCameraPermission = true
+        defer { isRequestingCameraPermission = false }
         let granted = await AVFoundationMirrorBackend.requestVideoAccess()
-        permissionStatus = AVFoundationMirrorBackend.authorizationStatus()
+        updateCameraPermissionStatus(AVFoundationMirrorBackend.videoAuthorizationStatus())
         if granted {
             refresh()
         } else {
@@ -194,7 +212,7 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func recheckCameraPermission() {
-        permissionStatus = AVFoundationMirrorBackend.authorizationStatus()
+        updateCameraPermissionStatus(AVFoundationMirrorBackend.videoAuthorizationStatus())
         if permissionStatus == .authorized {
             refresh()
         } else {
@@ -202,14 +220,105 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
+    func openMicrophonePrivacySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func requestMicrophonePermission() async {
+        guard !isRequestingMicrophonePermission else { return }
+        isRequestingMicrophonePermission = true
+        defer { isRequestingMicrophonePermission = false }
+        _ = await AVFoundationMirrorBackend.requestAudioAccess()
+        updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
+    }
+
+    func recheckMicrophonePermission() {
+        updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
+    }
+
+    private func updateCameraPermissionStatus(_ status: AVAuthorizationStatus) {
+        let previous = permissionStatus
+        permissionStatus = status
+        guard previous == .authorized, status != .authorized else { return }
+
+        refreshGeneration &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshRequestedWhileRunning = false
+        desiredMirrorIDs.removeAll()
+        MirrorWindowRegistry.shared.closeAll(sessions: sessions)
+        for session in sessions {
+            session.mirrorSession.dispose()
+            session.controlSession.stop(serverURL: appiumServerURL)
+        }
+        for capture in thumbnailCaptures.values {
+            capture.cancel()
+        }
+        thumbnailCaptures.removeAll()
+        thumbnails.removeAll()
+        thumbnailAspectRatios.removeAll()
+        thumbnailErrors.removeAll()
+        disconnectedSince.removeAll()
+        floatingMirrorIDs.removeAll()
+        sessions.removeAll()
+        selectedSessionID = nil
+        lastConnectedCount = 0
+        lastReconnectingCount = 0
+        statusMessage = t("status.permissionRequired")
+    }
+
+    private func updateMicrophonePermissionStatus(_ status: AVAuthorizationStatus) {
+        guard microphonePermissionStatus != status else { return }
+        microphonePermissionStatus = status
+        let audioEnabled = status == .authorized
+        for session in sessions {
+            session.mirrorSession.setAudioEnabled(audioEnabled)
+        }
+    }
+
     func refresh() {
-        guard permissionStatus == .authorized else { return }
-        AVFoundationMirrorBackend.warmUpDiscovery()
-        let devices = AVFoundationMirrorBackend.discoverMuxedDevices()
-        let metadata = DeviceMetadataService.connectedDevices()
+        guard permissionStatus == .authorized, !isShuttingDown else { return }
+        guard refreshTask == nil else {
+            refreshRequestedWhileRunning = true
+            return
+        }
+
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
+        refreshTask = Task { [weak self] in
+            let metadata = await Task.detached(priority: .utility) {
+                DeviceMetadataService.connectedDevices()
+            }.value
+            guard let self else { return }
+            guard self.refreshGeneration == generation else { return }
+            guard !Task.isCancelled, self.permissionStatus == .authorized, !self.isShuttingDown else {
+                self.finishRefresh(generation: generation)
+                return
+            }
+
+            let devices = AVFoundationMirrorBackend.discoverMuxedDevices()
+            guard self.refreshGeneration == generation, !Task.isCancelled else { return }
+            self.applyRefresh(devices: devices, metadata: metadata)
+            self.finishRefresh(generation: generation)
+        }
+    }
+
+    private func finishRefresh(generation: UInt64) {
+        guard refreshGeneration == generation else { return }
+        refreshTask = nil
+        guard refreshRequestedWhileRunning, !isShuttingDown else { return }
+        refreshRequestedWhileRunning = false
+        refresh()
+    }
+
+    private func applyRefresh(devices: [AVCaptureDevice], metadata: [DeviceMetadata]) {
         let existingByID = Self.latestValueByID(sessions) { $0.id }
         var nextSessions: [DeviceSession] = []
         var connectedIDs = Set<String>()
+        let now = Date()
 
         for captureDevice in devices {
             let match = DeviceMetadataService.bestMatch(
@@ -223,6 +332,7 @@ final class DeviceGalleryStore: ObservableObject {
             if let existing = existingByID[identity.id],
                existing.captureDevice.uniqueID == captureDevice.uniqueID,
                existing.device.connectionState == .connected {
+                disconnectedSince[identity.id] = nil
                 var updatedSession = existing
                 updatedSession.device = identity
                 nextSessions.append(updatedSession)
@@ -230,7 +340,10 @@ final class DeviceGalleryStore: ObservableObject {
                 let existing = existingByID[identity.id]
                 let wasReconnecting = existing?.device.connectionState == .disconnected
                 existing?.mirrorSession.stop()
+                existing?.controlSession.stop(serverURL: appiumServerURL)
+                disconnectedSince[identity.id] = nil
                 let session = DeviceSession(device: identity, captureDevice: captureDevice)
+                session.mirrorSession.setAudioEnabled(microphonePermissionStatus == .authorized)
                 nextSessions.append(session)
                 if autoStartMirrors && !wasReconnecting {
                     desiredMirrorIDs.insert(session.id)
@@ -246,17 +359,38 @@ final class DeviceGalleryStore: ObservableObject {
             if desiredMirrorIDs.contains(staleSession.id) || staleSession.mirrorSession.state == .running {
                 desiredMirrorIDs.remove(staleSession.id)
                 MirrorWindowRegistry.shared.close(session: staleSession)
+                staleSession.mirrorSession.dispose()
+                staleSession.controlSession.stop(serverURL: appiumServerURL)
+                clearThumbnail(for: staleSession.id)
+                disconnectedSince[staleSession.id] = disconnectedSince[staleSession.id] ?? now
                 var disconnectedSession = staleSession
                 disconnectedSession.device.connectionState = .disconnected
                 nextSessions.append(disconnectedSession)
-            } else if staleSession.device.connectionState == .disconnected {
+            } else if staleSession.device.connectionState == .disconnected,
+                      now.timeIntervalSince(disconnectedSince[staleSession.id] ?? now) < Self.reconnectRetentionInterval {
+                disconnectedSince[staleSession.id] = disconnectedSince[staleSession.id] ?? now
                 nextSessions.append(staleSession)
             } else {
-                staleSession.mirrorSession.stop()
-                thumbnails[staleSession.id] = nil
-                thumbnailAspectRatios[staleSession.id] = nil
-                thumbnailErrors[staleSession.id] = nil
+                retire(staleSession)
             }
+        }
+
+        let retainedDisconnectedIDs = Set(
+            nextSessions
+                .filter { $0.device.connectionState == .disconnected }
+                .sorted {
+                    (disconnectedSince[$0.id] ?? .distantPast) > (disconnectedSince[$1.id] ?? .distantPast)
+                }
+                .prefix(Self.maxRetainedDisconnectedSessions)
+                .map(\.id)
+        )
+        nextSessions.removeAll { session in
+            guard session.device.connectionState == .disconnected,
+                  !retainedDisconnectedIDs.contains(session.id) else {
+                return false
+            }
+            retire(session)
+            return true
         }
 
         sessions = nextSessions.sorted { $0.device.name.localizedStandardCompare($1.device.name) == .orderedAscending }
@@ -270,13 +404,35 @@ final class DeviceGalleryStore: ObservableObject {
         lastReconnectingCount = reconnectingSessions.count
         statusMessage = localizedStatusMessage
 
-        for session in connectedSessions where thumbnails[session.id] == nil && thumbnailCaptures[session.id] == nil {
+        for session in connectedSessions
+            where thumbnails[session.id] == nil
+            && thumbnailCaptures[session.id] == nil
+            && thumbnailErrors[session.id] == nil {
             captureThumbnail(for: session)
         }
     }
 
+    private func clearThumbnail(for sessionID: String) {
+        thumbnails[sessionID] = nil
+        thumbnailAspectRatios[sessionID] = nil
+        thumbnailErrors[sessionID] = nil
+    }
+
+    private func retire(_ session: DeviceSession) {
+        desiredMirrorIDs.remove(session.id)
+        floatingMirrorIDs.remove(session.id)
+        thumbnailCaptures[session.id]?.cancel()
+        thumbnailCaptures[session.id] = nil
+        clearThumbnail(for: session.id)
+        disconnectedSince[session.id] = nil
+        MirrorWindowRegistry.shared.close(session: session)
+        session.mirrorSession.dispose()
+        session.controlSession.stop(serverURL: appiumServerURL)
+    }
+
     func start(_ session: DeviceSession) {
-        guard session.device.connectionState == .connected else { return }
+        guard permissionStatus == .authorized,
+              session.device.connectionState == .connected else { return }
         select(session)
         desiredMirrorIDs.insert(session.id)
         MirrorWindowRegistry.shared.open(session: session, store: self)
@@ -295,6 +451,60 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
+    // Full teardown for app termination. Control sessions are deleted before
+    // the Appium server is stopped, and AppKit waits for this method to finish.
+    func shutdown() async {
+        if let shutdownTask {
+            await shutdownTask.value
+            return
+        }
+        isShuttingDown = true
+        let task = Task<Void, Never> { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performShutdown()
+        }
+        shutdownTask = task
+        await task.value
+    }
+
+    private func performShutdown() async {
+        refreshGeneration &+= 1
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshRequestedWhileRunning = false
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers.removeAll()
+
+        desiredMirrorIDs.removeAll()
+        MirrorWindowRegistry.shared.closeAll(sessions: sessions)
+        for capture in thumbnailCaptures.values {
+            capture.cancel()
+        }
+        thumbnailCaptures.removeAll()
+        thumbnails.removeAll()
+        thumbnailAspectRatios.removeAll()
+        thumbnailErrors.removeAll()
+
+        let activeSessions = sessions
+        let serverURL = appiumServerURL
+        for session in activeSessions {
+            session.mirrorSession.dispose()
+        }
+        for session in activeSessions {
+            await session.controlSession.shutdown(serverURL: serverURL)
+        }
+        await appiumService.shutdown()
+
+        sessions.removeAll()
+        disconnectedSince.removeAll()
+        floatingMirrorIDs.removeAll()
+        selectedSessionID = nil
+    }
+
     func toggleFloating(for session: DeviceSession) {
         if floatingMirrorIDs.contains(session.id) {
             floatingMirrorIDs.remove(session.id)
@@ -309,7 +519,8 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func prepareControl(for session: DeviceSession) {
-        guard session.device.connectionState == .connected,
+        guard !isShuttingDown,
+              session.device.connectionState == .connected,
               session.device.udid?.isEmpty == false,
               !session.controlSession.isReady,
               !session.controlSession.isConnecting else {
@@ -331,7 +542,8 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func connectControl(for session: DeviceSession) {
-        guard session.device.connectionState == .connected else { return }
+        guard !isShuttingDown,
+              session.device.connectionState == .connected else { return }
         guard session.device.udid?.isEmpty == false else {
             statusMessage = t("status.controlNoUDID")
             return
@@ -343,6 +555,7 @@ final class DeviceGalleryStore: ObservableObject {
         statusMessage = t("status.controlPreparingAgent")
         Task {
             let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
+            guard !isShuttingDown else { return }
             if ready {
                 prepareControl(for: session)
             } else {
@@ -449,10 +662,11 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func startPeriodicRefresh() {
         refreshTimer?.invalidate()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: Self.periodicRefreshInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.permissionStatus = AVFoundationMirrorBackend.authorizationStatus()
+                self.updateCameraPermissionStatus(AVFoundationMirrorBackend.videoAuthorizationStatus())
+                self.updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
                 guard self.permissionStatus == .authorized else { return }
                 self.refresh()
             }

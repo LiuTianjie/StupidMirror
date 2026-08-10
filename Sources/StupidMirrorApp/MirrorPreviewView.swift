@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import Foundation
 import SwiftUI
 
 struct MirrorPreviewView: NSViewRepresentable {
@@ -12,16 +13,15 @@ struct MirrorPreviewView: NSViewRepresentable {
     func makeNSView(context: Context) -> PreviewContainerView {
         let view = PreviewContainerView()
         view.cornerRadius = cornerRadius
-        context.coordinator.view = view
-        mirrorSession.setVideoSampleBufferConsumer { [weak view] sampleBuffer in
-            DispatchQueue.main.async {
-                view?.enqueueVideo(sampleBuffer)
-            }
+        let videoRelay = view.videoFrameRelay
+        let audioRelay = view.audioSampleBufferRelay
+        mirrorSession.setVideoSampleBufferConsumer { [weak videoRelay] sampleBuffer in
+            videoRelay?.submit(sampleBuffer)
         }
-        mirrorSession.setAudioSampleBufferConsumer { [weak view] sampleBuffer in
-            DispatchQueue.main.async {
-                view?.enqueueAudio(sampleBuffer)
-            }
+        mirrorSession.setAudioSampleBufferConsumer { [weak audioRelay] sampleBuffer in
+            // AVSampleBufferAudioRenderer is fed directly from the serial
+            // capture queue. No per-packet main-queue closure can accumulate.
+            audioRelay?.enqueue(sampleBuffer)
         }
         return view
     }
@@ -31,15 +31,15 @@ struct MirrorPreviewView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ nsView: PreviewContainerView, coordinator: Coordinator) {
+        // Invalidate the relays first so an in-flight delegate callback cannot
+        // retain another full frame after the view starts tearing down.
+        nsView.stop()
         coordinator.mirrorSession.setVideoSampleBufferConsumer(nil)
         coordinator.mirrorSession.setAudioSampleBufferConsumer(nil)
-        coordinator.view = nil
-        nsView.stop()
     }
 
     final class Coordinator {
         let mirrorSession: MirrorCaptureSession
-        weak var view: PreviewContainerView?
 
         init(mirrorSession: MirrorCaptureSession) {
             self.mirrorSession = mirrorSession
@@ -52,9 +52,12 @@ struct MirrorPreviewView: NSViewRepresentable {
 // pipeline, which made bright iPhone UI look lifted/washed out in this app.
 final class PreviewContainerView: NSView {
     private let displayLayer = AVSampleBufferDisplayLayer()
-    private let audioRenderer = AVSampleBufferAudioRenderer()
     private let renderSynchronizer = AVSampleBufferRenderSynchronizer()
     private let maskLayer = CAShapeLayer()
+    fileprivate lazy var videoFrameRelay = LatestMainQueueRelay<CMSampleBuffer> { [weak self] sampleBuffer in
+        self?.enqueueVideo(sampleBuffer)
+    }
+    fileprivate let audioSampleBufferRelay = AudioSampleBufferRelay()
 
     var cornerRadius: CGFloat = 0 {
         didSet {
@@ -72,7 +75,7 @@ final class PreviewContainerView: NSView {
         layer?.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(displayLayer)
         layer?.mask = maskLayer
-        renderSynchronizer.addRenderer(audioRenderer)
+        renderSynchronizer.addRenderer(audioSampleBufferRelay.renderer)
         renderSynchronizer.rate = 1.0
     }
 
@@ -81,32 +84,27 @@ final class PreviewContainerView: NSView {
     }
 
     func enqueueVideo(_ sampleBuffer: CMSampleBuffer) {
-        guard displayLayer.status != .failed else {
-            displayLayer.flush()
+        let renderer = displayLayer.sampleBufferRenderer
+        guard renderer.status != .failed else {
+            renderer.flush()
             return
         }
         markDisplayImmediately(sampleBuffer)
-        if displayLayer.isReadyForMoreMediaData {
-            displayLayer.enqueue(sampleBuffer)
+        if renderer.isReadyForMoreMediaData {
+            renderer.enqueue(sampleBuffer)
         } else {
-            displayLayer.flush()
-        }
-    }
-
-    func enqueueAudio(_ sampleBuffer: CMSampleBuffer) {
-        guard audioRenderer.status != .failed else {
-            audioRenderer.flush()
-            return
-        }
-        if audioRenderer.isReadyForMoreMediaData {
-            audioRenderer.enqueue(sampleBuffer)
+            renderer.flush()
         }
     }
 
     func stop() {
+        videoFrameRelay.invalidate()
+        audioSampleBufferRelay.stop()
         renderSynchronizer.rate = 0
-        displayLayer.flushAndRemoveImage()
-        audioRenderer.flush()
+        displayLayer.sampleBufferRenderer.flush(
+            removingDisplayedImage: true,
+            completionHandler: nil
+        )
     }
 
     override func layout() {
@@ -163,5 +161,116 @@ final class PreviewContainerView: NSView {
                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
             )
         }
+    }
+}
+
+/// Coalesces producer updates into one retained pending value and one scheduled
+/// main-queue drain. Replacing the pending value releases the older frame
+/// immediately, so a busy UI cannot create an unbounded queue of pixel buffers.
+final class LatestMainQueueRelay<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let deliver: @MainActor (Value) -> Void
+    private var pendingValue: Value?
+    private var drainScheduled = false
+    private var invalidated = false
+
+    init(deliver: @escaping @MainActor (Value) -> Void) {
+        self.deliver = deliver
+    }
+
+    func submit(_ value: Value) {
+        lock.lock()
+        guard !invalidated else {
+            lock.unlock()
+            return
+        }
+        pendingValue = value
+        let shouldSchedule = !drainScheduled
+        drainScheduled = true
+        lock.unlock()
+
+        if shouldSchedule {
+            scheduleDrain()
+        }
+    }
+
+    func invalidate() {
+        lock.lock()
+        invalidated = true
+        pendingValue = nil
+        lock.unlock()
+    }
+
+    @MainActor
+    private func drainOne() {
+        lock.lock()
+        guard !invalidated else {
+            pendingValue = nil
+            drainScheduled = false
+            lock.unlock()
+            return
+        }
+        guard let value = pendingValue else {
+            drainScheduled = false
+            lock.unlock()
+            return
+        }
+        pendingValue = nil
+        lock.unlock()
+
+        deliver(value)
+
+        lock.lock()
+        guard !invalidated else {
+            pendingValue = nil
+            drainScheduled = false
+            lock.unlock()
+            return
+        }
+        let shouldContinue = pendingValue != nil
+        if !shouldContinue {
+            drainScheduled = false
+        }
+        lock.unlock()
+
+        if shouldContinue {
+            scheduleDrain()
+        }
+    }
+
+    private func scheduleDrain() {
+        DispatchQueue.main.async { [weak self] in
+            self?.drainOne()
+        }
+    }
+}
+
+/// Serial capture callbacks feed the audio renderer synchronously. The lock is
+/// only needed to make teardown from the main thread race-free.
+final class AudioSampleBufferRelay: @unchecked Sendable {
+    let renderer = AVSampleBufferAudioRenderer()
+
+    private let lock = NSLock()
+    private var active = true
+
+    func enqueue(_ sampleBuffer: CMSampleBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active else { return }
+
+        if renderer.status == .failed {
+            renderer.flush()
+            return
+        }
+        if renderer.isReadyForMoreMediaData {
+            renderer.enqueue(sampleBuffer)
+        }
+    }
+
+    func stop() {
+        lock.lock()
+        active = false
+        renderer.flush()
+        lock.unlock()
     }
 }

@@ -17,21 +17,35 @@ final class DashboardWindowRegistry {
             return
         }
 
+        let windowSizes = DashboardWindowLayout.sizes(
+            for: (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame
+        )
         let rootView = GalleryView()
             .environmentObject(store)
-            .frame(minWidth: 760, minHeight: 520)
+            .frame(
+                minWidth: windowSizes.minimum.width,
+                minHeight: windowSizes.minimum.height
+            )
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 580),
+            contentRect: NSRect(origin: .zero, size: windowSizes.initial),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "StupidMirror"
-        window.titlebarSeparatorStyle = .none
+        // Keep the toolbar on its own row. A unified toolbar lets the sidebar
+        // extend beneath it, which causes the first device row and the toolbar
+        // controls to overlap at narrower window sizes.
+        window.toolbarStyle = .expanded
+        window.titlebarSeparatorStyle = .automatic
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 720, height: 480)
+        window.contentMinSize = windowSizes.minimum
         window.contentViewController = NSHostingController(rootView: rootView)
+        // Installing the hosting controller asks SwiftUI for its fitting size,
+        // which is the minimum. Restore the intended first-launch size after
+        // the controller is attached.
+        window.setContentSize(windowSizes.initial)
         window.center()
 
         let delegate = DashboardWindowDelegate { [weak self] in
@@ -44,6 +58,32 @@ final class DashboardWindowRegistry {
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+enum DashboardWindowLayout {
+    static let preferredContentSize = NSSize(width: 1_100, height: 700)
+    static let minimumContentSize = NSSize(width: 1_000, height: 640)
+    private static let screenMargin: CGFloat = 48
+
+    static func sizes(for visibleFrame: NSRect?) -> (initial: NSSize, minimum: NSSize) {
+        guard let visibleFrame else {
+            return (preferredContentSize, minimumContentSize)
+        }
+
+        let fittingSize = NSSize(
+            width: max(1, visibleFrame.width - screenMargin * 2),
+            height: max(1, visibleFrame.height - screenMargin * 2)
+        )
+        let minimum = NSSize(
+            width: min(minimumContentSize.width, fittingSize.width),
+            height: min(minimumContentSize.height, fittingSize.height)
+        )
+        let initial = NSSize(
+            width: max(minimum.width, min(preferredContentSize.width, fittingSize.width)),
+            height: max(minimum.height, min(preferredContentSize.height, fittingSize.height))
+        )
+        return (initial, minimum)
     }
 }
 

@@ -21,7 +21,7 @@ it does not hold signing certificates or Apple credentials.
 
    ```sh
    APPLE_ID="name@example.com" \
-   TEAM_ID="TEAMID" \
+   TEAM_ID="L95PYLFT86" \
    APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx" \
    scripts/setup-notary-profile.sh
    ```
@@ -49,11 +49,29 @@ When `BUMP` is set, the script updates `VERSION`, commits `Release vX.Y.Z`, tags
 the commit, pushes the branch and tag, then uploads the zip to GitHub Release.
 Set `COMMIT_RELEASE=false` or `PUSH_RELEASE=false` to disable those steps.
 
+Public releases are intentionally locked to bundle ID
+`com.gaojiua.StupidMirror` and Apple Team `L95PYLFT86`. Do not override either
+identity: keeping both stable preserves the app's macOS privacy identity across
+updates.
+
+Before an artifact is uploaded, the release script asserts:
+
+- the fixed bundle ID and signing Team ID;
+- non-empty Camera and Microphone usage descriptions in the base, English, and
+  Simplified Chinese resources;
+- Camera and audio-input entitlements on the app;
+- explicit valid signatures on bundled Node and native helpers, plus Node JIT
+  entitlements;
+- sealed resources, notarization and stapling, Gatekeeper assessment, and
+  `syspolicy_check distribution`.
+
 ## Useful Environment Variables
 
-- `SIGN_IDENTITY`: Developer ID Application certificate name. Auto-detected if omitted.
-- `BUNDLE_ID`: Bundle identifier. Defaults to `dev.stupidmirror.app`.
+- `SIGN_IDENTITY`: Developer ID Application certificate for Team `L95PYLFT86`.
+  Auto-detected if omitted.
 - `ENTITLEMENTS`: Entitlements plist for signing. Defaults to `StupidMirror.entitlements`.
+- `NODE_ENTITLEMENTS`: Entitlements for bundled Node. Defaults to
+  `NodeRuntime.entitlements`; it must retain the required JIT permissions.
 - `VERSION`: Override version without editing `VERSION`.
 - `BUILD_NUMBER`: Override build number. Defaults to a timestamp.
 - `NOTARY_PROFILE`: Keychain profile for `xcrun notarytool`.

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum DeviceMetadataService {
@@ -16,9 +17,10 @@ enum DeviceMetadataService {
             .compactMap { rawUDID in
                 let udid = String(rawUDID)
                 guard !udid.isEmpty else { return nil }
-                let name = readInfo(udid: udid, key: "DeviceName") ?? "iPhone"
-                let productType = readInfo(udid: udid, key: "ProductType") ?? "iOS Device"
-                let osVersion = readInfo(udid: udid, key: "ProductVersion") ?? ""
+                let info = readInfo(udid: udid)
+                let name = info["DeviceName"] ?? "iPhone"
+                let productType = info["ProductType"] ?? "iOS Device"
+                let osVersion = info["ProductVersion"] ?? ""
                 return DeviceMetadata(udid: udid, name: name, productType: productType, osVersion: osVersion)
             }
     }
@@ -39,12 +41,28 @@ enum DeviceMetadataService {
         return nil
     }
 
-    private static func readInfo(udid: String, key: String) -> String? {
+    private static func readInfo(udid: String) -> [String: String] {
         guard let ideviceInfo = executablePath(named: "ideviceinfo") else {
-            return nil
+            return [:]
         }
-        return run(ideviceInfo, arguments: ["-u", udid, "-k", key])?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let output = run(ideviceInfo, arguments: ["-u", udid]) else {
+            return [:]
+        }
+
+        return parseInfo(output)
+    }
+
+    nonisolated static func parseInfo(_ output: String) -> [String: String] {
+        var values: [String: String] = [:]
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard let separator = line.firstIndex(of: ":") else { continue }
+            let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty {
+                values[key] = value
+            }
+        }
+        return values
     }
 
     private static func executablePath(named name: String) -> String? {
@@ -67,19 +85,36 @@ enum DeviceMetadataService {
 
         let output = Pipe()
         process.standardOutput = output
-        process.standardError = Pipe()
+        process.standardError = FileHandle.nullDevice
+
+        let finished = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            finished.signal()
+        }
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
+            return nil
+        }
+
+        if finished.wait(timeout: .now() + 3) == .timedOut {
+            process.terminate()
+            if finished.wait(timeout: .now() + 0.5) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                guard finished.wait(timeout: .now() + 1) == .success else {
+                    return nil
+                }
+            }
             return nil
         }
 
         guard process.terminationStatus == 0 else {
             return nil
         }
-        return String(data: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        try? output.fileHandleForReading.close()
+        return String(data: data, encoding: .utf8)
     }
 
     private static func normalize(_ value: String) -> String {

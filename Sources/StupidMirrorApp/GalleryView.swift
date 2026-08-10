@@ -7,11 +7,10 @@ struct GalleryView: View {
         VStack(spacing: 0) {
             NavigationSplitView {
                 sidebar
-                    .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
+                    .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
             } detail: {
                 detail
             }
-            .navigationTitle("StupidMirror")
             .toolbar { toolbarContent }
 
             Divider()
@@ -80,7 +79,21 @@ struct GalleryView: View {
     private var detail: some View {
         if store.permissionStatus != .authorized {
             PermissionView()
-        } else if let session = selectedSession {
+        } else {
+            VStack(spacing: 0) {
+                if store.microphonePermissionStatus != .authorized {
+                    MicrophonePermissionBanner()
+                    Divider()
+                }
+
+                authorizedDetail
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var authorizedDetail: some View {
+        if let session = selectedSession {
             DeviceDetailView(session: session)
                 .id(session.id)
         } else if store.sessions.isEmpty {
@@ -188,10 +201,19 @@ struct PermissionView: View {
                         store.openCameraPrivacySettings()
                     }
                 } label: {
-                    Label(primaryActionTitle, systemImage: primaryActionIcon)
+                    if store.isRequestingCameraPermission {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(store.t("permission.requesting"))
+                        }
+                    } else {
+                        Label(primaryActionTitle, systemImage: primaryActionIcon)
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.Palette.accent)
+                .disabled(store.isRequestingCameraPermission)
 
                 Button {
                     store.recheckCameraPermission()
@@ -225,6 +247,81 @@ struct PermissionView: View {
 
     private var primaryActionIcon: String {
         store.permissionStatus == .notDetermined ? "video.badge.checkmark" : "gearshape"
+    }
+}
+
+struct MicrophonePermissionBanner: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.md) {
+            Image(systemName: "speaker.wave.2")
+                .font(.title2)
+                .foregroundStyle(Theme.Palette.accent)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.t("permission.microphone.title"))
+                    .font(.headline)
+                Text(bodyCopy)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: Theme.Spacing.md)
+
+            if store.microphonePermissionStatus == .notDetermined {
+                Button {
+                    Task {
+                        await store.requestMicrophonePermission()
+                    }
+                } label: {
+                    if store.isRequestingMicrophonePermission {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(store.t("permission.requesting"))
+                        }
+                    } else {
+                        Label(store.t("permission.microphone.requestAccess"), systemImage: "mic.badge.plus")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Palette.accent)
+                .disabled(store.isRequestingMicrophonePermission)
+            } else {
+                Button {
+                    store.openMicrophonePrivacySettings()
+                } label: {
+                    Label(store.t("permission.microphone.openSettings"), systemImage: "gearshape")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Palette.accent)
+
+                Button {
+                    store.recheckMicrophonePermission()
+                } label: {
+                    Label(store.t("permission.recheck"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.md)
+        .background(Theme.Palette.accent.opacity(0.08))
+    }
+
+    private var bodyCopy: String {
+        switch store.microphonePermissionStatus {
+        case .notDetermined:
+            store.t("permission.microphone.body.notDetermined")
+        case .denied, .restricted:
+            store.t("permission.microphone.body.denied")
+        case .authorized:
+            store.t("permission.microphone.body.authorized")
+        @unknown default:
+            store.t("permission.microphone.body.denied")
+        }
     }
 }
 

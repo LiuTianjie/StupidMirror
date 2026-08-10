@@ -29,6 +29,7 @@ Appium/WebDriverAgent control agent.
 - A USB-connected iPhone that trusts this Mac.
 - Camera permission for the packaged app or the terminal process running
   `swift run`.
+- Optional Microphone permission if iPhone audio should play through the Mac.
 - Optional control support: iPhone trust, Developer Mode/UI Automation, and a
   WebDriverAgentRunner that the Mac app can install or start through its bundled
   Node/Appium/XCUITest runtime.
@@ -84,26 +85,38 @@ For a locally signed and notarized release:
 ```sh
 xcrun notarytool store-credentials stupidmirror-notary
 
-SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-BUNDLE_ID="com.example.StupidMirror" \
+SIGN_IDENTITY="Developer ID Application: Gaojiua Technology (Beijing) Co., Ltd. (L95PYLFT86)" \
 VERSION="0.1.0" \
 BUILD_NUMBER="1" \
 NOTARY_PROFILE="stupidmirror-notary" \
 make release-local
 ```
 
-Release builds are signed with `StupidMirror.entitlements` by default. Keep the
-camera entitlement enabled; without it, Developer ID + Hardened Runtime builds
-cannot register StupidMirror in Privacy & Security -> Camera.
+Public releases have a fixed identity: bundle ID `com.gaojiua.StupidMirror` and
+Apple Team `L95PYLFT86`. The release script rejects identity drift before upload
+so macOS does not treat an update as a different app and ask for permissions
+again.
 
-If `NOTARY_PROFILE` is omitted, the script still builds, signs, zips, and uploads
-the app, but it skips Apple notarization.
+Release builds are signed with `StupidMirror.entitlements` by default. Camera
+and audio-input entitlements are required. The bundled Node runtime is signed
+separately with the JIT entitlements in `NodeRuntime.entitlements`; the release
+script verifies all nested Mach-O code without relying on `codesign --deep`.
+
+Public uploads require `NOTARY_PROFILE`. After notarization, the script staples
+the ticket and validates the app with `codesign`, `stapler`, Gatekeeper, and
+`syspolicy_check`. `ALLOW_UNNOTARIZED=true` is only for private test artifacts.
 
 ## Permissions
 
-When first launched, macOS may ask whether StupidMirror can access the camera.
-Allowing this is required because macOS exposes USB iPhone screen sources through
-AVFoundation camera capture APIs.
+StupidMirror checks Camera and Microphone status without prompting at launch.
+macOS permission prompts are requested only after you click the corresponding
+in-app button, and an in-flight request disables that button so it cannot be
+requested twice concurrently.
+
+Camera access is required because macOS exposes USB iPhone screen sources
+through AVFoundation camera capture APIs. Microphone access is optional and is
+used only for the iPhone audio track. If Microphone access is declined, video
+mirroring remains available and new mirror sessions do not attach audio.
 
 If permission is denied:
 
@@ -111,6 +124,9 @@ If permission is denied:
 2. Go to Privacy & Security -> Camera.
 3. Enable StupidMirror, or enable the terminal app if running with `make run`.
 4. Return to StupidMirror and use the in-app permission recheck button.
+
+To restore optional audio after declining it, enable StupidMirror under Privacy
+& Security -> Microphone, return to the app, and recheck the permission.
 
 ## Optional iPhone Control
 

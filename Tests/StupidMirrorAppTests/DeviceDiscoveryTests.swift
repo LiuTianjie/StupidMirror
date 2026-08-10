@@ -2,6 +2,24 @@
 import XCTest
 
 final class DeviceDiscoveryTests: XCTestCase {
+    func testDeviceInfoParserReadsOneProcessPayload() {
+        let parsed = DeviceMetadataService.parseInfo(
+            """
+            DeviceName: Test iPhone
+            ProductType: iPhone18,4
+            ProductVersion: 26.1
+            ValueWithColon: first:second
+            malformed
+            """
+        )
+
+        XCTAssertEqual(parsed["DeviceName"], "Test iPhone")
+        XCTAssertEqual(parsed["ProductType"], "iPhone18,4")
+        XCTAssertEqual(parsed["ProductVersion"], "26.1")
+        XCTAssertEqual(parsed["ValueWithColon"], "first:second")
+        XCTAssertNil(parsed["malformed"])
+    }
+
     func testSingleMetadataCandidateDoesNotMatchUnrelatedCaptureDevice() {
         let metadata = DeviceMetadata(
             udid: "real-device-udid",

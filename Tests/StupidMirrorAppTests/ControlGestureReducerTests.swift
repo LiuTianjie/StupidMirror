@@ -68,6 +68,37 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertTrue(AppiumControlConfiguration().preferInstalledWDA)
     }
 
+    func testControlConfigurationIsolatesParallelDevicesDeterministically() {
+        var base = AppiumControlConfiguration()
+        base.derivedDataPath = "/tmp/StupidMirror-WDA-tests"
+
+        let first = base.isolated(forDeviceUDID: "00008110-001234567890001E")
+        let firstAgain = base.isolated(forDeviceUDID: "00008110-001234567890001E")
+        let second = base.isolated(forDeviceUDID: "00008120-009876543210001E")
+
+        XCTAssertEqual(first.wdaLocalPort, firstAgain.wdaLocalPort)
+        XCTAssertEqual(first.mjpegServerPort, firstAgain.mjpegServerPort)
+        XCTAssertEqual(first.derivedDataPath, firstAgain.derivedDataPath)
+        XCTAssertNotEqual(first.wdaLocalPort, second.wdaLocalPort)
+        XCTAssertNotEqual(first.mjpegServerPort, second.mjpegServerPort)
+        XCTAssertNotEqual(first.derivedDataPath, second.derivedDataPath)
+        XCTAssertTrue((10_000..<30_000).contains(first.wdaLocalPort))
+        XCTAssertTrue((30_000..<50_000).contains(first.mjpegServerPort))
+    }
+
+    func testSessionCapabilitiesIncludePerDeviceWDAForwardingPort() {
+        var configuration = AppiumControlConfiguration()
+        configuration.wdaLocalPort = 18_123
+
+        let capabilities = AppiumSessionCapabilities.make(
+            udid: "test-udid",
+            bundleID: "com.apple.Preferences",
+            configuration: configuration
+        )
+
+        XCTAssertEqual(capabilities["appium:wdaLocalPort"] as? Int, 18_123)
+    }
+
     func testPreinstalledWDAReuseUsesShortProbeTimeout() {
         let configuration = AppiumControlConfiguration()
 

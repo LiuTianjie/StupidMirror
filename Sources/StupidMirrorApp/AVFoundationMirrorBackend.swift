@@ -2,7 +2,59 @@
 import CoreMediaIO
 import Foundation
 
+private enum CapturePermissionKind: Hashable, Sendable {
+    case video
+    case audio
+
+    var mediaType: AVMediaType {
+        switch self {
+        case .video:
+            .video
+        case .audio:
+            .audio
+        }
+    }
+}
+
+/// Coalesces permission requests so repeated UI actions cannot create multiple
+/// simultaneous system prompts for the same media type.
+private actor CapturePermissionRequestCoordinator {
+    private var waiters: [CapturePermissionKind: [CheckedContinuation<Bool, Never>]] = [:]
+
+    func requestAccess(for kind: CapturePermissionKind) async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: kind.mediaType) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                let shouldStartRequest = waiters[kind] == nil
+                waiters[kind, default: []].append(continuation)
+                guard shouldStartRequest else { return }
+
+                AVCaptureDevice.requestAccess(for: kind.mediaType) { granted in
+                    Task {
+                        await self.completeRequest(for: kind, granted: granted)
+                    }
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    private func completeRequest(for kind: CapturePermissionKind, granted: Bool) {
+        let continuations = waiters.removeValue(forKey: kind) ?? []
+        for continuation in continuations {
+            continuation.resume(returning: granted)
+        }
+    }
+}
+
 enum AVFoundationMirrorBackend {
+    private static let permissionRequestCoordinator = CapturePermissionRequestCoordinator()
+
     static func allowScreenCaptureDevices() -> OSStatus {
         let element: CMIOObjectPropertyElement
         if #available(macOS 12.0, *) {
@@ -27,23 +79,26 @@ enum AVFoundationMirrorBackend {
         )
     }
 
-    static func authorizationStatus() -> AVAuthorizationStatus {
+    static func videoAuthorizationStatus() -> AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .video)
     }
 
+    static func audioAuthorizationStatus() -> AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
+    // Kept as a compatibility alias while callers migrate to the explicit
+    // video/audio APIs.
+    static func authorizationStatus() -> AVAuthorizationStatus {
+        videoAuthorizationStatus()
+    }
+
     static func requestVideoAccess() async -> Bool {
-        switch authorizationStatus() {
-        case .authorized:
-            true
-        case .notDetermined:
-            await withCheckedContinuation { continuation in
-                AVCaptureDevice.requestAccess(for: .video) { granted in
-                    continuation.resume(returning: granted)
-                }
-            }
-        default:
-            false
-        }
+        await permissionRequestCoordinator.requestAccess(for: .video)
+    }
+
+    static func requestAudioAccess() async -> Bool {
+        await permissionRequestCoordinator.requestAccess(for: .audio)
     }
 
     static func warmUpDiscovery() {
