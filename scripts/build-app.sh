@@ -24,7 +24,9 @@ default_xcode_signing_id="${DEFAULT_XCODE_SIGNING_ID:-${STUPIDMIRROR_XCODE_SIGNI
 default_wda_bundle_id="${DEFAULT_WDA_BUNDLE_ID:-${STUPIDMIRROR_WDA_BUNDLE_ID:-}}"
 default_use_prebuilt_wda="${DEFAULT_USE_PREBUILT_WDA:-false}"
 app_path="dist/${app_name}.app"
-build_app_path="${TMPDIR:-/tmp}/${app_name}.app"
+build_work_dir="$(mktemp -d)"
+build_app_path="${build_work_dir}/${app_name}.app"
+trap 'rm -rf -- "$build_work_dir"' EXIT
 contents_path="${app_path}/Contents"
 macos_path="${contents_path}/MacOS"
 icon_path="${ICON_PATH:-Assets/AppIcon.icns}"
