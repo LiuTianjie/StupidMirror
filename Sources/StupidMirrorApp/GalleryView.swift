@@ -120,7 +120,7 @@ struct GalleryView: View {
             PermissionView()
         } else {
             VStack(spacing: 0) {
-                if store.microphonePermissionStatus != .authorized {
+                if store.microphonePermissionStatus != .authorized && store.audioPlaybackEnabled {
                     MicrophonePermissionBanner()
                     Divider()
                 }
@@ -802,6 +802,25 @@ struct SettingsView: View {
 
                     Section(store.t("settings.mirroring")) {
                         Toggle(store.t("settings.autoOpen"), isOn: $store.autoStartMirrors)
+                        Toggle(
+                            store.t("settings.audioPlayback"),
+                            isOn: Binding(
+                                get: { store.audioPlaybackEnabled },
+                                set: { enabled in
+                                    if enabled {
+                                        Task {
+                                            await store.requestMicrophonePermission()
+                                        }
+                                    } else {
+                                        store.audioPlaybackEnabled = false
+                                    }
+                                }
+                            )
+                        )
+                        .disabled(store.isRequestingMicrophonePermission)
+                        Text(store.t("settings.audioPlaybackHelp"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
 
                     Section(store.t("settings.control")) {

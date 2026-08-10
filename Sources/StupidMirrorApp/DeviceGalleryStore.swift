@@ -42,6 +42,12 @@ final class DeviceGalleryStore: ObservableObject {
     @Published var autoStartMirrors = UserDefaults.standard.bool(forKey: DeviceGalleryStore.autoStartMirrorsDefaultsKey) {
         didSet { UserDefaults.standard.set(autoStartMirrors, forKey: Self.autoStartMirrorsDefaultsKey) }
     }
+    @Published var audioPlaybackEnabled = UserDefaults.standard.bool(forKey: DeviceGalleryStore.audioPlaybackEnabledDefaultsKey) {
+        didSet {
+            UserDefaults.standard.set(audioPlaybackEnabled, forKey: Self.audioPlaybackEnabledDefaultsKey)
+            applyAudioPlaybackPreference()
+        }
+    }
     @Published var floatingMirrorIDs = Set<String>()
     @Published var appiumServerURL = DeviceGalleryStore.stringDefault(
         DeviceGalleryStore.appiumServerURLDefaultsKey,
@@ -126,6 +132,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     private static let languageDefaultsKey = "StupidMirror.language"
     private static let autoStartMirrorsDefaultsKey = "StupidMirror.autoStartMirrors"
+    private static let audioPlaybackEnabledDefaultsKey = "StupidMirror.audioPlaybackEnabled"
     private static let appiumServerURLDefaultsKey = "StupidMirror.appiumServerURL"
     private static let controlBundleIDDefaultsKey = "StupidMirror.controlBundleID"
     private static let controlXcodeOrgIDDefaultsKey = "StupidMirror.controlXcodeOrgID"
@@ -287,8 +294,11 @@ final class DeviceGalleryStore: ObservableObject {
         guard !isRequestingMicrophonePermission else { return }
         isRequestingMicrophonePermission = true
         defer { isRequestingMicrophonePermission = false }
-        _ = await AVFoundationMirrorBackend.requestAudioAccess()
+        let granted = await AVFoundationMirrorBackend.requestAudioAccess()
         updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
+        if granted {
+            audioPlaybackEnabled = true
+        }
     }
 
     func recheckMicrophonePermission() {
@@ -333,12 +343,25 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func updateMicrophonePermissionStatus(_ status: AVAuthorizationStatus) {
-        guard microphonePermissionStatus != status else { return }
         microphonePermissionStatus = status
-        let audioEnabled = status == .authorized
+        applyAudioPlaybackPreference()
+    }
+
+    private func applyAudioPlaybackPreference() {
+        let audioEnabled = Self.shouldCaptureAudio(
+            playbackEnabled: audioPlaybackEnabled,
+            authorizationStatus: microphonePermissionStatus
+        )
         for session in sessions {
             session.mirrorSession.setAudioEnabled(audioEnabled)
         }
+    }
+
+    nonisolated static func shouldCaptureAudio(
+        playbackEnabled: Bool,
+        authorizationStatus: AVAuthorizationStatus
+    ) -> Bool {
+        playbackEnabled && authorizationStatus == .authorized
     }
 
     func refresh() {
@@ -421,7 +444,10 @@ final class DeviceGalleryStore: ObservableObject {
                 existing?.controlSession.stop(serverURL: appiumServerURL)
                 disconnectedSince[identity.id] = nil
                 let session = DeviceSession(device: identity, captureDevice: captureDevice)
-                session.mirrorSession.setAudioEnabled(microphonePermissionStatus == .authorized)
+                session.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
+                    playbackEnabled: audioPlaybackEnabled,
+                    authorizationStatus: microphonePermissionStatus
+                ))
                 nextSessions.append(session)
                 if autoStartMirrors && !wasReconnecting {
                     autoStartIDs.insert(session.id)

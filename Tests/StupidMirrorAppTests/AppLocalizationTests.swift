@@ -61,6 +61,8 @@ final class AppLocalizationTests: XCTestCase {
             "license.error.notConfigured",
             "license.error.invalid",
             "settings.language",
+            "settings.audioPlayback",
+            "settings.audioPlaybackHelp",
             "common.close",
             "card.installControlAgent",
             "detail.installControlAgent",

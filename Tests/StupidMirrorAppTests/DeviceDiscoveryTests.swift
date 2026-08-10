@@ -1,7 +1,23 @@
 @testable import StupidMirrorApp
+@preconcurrency import AVFoundation
 import XCTest
 
 final class DeviceDiscoveryTests: XCTestCase {
+    func testAudioCaptureRequiresBothExplicitPreferenceAndAuthorization() {
+        XCTAssertFalse(DeviceGalleryStore.shouldCaptureAudio(
+            playbackEnabled: false,
+            authorizationStatus: .authorized
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldCaptureAudio(
+            playbackEnabled: true,
+            authorizationStatus: .notDetermined
+        ))
+        XCTAssertTrue(DeviceGalleryStore.shouldCaptureAudio(
+            playbackEnabled: true,
+            authorizationStatus: .authorized
+        ))
+    }
+
     func testDeviceInfoParserReadsOneProcessPayload() {
         let parsed = DeviceMetadataService.parseInfo(
             """
