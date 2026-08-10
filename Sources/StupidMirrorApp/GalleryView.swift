@@ -865,7 +865,6 @@ struct SettingsView: View {
                             TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
                             TextField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
                             TextField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
-                            Toggle(store.t("settings.usePrebuiltWDA"), isOn: $store.controlUsePrebuiltWDA)
                         }
                     }
                 }

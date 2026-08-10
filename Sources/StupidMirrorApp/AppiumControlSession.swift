@@ -16,7 +16,7 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var wdaLaunchTimeoutMS: Int = 90_000
     var wdaConnectionTimeoutMS: Int = 45_000
     var sessionStartupTimeoutSeconds: TimeInterval = 125
-    var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 80
+    var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 15
     var newCommandTimeoutSeconds: Int = 300
     var allowProvisioningDeviceRegistration: Bool = true
 
@@ -46,8 +46,8 @@ struct AppiumControlConfiguration: Hashable, Sendable {
         result.useNewWDA = false
         result.wdaStartupRetries = 1
         result.wdaStartupRetryIntervalMS = 0
-        result.wdaLaunchTimeoutMS = min(result.wdaLaunchTimeoutMS, 70_000)
-        result.wdaConnectionTimeoutMS = min(result.wdaConnectionTimeoutMS, 30_000)
+        result.wdaLaunchTimeoutMS = min(result.wdaLaunchTimeoutMS, 12_000)
+        result.wdaConnectionTimeoutMS = min(result.wdaConnectionTimeoutMS, 10_000)
         result.sessionStartupTimeoutSeconds = min(
             result.sessionStartupTimeoutSeconds,
             result.preinstalledWDAStartupTimeoutSeconds
@@ -112,6 +112,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     private var connectionRequest: ConnectionRequest?
     private var cleanupTask: Task<Void, Never>?
     private var actionPumpTask: Task<Void, Never>?
+    private var warmDisconnectedAt: Date?
     private var pendingActions: [ControlAction] = []
     private var generation: UInt64 = 0
 
@@ -158,6 +159,25 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         connectionStartedAt = Date().addingTimeInterval(-elapsedSeconds)
         statusMessage = "Control connection preview"
     }
+
+    func installWarmSessionForTesting(
+        serverURL: String,
+        bundleID: String,
+        configuration: AppiumControlConfiguration,
+        screenSize: DeviceScreenSize
+    ) {
+        guard let udid = device.udid else { return }
+        let request = ConnectionRequest(
+            serverURL: AppiumHTTPClient.normalizedBaseURLString(serverURL),
+            bundleID: bundleID,
+            configuration: configuration.isolated(forDeviceUDID: udid)
+        )
+        connectionRequest = request
+        sessionID = "warm-test-session"
+        sessionServerURL = request.serverURL
+        self.screenSize = screenSize
+        state = .ready
+    }
     #endif
 
     func prepare(
@@ -182,6 +202,12 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             return
         }
         if sessionID != nil, sessionServerURL == request.serverURL, connectionRequest == request {
+            state = .ready
+            connectionPhase = nil
+            connectionStartedAt = nil
+            statusMessage = screenSize.map {
+                "Control ready: \(Int($0.width)) x \(Int($0.height))"
+            } ?? "Control ready"
             return
         }
 
@@ -263,6 +289,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 self.sessionID = sessionID
                 self.sessionServerURL = request.serverURL
                 self.screenSize = size
+                self.warmDisconnectedAt = nil
                 self.state = .ready
                 self.connectionPhase = nil
                 self.connectionStartedAt = nil
@@ -372,6 +399,58 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
     func stop(serverURL: String) {
         _ = beginShutdown(serverURL: serverURL)
+    }
+
+    /// Detaches the UI from control while keeping the Appium/WDA session warm.
+    /// A later `prepare` with the same request resumes immediately. Device
+    /// retirement and app termination still call `stop`/`shutdown` to DELETE
+    /// the session and reap WDA/xcodebuild.
+    func disconnectKeepingAgentWarm() {
+        guard sessionID != nil else {
+            state = .unavailable
+            connectionPhase = nil
+            connectionStartedAt = nil
+            statusMessage = "Control not connected"
+            return
+        }
+
+        generation &+= 1
+        actionPumpTask?.cancel()
+        actionPumpTask = nil
+        pendingActions.removeAll()
+        warmDisconnectedAt = Date()
+        state = .unavailable
+        connectionPhase = nil
+        connectionStartedAt = nil
+        statusMessage = "Control disconnected; agent kept warm"
+    }
+
+    /// Returns true when a live session for exactly this request was resumed.
+    func resumeWarmSession(
+        serverURL: String,
+        bundleID: String,
+        configuration: AppiumControlConfiguration
+    ) -> Bool {
+        guard let udid = device.udid, !udid.isEmpty, sessionID != nil else { return false }
+        if let warmDisconnectedAt,
+           Date().timeIntervalSince(warmDisconnectedAt) >= 240 {
+            _ = beginShutdown(serverURL: serverURL)
+            return false
+        }
+        let request = ConnectionRequest(
+            serverURL: AppiumHTTPClient.normalizedBaseURLString(serverURL),
+            bundleID: bundleID,
+            configuration: configuration.isolated(forDeviceUDID: udid)
+        )
+        guard sessionServerURL == request.serverURL, connectionRequest == request else { return false }
+        state = .ready
+        warmDisconnectedAt = nil
+        connectionPhase = nil
+        connectionStartedAt = nil
+        statusMessage = screenSize.map {
+            "Control ready: \(Int($0.width)) x \(Int($0.height))"
+        } ?? "Control ready"
+        return true
     }
 
     /// Awaitable teardown for app termination and tests. The connection task
@@ -661,6 +740,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         sessionID = nil
         sessionServerURL = nil
         screenSize = nil
+        warmDisconnectedAt = nil
         pendingActions.removeAll()
         state = .unavailable
         connectionPhase = nil

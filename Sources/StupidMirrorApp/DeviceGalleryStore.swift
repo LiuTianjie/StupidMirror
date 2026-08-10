@@ -89,14 +89,6 @@ final class DeviceGalleryStore: ObservableObject {
     ) {
         didSet { UserDefaults.standard.set(controlWDABundleID, forKey: Self.controlWDABundleIDDefaultsKey) }
     }
-    @Published var controlUsePrebuiltWDA = DeviceGalleryStore.boolDefault(
-        DeviceGalleryStore.controlUsePrebuiltWDADefaultsKey,
-        env: "STUPIDMIRROR_USE_PREBUILT_WDA",
-        info: "StupidMirrorDefaultUsePrebuiltWDA",
-        fallback: false
-    ) {
-        didSet { UserDefaults.standard.set(controlUsePrebuiltWDA, forKey: Self.controlUsePrebuiltWDADefaultsKey) }
-    }
     @Published private(set) var detectedSigningTeams: [XcodeSigningTeam] = []
     @Published private(set) var isDetectingSigningTeams = false
     @Published private(set) var activeSheet: DashboardSheet?
@@ -138,7 +130,6 @@ final class DeviceGalleryStore: ObservableObject {
     private static let controlXcodeOrgIDDefaultsKey = "StupidMirror.controlXcodeOrgID"
     private static let controlXcodeSigningIDDefaultsKey = "StupidMirror.controlXcodeSigningID"
     private static let controlWDABundleIDDefaultsKey = "StupidMirror.controlWDABundleID"
-    private static let controlUsePrebuiltWDADefaultsKey = "StupidMirror.controlUsePrebuiltWDA"
 
     private static func stringDefault(_ key: String, env: String, info: String, fallback: String) -> String {
         if let value = ProcessInfo.processInfo.environment[env], !value.isEmpty {
@@ -148,19 +139,6 @@ final class DeviceGalleryStore: ObservableObject {
             return value
         }
         if let value = Bundle.main.object(forInfoDictionaryKey: info) as? String, !value.isEmpty {
-            return value
-        }
-        return fallback
-    }
-
-    private static func boolDefault(_ key: String, env: String, info: String, fallback: Bool) -> Bool {
-        if let value = ProcessInfo.processInfo.environment[env], !value.isEmpty {
-            return ["1", "true", "yes", "on"].contains(value.lowercased())
-        }
-        if UserDefaults.standard.object(forKey: key) != nil {
-            return UserDefaults.standard.bool(forKey: key)
-        }
-        if let value = Bundle.main.object(forInfoDictionaryKey: info) as? Bool {
             return value
         }
         return fallback
@@ -766,14 +744,7 @@ final class DeviceGalleryStore: ObservableObject {
         session.controlSession.prepare(
             serverURL: appiumServerURL,
             bundleID: controlBundleID,
-            configuration: AppiumControlConfiguration(
-                xcodeOrgID: controlXcodeOrgID,
-                xcodeSigningID: controlXcodeSigningID,
-                wdaBundleID: effectiveControlWDABundleID,
-                usePrebuiltWDA: controlUsePrebuiltWDA,
-                useNewWDA: false,
-                derivedDataPath: wdaDerivedDataPath
-            )
+            configuration: controlConfiguration(for: session)
         ) { [weak self] message in
             guard let self, !self.isShuttingDown else { return }
             self.statusMessage = self.t(message)
@@ -790,6 +761,14 @@ final class DeviceGalleryStore: ObservableObject {
             return
         }
         guard !session.controlSession.isReady, !session.controlSession.isConnecting else {
+            return
+        }
+        if session.controlSession.resumeWarmSession(
+            serverURL: appiumServerURL,
+            bundleID: controlBundleID,
+            configuration: controlConfiguration(for: session)
+        ) {
+            statusMessage = t("control.state.ready")
             return
         }
         statusMessage = t("status.controlPreparingAgent")
@@ -818,6 +797,13 @@ final class DeviceGalleryStore: ObservableObject {
             throw DeviceAutomationError.deviceUnavailable
         }
         if session.controlSession.isReady { return }
+        if session.controlSession.resumeWarmSession(
+            serverURL: appiumServerURL,
+            bundleID: controlBundleID,
+            configuration: controlConfiguration(for: session)
+        ) {
+            return
+        }
 
         session.controlSession.beginPreparingService()
         let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
@@ -902,7 +888,45 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func stopControl(for session: DeviceSession) {
-        session.controlSession.stop(serverURL: appiumServerURL)
+        session.controlSession.disconnectKeepingAgentWarm()
+    }
+
+    private func controlConfiguration(for session: DeviceSession) -> AppiumControlConfiguration {
+        let hasCachedBuild = hasCachedWDABuild(for: session.device.udid)
+        return AppiumControlConfiguration(
+            xcodeOrgID: controlXcodeOrgID,
+            xcodeSigningID: controlXcodeSigningID,
+            wdaBundleID: effectiveControlWDABundleID,
+            // On this Mac, a cached build is the fastest reliable restart:
+            // xcodebuild uses test-without-building and avoids the RemoteXPC
+            // preinstalled probe, which can otherwise wait for its full timeout.
+            preferInstalledWDA: !hasCachedBuild,
+            usePrebuiltWDA: hasCachedBuild,
+            useNewWDA: false,
+            derivedDataPath: wdaDerivedDataPath
+        )
+    }
+
+    private func hasCachedWDABuild(for udid: String?) -> Bool {
+        guard let udid, !udid.isEmpty else { return false }
+        return Self.hasCachedWDABuild(udid: udid, derivedDataPath: wdaDerivedDataPath)
+    }
+
+    nonisolated static func hasCachedWDABuild(udid: String, derivedDataPath: String) -> Bool {
+        guard !udid.isEmpty else { return false }
+        var base = AppiumControlConfiguration(derivedDataPath: derivedDataPath)
+        base = base.isolated(forDeviceUDID: udid)
+        let products = URL(fileURLWithPath: base.derivedDataPath, isDirectory: true)
+            .appendingPathComponent("Build/Products", isDirectory: true)
+        let runner = products
+            .appendingPathComponent("Debug-iphoneos", isDirectory: true)
+            .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: runner.path) else { return false }
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: products,
+            includingPropertiesForKeys: nil
+        ) else { return false }
+        return contents.contains { $0.pathExtension == "xctestrun" }
     }
 
     private var wdaDerivedDataPath: String {

@@ -119,6 +119,37 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertNil(session.connectionStartedAt)
     }
 
+    @MainActor
+    func testDisconnectKeepsMatchingSessionWarmForImmediateResume() {
+        let device = DeviceIdentity(
+            id: "test-device",
+            udid: "00008110-001234567890001E",
+            name: "Test iPhone",
+            productType: "iPhone",
+            osVersion: "18.0",
+            connectionState: .connected,
+            trustState: .trusted
+        )
+        let session = AppiumControlSession(device: device)
+        let configuration = AppiumControlConfiguration(derivedDataPath: "/tmp/StupidMirror-WDA-tests")
+        session.installWarmSessionForTesting(
+            serverURL: "http://127.0.0.1:4723",
+            bundleID: "com.apple.Preferences",
+            configuration: configuration,
+            screenSize: DeviceScreenSize(width: 390, height: 844)
+        )
+
+        session.disconnectKeepingAgentWarm()
+        XCTAssertFalse(session.isReady)
+
+        XCTAssertTrue(session.resumeWarmSession(
+            serverURL: "http://127.0.0.1:4723",
+            bundleID: "com.apple.Preferences",
+            configuration: configuration
+        ))
+        XCTAssertTrue(session.isReady)
+    }
+
     func testFirstInstallUsesAutomaticProvisioningAndTeamScopedBundleID() {
         var configuration = AppiumControlConfiguration()
         configuration.xcodeOrgID = "6XRHTPFUB6"
@@ -176,6 +207,38 @@ final class ControlGestureReducerTests: XCTestCase {
             TimeInterval(probe.wdaLaunchTimeoutMS) / 1_000,
             probe.sessionStartupTimeoutSeconds
         )
+        XCTAssertLessThanOrEqual(probe.sessionStartupTimeoutSeconds, 15)
+    }
+
+    func testCachedWDABuildRequiresRunnerAndXctestrunForSameDevice() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let udid = "cached-device"
+        let isolated = AppiumControlConfiguration(derivedDataPath: root.path)
+            .isolated(forDeviceUDID: udid)
+        let products = URL(fileURLWithPath: isolated.derivedDataPath, isDirectory: true)
+            .appendingPathComponent("Build/Products", isDirectory: true)
+        let runner = products
+            .appendingPathComponent("Debug-iphoneos", isDirectory: true)
+            .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
+        try FileManager.default.createDirectory(at: runner, withIntermediateDirectories: true)
+
+        XCTAssertFalse(DeviceGalleryStore.hasCachedWDABuild(
+            udid: udid,
+            derivedDataPath: root.path
+        ))
+
+        try Data().write(to: products.appendingPathComponent("WebDriverAgentRunner.xctestrun"))
+        XCTAssertTrue(DeviceGalleryStore.hasCachedWDABuild(
+            udid: udid,
+            derivedDataPath: root.path
+        ))
+        XCTAssertFalse(DeviceGalleryStore.hasCachedWDABuild(
+            udid: "different-device",
+            derivedDataPath: root.path
+        ))
     }
 
     func testWDAStartupUsesOneAppiumOwnedAttemptWithRequestHeadroom() {

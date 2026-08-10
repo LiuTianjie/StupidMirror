@@ -134,12 +134,15 @@ To restore optional audio after declining it, enable StupidMirror under Privacy
 
 Packaged Mac builds include a local Appium/XCUITest runtime at
 `StupidMirror.app/Contents/Resources/Appium`. Click **Connect** in StupidMirror;
-the app checks the local service, starts the bundled runtime if needed, tries to
-reuse an already-installed WebDriverAgent first, and installs it only when reuse
-is not available. Reuse does not require a Team ID. When a first installation
-is required, StupidMirror detects valid Apple Development signing teams from
-the Mac automatically; manual Team ID entry remains available under the setup
-guide and advanced control settings.
+the app checks the local service and starts the bundled runtime if needed. A
+live control session stays warm briefly when the user disconnects, so an
+immediate reconnect does not recreate WebDriverAgent. After an app restart,
+StupidMirror reuses this Mac's per-device WDA build cache without compiling it
+again; only a genuinely missing cache falls back to launching an installed WDA
+or performing the first build and install. Reuse does not require a Team ID.
+When a first installation is required, StupidMirror detects valid Apple
+Development signing teams from the Mac automatically; manual Team ID entry
+remains available under the setup guide and advanced control settings.
 
 Control is explicit: opening a mirror window never installs the control agent by
 itself. WebDriverAgentRunner still needs valid signing before real-device

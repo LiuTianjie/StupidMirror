@@ -22,7 +22,6 @@ default_control_bundle_id="${DEFAULT_CONTROL_BUNDLE_ID:-}"
 default_xcode_org_id="${DEFAULT_XCODE_ORG_ID:-${STUPIDMIRROR_XCODE_ORG_ID:-}}"
 default_xcode_signing_id="${DEFAULT_XCODE_SIGNING_ID:-${STUPIDMIRROR_XCODE_SIGNING_ID:-Apple Development}}"
 default_wda_bundle_id="${DEFAULT_WDA_BUNDLE_ID:-${STUPIDMIRROR_WDA_BUNDLE_ID:-}}"
-default_use_prebuilt_wda="${DEFAULT_USE_PREBUILT_WDA:-false}"
 official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1/stupidmirror-license"
 official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
 license_endpoint="${LICENSE_ENDPOINT:-${STUPIDMIRROR_LICENSE_ENDPOINT:-$official_license_endpoint}}"
@@ -116,8 +115,6 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <string>${default_xcode_signing_id}</string>
   <key>StupidMirrorDefaultWDABundleID</key>
   <string>${default_wda_bundle_id}</string>
-  <key>StupidMirrorDefaultUsePrebuiltWDA</key>
-  <${default_use_prebuilt_wda}/>
   <key>StupidMirrorLicenseEndpoint</key>
   <string>${license_endpoint_xml}</string>
   <key>StupidMirrorLicensePublishableKey</key>
