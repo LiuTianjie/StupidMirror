@@ -4,9 +4,8 @@ StupidMirror is a native macOS menu bar app for mirroring an iPhone over USB or,
 after one USB setup, the same local network. USB video uses the iPhone screen
 source exposed by macOS through CoreMediaIO and AVFoundation. Wireless video
 reuses an Xcode-signed WebDriverAgent build: VideoToolbox encodes its
-full-resolution screen frames as H.264 on the iPhone, and the Mac decodes them
-with VideoToolbox. MJPEG remains available as an automatic compatibility
-fallback.
+full-resolution screen frames as H.264 on the iPhone, SRT transports complete
+access units over the LAN, and the Mac decodes them with VideoToolbox.
 
 > This project is experimental. It depends on private-feeling system behavior:
 > macOS exposes the iPhone screen as an AVFoundation capture source, which means
@@ -133,7 +132,9 @@ iPhone must be completed over USB: open the independent Wireless Setup Guide,
 which checks the connected device and Apple development account before signing
 and caching the screen agent. This does not connect or enable iPhone control.
 Later wireless sessions wake the Xcode-paired device with `devicectl`, start the
-cached XCUITest runner, and read WDA over the iPhone's normal Bonjour address.
+cached XCUITest runner, and read WDA through the Apple CoreDevice hostname
+returned by `devicectl`. The iPhone-side Bonjour permission prompt is therefore
+not treated as a required startup gate.
 Wireless audio is not currently available.
 
 If permission is denied:

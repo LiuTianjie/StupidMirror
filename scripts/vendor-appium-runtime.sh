@@ -8,6 +8,8 @@ appium_version="${APPIUM_VERSION:-3.5.2}"
 xcuitest_driver_name="${APPIUM_XCUITEST_DRIVER_NAME:-xcuitest}"
 xcuitest_driver_version="${APPIUM_XCUITEST_DRIVER_VERSION:-12.3.0}"
 remote_xpc_version="${APPIUM_IOS_REMOTEXPC_VERSION:-5.13.2}"
+srt_version="1.5.4"
+srt_slice="${repo_root}/.build/artifacts/stupidmirror/libsrt/libsrt.xcframework/ios-arm64"
 
 node_bin="${NODE_BINARY:-$(command -v node || true)}"
 npm_bin="${NPM_BINARY:-$(command -v npm || true)}"
@@ -28,7 +30,25 @@ wanted_stamp="appium=${appium_version}
 node=${node_version}
 driver=${xcuitest_driver_name}@${xcuitest_driver_version}
 remotexpc=${remote_xpc_version}
-layout=9"
+srt=${srt_version}
+layout=11"
+
+install_srt_support() {
+  if [ ! -f "${srt_slice}/libsrt.a" ] || [ ! -d "${srt_slice}/Headers" ]; then
+    echo "Pinned libsrt ${srt_version} artifact is missing. Run swift package resolve first." >&2
+    exit 1
+  fi
+  local destination="${cache_dir}/home/stupidmirror-srt"
+  rm -rf "$destination"
+  mkdir -p "$destination"
+  cp "${srt_slice}/libsrt.a" "$destination/libsrt.a"
+  cp -R "${srt_slice}/Headers" "$destination/Headers"
+  cat > "${destination}/StupidMirrorSRT.xcconfig" <<'XCCONFIG'
+HEADER_SEARCH_PATHS = $(inherited) "$(PROJECT_DIR)/../../../../stupidmirror-srt/Headers"
+LIBRARY_SEARCH_PATHS = $(inherited) "$(PROJECT_DIR)/../../../../stupidmirror-srt"
+OTHER_LDFLAGS = $(inherited) -lsrt -lc++ -framework Security
+XCCONFIG
+}
 
 assert_runtime_versions() {
   local driver_package="${cache_dir}/home/node_modules/appium-xcuitest-driver/package.json"
@@ -144,6 +164,7 @@ JSON
     rm "$nested_appium"
     cp -R "${cache_dir}/node_modules/appium" "$nested_appium"
   fi
+  install_srt_support
   APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
   assert_runtime_versions
   prune_runtime
@@ -154,6 +175,7 @@ else
 fi
 
 assert_runtime_versions
+install_srt_support
 APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
 
 mkdir -p "${cache_dir}/bin"

@@ -30,15 +30,19 @@ enum LicenseState: Equatable, Sendable {
 
 struct LicenseCapabilities: Equatable, Sendable {
     let maximumSimultaneousDevices: Int?
-    let controlEnabled: Bool
+    let maximumSimultaneousControls: Int?
+
+    var controlEnabled: Bool {
+        maximumSimultaneousControls != 0
+    }
 
     static let unactivated = LicenseCapabilities(
         maximumSimultaneousDevices: 1,
-        controlEnabled: false
+        maximumSimultaneousControls: 1
     )
     static let activated = LicenseCapabilities(
         maximumSimultaneousDevices: nil,
-        controlEnabled: true
+        maximumSimultaneousControls: nil
     )
 }
 
@@ -48,6 +52,16 @@ struct MirrorStartPolicyDecision: Equatable, Sendable {
 }
 
 enum LicenseCapabilityPolicy {
+    nonisolated static func canStartControl(
+        capabilities: LicenseCapabilities,
+        activeIDs: Set<String>,
+        targetID: String
+    ) -> Bool {
+        if activeIDs.contains(targetID) { return true }
+        guard let limit = capabilities.maximumSimultaneousControls else { return true }
+        return activeIDs.count < limit
+    }
+
     nonisolated static func mirrorStartDecision(
         capabilities: LicenseCapabilities,
         activeIDs: Set<String>,

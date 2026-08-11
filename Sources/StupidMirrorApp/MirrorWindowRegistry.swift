@@ -269,9 +269,9 @@ private final class MirrorWindowDelegate: NSObject, NSWindowDelegate {
     }
 }
 
-// Clips its content to a rounded rect matching the phone's corner radius,
-// so the square window corners never expose the black video backing as
-// wedges outside the phone's larger radius.
+// The outer edge is a macOS window shell, not the iPhone screen. Keep its
+// radius close to native macOS panels; the screen itself gets the larger
+// continuous iPhone radius in StandaloneMirrorWindowView.
 private final class RoundedContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -288,7 +288,7 @@ private final class RoundedContainerView: NSView {
 
     override func layout() {
         super.layout()
-        layer?.cornerRadius = min(max(min(bounds.width, bounds.height) * 0.14, 44), 96)
+        layer?.cornerRadius = 24
     }
 }
 

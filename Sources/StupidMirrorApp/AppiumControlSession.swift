@@ -22,6 +22,7 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var directDeviceHost: String = ""
     var platformVersion: String = ""
     var webDriverAgentURL: String = ""
+    var xcodeConfigFile: String = ""
 
     var installationWDABundleID: String {
         let configured = wdaBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1179,6 +1180,11 @@ enum AppiumSessionCapabilities {
         let wdaBundleID = configuration.wdaBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         if !wdaBundleID.isEmpty {
             capabilities["appium:updatedWDABundleId"] = wdaBundleID
+        }
+        let xcodeConfigFile = configuration.xcodeConfigFile
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !xcodeConfigFile.isEmpty {
+            capabilities["appium:xcodeConfigFile"] = xcodeConfigFile
         }
         return capabilities
     }

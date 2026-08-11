@@ -129,6 +129,11 @@ struct GalleryView: View {
             PermissionView()
         } else {
             VStack(spacing: 0) {
+                if store.permissionStatus != .authorized {
+                    CameraPermissionBanner()
+                    Divider()
+                }
+
                 if store.microphonePermissionStatus != .authorized && store.audioPlaybackEnabled {
                     MicrophonePermissionBanner()
                     Divider()
@@ -690,6 +695,66 @@ struct MicrophonePermissionBanner: View {
         @unknown default:
             store.t("permission.microphone.body.denied")
         }
+    }
+}
+
+struct CameraPermissionBanner: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.md) {
+            Image(systemName: "cable.connector")
+                .font(.title2)
+                .foregroundStyle(Theme.Palette.accent)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.t("permission.usbBanner.title"))
+                    .font(.headline)
+                Text(store.t("permission.usbBanner.body"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: Theme.Spacing.md)
+
+            Button {
+                if store.permissionStatus == .notDetermined {
+                    Task {
+                        await store.requestCameraPermission()
+                    }
+                } else {
+                    store.openCameraPrivacySettings()
+                }
+            } label: {
+                if store.isRequestingCameraPermission {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Label(
+                        store.permissionStatus == .notDetermined
+                            ? store.t("permission.requestAccess")
+                            : store.t("permission.openSettings"),
+                        systemImage: store.permissionStatus == .notDetermined
+                            ? "video.badge.checkmark"
+                            : "gearshape"
+                    )
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.Palette.accent)
+            .disabled(store.isRequestingCameraPermission)
+
+            Button {
+                store.recheckCameraPermission()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.bordered)
+            .help(store.t("permission.recheck"))
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.sm)
+        .background(Theme.Palette.accent.opacity(0.08))
     }
 }
 

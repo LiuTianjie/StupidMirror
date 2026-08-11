@@ -34,19 +34,28 @@ enum WirelessWDAError: LocalizedError, Equatable {
         case .deviceUnavailable:
             "The iPhone is not available over Wi-Fi. Unlock it and check that both devices are on the same network."
         case .timedOut:
-            "Allow local network access for WebDriverAgentRunner on iPhone, then try again."
+            "The wireless screen agent did not respond. Retry, or reconnect USB if it continues."
         }
     }
 }
 
 enum WirelessWDAProgress: Equatable, Sendable {
-    case launching
-    case waitingForUnlock
-    case waitingForLocalNetwork
+    case checkingExistingAgent
+    case connectingDevice
+    case launchingInstalledAgent
+    case preparingAgent
+    case installingAgent
+    case waitingForAgent
+    case connectingVideo
+}
+
+struct WirelessWDAEndpoint: Equatable, Sendable {
+    let controlURL: URL
+    let videoHost: String
 }
 
 /// Launches a USB-prepared WebDriverAgent with Apple's public CoreDevice CLI,
-/// then reads WDA's ordinary LAN HTTP/MJPEG ports. iOS 17 and newer cannot
+/// then reads WDA through the public CoreDevice tunnel. iOS 17 and newer cannot
 /// launch the legacy embedded XCTest framework bundle directly, so a signed
 /// compatibility copy is installed before the first wireless launch.
 final class WirelessWDAService: @unchecked Sendable {
@@ -72,7 +81,6 @@ final class WirelessWDAService: @unchecked Sendable {
 
     private let lock = NSLock()
     private var remoteProcess: RemoteProcess?
-    private var streamConfigured = false
 
     deinit { stop() }
 
@@ -91,6 +99,9 @@ final class WirelessWDAService: @unchecked Sendable {
         guard let project = webDriverAgentProjectURL() else {
             throw WirelessWDAError.missingRuntime
         }
+        guard let srtXcodeConfig = srtXcodeConfigURL(for: project) else {
+            throw WirelessWDAError.missingRuntime
+        }
 
         try await Task.detached(priority: .userInitiated) {
             var arguments = [
@@ -99,6 +110,7 @@ final class WirelessWDAService: @unchecked Sendable {
                 "-scheme", "WebDriverAgentRunner",
                 "-destination", "id=\(udid)",
                 "-derivedDataPath", isolated.derivedDataPath,
+                "-xcconfig", srtXcodeConfig.path,
                 "-allowProvisioningUpdates"
             ]
             if isolated.allowProvisioningDeviceRegistration {
@@ -135,26 +147,30 @@ final class WirelessWDAService: @unchecked Sendable {
         device: WirelessDeviceMetadata,
         configuration: AppiumControlConfiguration,
         progress: @escaping @Sendable (WirelessWDAProgress) async -> Void = { _ in }
-    ) async throws -> URL {
-        let lanHostname = Self.lanHostname(from: device.hostname)
-        let baseURL = URL(string: "http://\(lanHostname):8100")!
-        if await Self.isReady(baseURL) {
-            await configureStreamIfNeeded(baseURL)
-            return baseURL
-        }
-        if await Self.isLocalNetworkDenied(hostname: lanHostname) {
+    ) async throws -> WirelessWDAEndpoint {
+        // CoreDevice endpoints are dynamic. Prefer the current tunnel address,
+        // but retain every devicectl-provided hostname as a generic fallback.
+        // Never cache one candidate across a discovery generation.
+        guard device.isTunnelConnected else { throw WirelessWDAError.deviceUnavailable }
+        let baseURLs = Self.candidateBaseURLs(for: device)
+        guard !baseURLs.isEmpty else { throw WirelessWDAError.deviceUnavailable }
+        if await Self.isLocalNetworkDenied(hostname: device.preferredEndpointHost) {
             throw WirelessWDAError.localNetworkDenied
         }
+        await progress(.checkingExistingAgent)
+        if let endpoint = await Self.firstReadyEndpoint(baseURLs) {
+            await progress(.connectingVideo)
+            return endpoint
+        }
 
+        await progress(.connectingDevice)
         try await Task.detached(priority: .userInitiated) {
             try Self.wakeDevice(udid: device.udid)
         }.value
-        if await Self.isReady(baseURL) {
-            await configureStreamIfNeeded(baseURL)
-            return baseURL
+        if let endpoint = await Self.firstReadyEndpoint(baseURLs) {
+            await progress(.connectingVideo)
+            return endpoint
         }
-
-        lock.withLock { streamConfigured = false }
 
         let isolated = configuration.isolated(forDeviceUDID: device.udid)
         let team = isolated.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,23 +178,34 @@ final class WirelessWDAService: @unchecked Sendable {
         let bundleID = isolated.installationWDABundleID
         guard !bundleID.isEmpty else { throw WirelessWDAError.missingSigningTeam }
 
-        await progress(.launching)
+        await progress(.launchingInstalledAgent)
         if let installedProcess = try? await Task.detached(priority: .userInitiated, operation: {
             try Self.launchInstalledRunner(udid: device.udid, bundleID: bundleID)
         }).value {
             lock.withLock { remoteProcess = installedProcess }
-            if await Self.waitUntilReady(baseURL, timeout: .seconds(8)) {
-                await configureStreamIfNeeded(baseURL)
-                return baseURL
+            await progress(.waitingForAgent)
+            if let endpoint = await Self.waitUntilReady(baseURLs, timeout: .seconds(15)) {
+                await progress(.connectingVideo)
+                return endpoint
+            }
+            await Task.detached(priority: .utility) {
+                try? Self.terminate(installedProcess)
+            }.value
+            lock.withLock {
+                if remoteProcess?.pid == installedProcess.pid {
+                    remoteProcess = nil
+                }
             }
         }
 
+        await progress(.preparingAgent)
         let preparedRunner = try await Task.detached(priority: .userInitiated) {
             try Self.prepareCompatibleRunner(
                 derivedDataPath: isolated.derivedDataPath,
                 bundleID: bundleID
             )
         }.value
+        await progress(.installingAgent)
         let launched = try await Task.detached(priority: .userInitiated) {
             try Self.installAndLaunch(
                 runner: preparedRunner,
@@ -187,11 +214,11 @@ final class WirelessWDAService: @unchecked Sendable {
             )
         }.value
         lock.withLock { remoteProcess = launched }
-        await progress(.waitingForLocalNetwork)
+        await progress(.waitingForAgent)
 
-        if await Self.waitUntilReady(baseURL, timeout: .seconds(75)) {
-            await configureStreamIfNeeded(baseURL)
-            return baseURL
+        if let endpoint = await Self.waitUntilReady(baseURLs, timeout: .seconds(20)) {
+            await progress(.connectingVideo)
+            return endpoint
         }
         throw WirelessWDAError.timedOut
     }
@@ -203,42 +230,16 @@ final class WirelessWDAService: @unchecked Sendable {
         }
         guard let running else { return }
         DispatchQueue.global(qos: .utility).async {
-            _ = try? Self.run(
-                "/usr/bin/xcrun",
-                arguments: [
-                    "devicectl", "device", "process", "terminate",
-                    "--device", running.udid,
-                    "--pid", String(running.pid),
-                    "--timeout", "10",
-                    "--quiet"
-                ]
-            )
-        }
-    }
-
-    private func configureStreamIfNeeded(_ baseURL: URL) async {
-        let shouldConfigure = lock.withLock { () -> Bool in
-            guard !streamConfigured else { return false }
-            streamConfigured = true
-            return true
-        }
-        guard shouldConfigure else { return }
-        do {
-            try await Self.configureMJPEGStream(baseURL)
-        } catch {
-            lock.withLock { streamConfigured = false }
-            Self.logger.warning(
-                "Configuring wireless MJPEG stream failed: \(error.localizedDescription, privacy: .public)"
-            )
+            try? Self.terminate(running)
         }
     }
 
     static func lanHostname(from coreDeviceHostname: String) -> String {
-        let suffix = ".coredevice.local"
-        guard coreDeviceHostname.lowercased().hasSuffix(suffix) else {
-            return coreDeviceHostname
-        }
-        return String(coreDeviceHostname.dropLast(suffix.count)) + ".local"
+        coreDeviceHostname
+    }
+
+    nonisolated static func candidateBaseURLs(for device: WirelessDeviceMetadata) -> [URL] {
+        device.endpointURLs(port: 8_100)
     }
 
     nonisolated static func outputIndicatesLockedDevice(_ output: String) -> Bool {
@@ -455,6 +456,19 @@ final class WirelessWDAService: @unchecked Sendable {
         return RemoteProcess(udid: udid, pid: pid)
     }
 
+    private static func terminate(_ process: RemoteProcess) throws {
+        _ = try run(
+            "/usr/bin/xcrun",
+            arguments: [
+                "devicectl", "device", "process", "terminate",
+                "--device", process.udid,
+                "--pid", String(process.pid),
+                "--timeout", "10",
+                "--quiet"
+            ]
+        )
+    }
+
     @discardableResult
     private static func webDriverAgentProjectURL() -> URL? {
         let relativePath = "home/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent/WebDriverAgent.xcodeproj"
@@ -474,6 +488,14 @@ final class WirelessWDAService: @unchecked Sendable {
                 .appendingPathComponent(relativePath)
         )
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private static func srtXcodeConfigURL(for project: URL) -> URL? {
+        let config = project.deletingLastPathComponent()
+            .appendingPathComponent("../../../../stupidmirror-srt", isDirectory: true)
+            .appendingPathComponent("StupidMirrorSRT.xcconfig")
+            .standardizedFileURL
+        return FileManager.default.fileExists(atPath: config.path) ? config : nil
     }
 
     private static func run(
@@ -500,55 +522,17 @@ final class WirelessWDAService: @unchecked Sendable {
         return output
     }
 
-    private static func waitUntilReady(_ baseURL: URL, timeout: Duration) async -> Bool {
+    private static func waitUntilReady(
+        _ baseURLs: [URL],
+        timeout: Duration
+    ) async -> WirelessWDAEndpoint? {
         let deadline = ContinuousClock.now + timeout
         while ContinuousClock.now < deadline {
-            if Task.isCancelled { return false }
-            if await isReady(baseURL) { return true }
+            if Task.isCancelled { return nil }
+            if let ready = await firstReadyEndpoint(baseURLs) { return ready }
             try? await Task.sleep(for: .milliseconds(500))
         }
-        return false
-    }
-
-    /// WDA defaults to 10 FPS. Its settings API is session-scoped even though
-    /// these MJPEG values are process-global, so use a short no-app session to
-    /// set the stream and immediately delete it. This does not enable control
-    /// or launch an application on the iPhone.
-    private static func configureMJPEGStream(_ baseURL: URL) async throws {
-        let createBody: [String: Any] = [
-            "capabilities": [
-                "alwaysMatch": ["platformName": "iOS"],
-                "firstMatch": [[:]]
-            ]
-        ]
-        let created = try await sendJSON(
-            method: "POST",
-            url: baseURL.appendingPathComponent("session"),
-            body: createBody
-        )
-        let sessionID = created["sessionId"] as? String
-            ?? ((created["value"] as? [String: Any])?["sessionId"] as? String)
-        guard let sessionID, !sessionID.isEmpty else { return }
-        let sessionURL = baseURL
-            .appendingPathComponent("session")
-            .appendingPathComponent(sessionID)
-        do {
-            _ = try await sendJSON(
-                method: "POST",
-                url: sessionURL.appendingPathComponent("appium/settings"),
-                body: [
-                    "settings": [
-                        "mjpegServerFramerate": 30,
-                        "mjpegServerScreenshotQuality": 25,
-                        "mjpegScalingFactor": 100
-                    ]
-                ]
-            )
-        } catch {
-            _ = try? await sendJSON(method: "DELETE", url: sessionURL, body: nil)
-            throw error
-        }
-        _ = try? await sendJSON(method: "DELETE", url: sessionURL, body: nil)
+        return nil
     }
 
     private static func sendJSON(
@@ -563,7 +547,11 @@ final class WirelessWDAService: @unchecked Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode),
               let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -572,14 +560,50 @@ final class WirelessWDAService: @unchecked Sendable {
         return json
     }
 
-    private static func isReady(_ baseURL: URL) async -> Bool {
+    private static func readyEndpoint(_ baseURL: URL) async -> WirelessWDAEndpoint? {
         var request = URLRequest(url: baseURL.appendingPathComponent("status"))
         request.timeoutInterval = 2
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        guard let (data, response) = try? await session.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let value = json["value"] as? [String: Any] else { return false }
-        return value["ready"] as? Bool ?? true
+              let endpoint = endpoint(baseURL: baseURL, statusJSON: json) else { return nil }
+        return endpoint
+    }
+
+    nonisolated static func endpoint(
+        baseURL: URL,
+        statusJSON: [String: Any]
+    ) -> WirelessWDAEndpoint? {
+        guard let value = statusJSON["value"] as? [String: Any],
+              value["ready"] as? Bool ?? true else { return nil }
+        let reportedIP = (value["ios"] as? [String: Any])?["ip"] as? String
+        let trimmedIP = reportedIP?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let videoHost = trimmedIP?.isEmpty == false ? trimmedIP : baseURL.host,
+              !videoHost.isEmpty else { return nil }
+        return WirelessWDAEndpoint(controlURL: baseURL, videoHost: videoHost)
+    }
+
+    private static func firstReadyEndpoint(
+        _ baseURLs: [URL]
+    ) async -> WirelessWDAEndpoint? {
+        await withTaskGroup(of: WirelessWDAEndpoint?.self) { group in
+            for url in baseURLs {
+                group.addTask {
+                    await readyEndpoint(url)
+                }
+            }
+            for await result in group {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+            }
+            return nil
+        }
     }
 
     private static func isLocalNetworkDenied(hostname: String) async -> Bool {

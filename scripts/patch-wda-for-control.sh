@@ -9,6 +9,7 @@ wda_root="${APPIUM_WDA_ROOT:-$default_wda_root}"
 icon_script_path="${APPIUM_WDA_ICON_SCRIPT:-${wda_root}/Scripts/embed-runner-icon.sh}"
 runner_source_path="${APPIUM_WDA_RUNNER_SOURCE:-${wda_root}/WebDriverAgentRunner/UITestingUITests.m}"
 mjpeg_source_path="${APPIUM_WDA_MJPEG_SOURCE:-${wda_root}/WebDriverAgentLib/Utilities/FBMjpegServer.m}"
+session_commands_path="${APPIUM_WDA_SESSION_COMMANDS:-${wda_root}/WebDriverAgentLib/Commands/FBSessionCommands.m}"
 h264_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorH264Server.inc"
 h264_include_path="${wda_root}/WebDriverAgentLib/Utilities/FBStupidMirrorH264Server.inc"
 
@@ -145,6 +146,43 @@ patch_h264_stream() {
   echo "Installed WDA H.264 stream patch: $mjpeg_source_path"
 }
 
+patch_srt_status() {
+  if [ ! -f "$session_commands_path" ]; then
+    echo "WDA session commands source not found. Install the Appium XCUITest driver first." >&2
+    return
+  fi
+  if grep -q 'STUPIDMIRROR_SRT_STATUS' "$session_commands_path"; then
+    echo "WDA SRT status patch already installed."
+    return
+  fi
+
+  local tmp_path
+  tmp_path="$(mktemp)"
+  awk '
+    /#import "XCUIApplicationProcessDelay.h"/ {
+      print
+      print "// STUPIDMIRROR_SRT_STATUS"
+      print "extern volatile int SMStupidMirrorSRTStartupState;"
+      print "extern char SMStupidMirrorSRTStartupError[512];"
+      next
+    }
+    /@"device": \[self.class deviceNameByUserInterfaceIdiom:/ {
+      print "      @\"stupidMirrorSRT\" : @{"
+      print "        @\"startupState\" : @(SMStupidMirrorSRTStartupState),"
+      print "        @\"startupError\" : [NSString stringWithUTF8String:SMStupidMirrorSRTStartupError] ?: @\"\""
+      print "      },"
+      print
+      next
+    }
+    { print }
+  ' "$session_commands_path" > "$tmp_path"
+
+  cat "$tmp_path" > "$session_commands_path"
+  rm -f "$tmp_path"
+  echo "Installed WDA SRT status patch: $session_commands_path"
+}
+
 patch_icon_script
 patch_local_network_service
 patch_h264_stream
+patch_srt_status

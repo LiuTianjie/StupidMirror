@@ -3,18 +3,19 @@ import AppKit
 import Combine
 import CoreImage
 import Foundation
-import ImageIO
 
 final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     let captureSession = AVCaptureSession()
     let device: AVCaptureDevice?
-    let mjpegURL: URL?
+    let wirelessEndpointURL: URL?
 
     @Published private(set) var state: MirrorState = .stopped
     // Live aspect ratio read from actual frames, so the window can follow
     // device rotation instead of being locked to a static portrait profile.
     @Published private(set) var frameAspectRatio: Double?
     @Published private(set) var latestWirelessFrame: NSImage?
+    @Published private(set) var wirelessStartupDetail: String?
+    @Published private(set) var wirelessStartupBeganAt: Date?
 
     private let sessionQueue = DispatchQueue(label: "stupidmirror.capture.session")
     private let sessionQueueKey = DispatchSpecificKey<UInt8>()
@@ -27,9 +28,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var audioEnabled = false
     private var disposed = false
     private var lastObservedAspectRatio: Double?
-    private var wirelessStream: WirelessMJPEGStream?
-    private var wirelessH264Stream: WirelessH264Stream?
-    private var wirelessH264Unavailable = false
+    private var wirelessSRTStream: WirelessSRTH264Stream?
+    private var wirelessStreamURL: URL?
     private var wirelessRetryTask: Task<Void, Never>?
     private var wirelessGeneration: UInt64 = 0
     private var wirelessStartedAt: Date?
@@ -38,14 +38,15 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     init(device: AVCaptureDevice) {
         self.device = device
-        self.mjpegURL = nil
+        self.wirelessEndpointURL = nil
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
     }
 
-    init(mjpegURL: URL) {
+    init(wirelessEndpointURL: URL) {
         self.device = nil
-        self.mjpegURL = mjpegURL
+        self.wirelessEndpointURL = wirelessEndpointURL
+        self.wirelessStreamURL = wirelessEndpointURL
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
     }
@@ -70,12 +71,14 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         guard state != .starting else { return }
         state = .starting
 
-        if mjpegURL != nil {
+        if wirelessEndpointURL != nil {
             wirelessStartedAt = Date()
+            wirelessStartupBeganAt = wirelessStartedAt
             wirelessOnRunning = onRunning
-            wirelessH264Unavailable = false
             wirelessGeneration &+= 1
-            startWirelessAttempt(generation: wirelessGeneration)
+            // The WDA owner will call connectWirelessVideo only after /status
+            // is ready. Starting the socket here races the agent launch and
+            // produces false transport failures before SRT can listen.
             return
         }
 
@@ -112,13 +115,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
-        wirelessH264Stream?.stop()
-        wirelessH264Stream = nil
-        wirelessStream?.stop()
-        wirelessStream = nil
-        wirelessH264Unavailable = false
+        wirelessSRTStream?.stop()
+        wirelessSRTStream = nil
         wirelessOnRunning = nil
         wirelessStartedAt = nil
+        wirelessStartupDetail = nil
+        wirelessStartupBeganAt = nil
         sessionQueue.async { [self] in
             stopRunningOnSessionQueue()
         }
@@ -126,17 +128,41 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @MainActor
     func failWirelessStart(_ message: String) {
-        guard mjpegURL != nil, state == .starting else { return }
+        guard wirelessEndpointURL != nil, state == .starting else { return }
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
-        wirelessH264Stream?.stop()
-        wirelessH264Stream = nil
-        wirelessStream?.stop()
-        wirelessStream = nil
+        wirelessSRTStream?.stop()
+        wirelessSRTStream = nil
         wirelessOnRunning = nil
         wirelessStartedAt = nil
+        wirelessStartupDetail = nil
+        wirelessStartupBeganAt = nil
         state = .failed(message)
+    }
+
+    @MainActor
+    func updateWirelessStartupDetail(_ detail: String) {
+        guard wirelessEndpointURL != nil, state == .starting else { return }
+        wirelessStartupBeganAt = wirelessStartupBeganAt ?? Date()
+        wirelessStartupDetail = detail
+    }
+
+    @MainActor
+    func connectWirelessVideo(host: String) {
+        guard wirelessEndpointURL != nil,
+              state == .starting || state == .running,
+              !disposed else { return }
+        var components = URLComponents()
+        components.scheme = "srt"
+        components.host = host
+        components.port = 9_200
+        guard let streamURL = components.url else {
+            failWirelessStart(WirelessMirrorError.invalidEndpoint.localizedDescription)
+            return
+        }
+        wirelessStreamURL = streamURL
+        startWirelessAttempt(generation: wirelessGeneration)
     }
 
     /// Permanently releases capture inputs, outputs, delegates, and consumers.
@@ -269,50 +295,20 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private func startWirelessAttempt(generation: UInt64) {
         guard generation == wirelessGeneration,
               state == .starting,
-              let mjpegURL,
+              let srtURL = wirelessStreamURL,
               !disposed else { return }
-
-        if !wirelessH264Unavailable,
-           var h264Components = URLComponents(url: mjpegURL, resolvingAgainstBaseURL: false) {
-            h264Components.port = 9_200
-            if let h264URL = h264Components.url {
-                let stream = WirelessH264Stream(
-                    url: h264URL,
-                    onFrame: { [weak self] sampleBuffer in
-                        self?.receiveWirelessSampleBuffer(
-                            sampleBuffer,
-                            jpegData: nil,
-                            generation: generation
-                        )
-                    },
-                    onFailure: { [weak self] error in
-                        Task { @MainActor in
-                            self?.handleWirelessH264Failure(error, generation: generation)
-                        }
-                    }
-                )
-                wirelessH264Stream?.stop()
-                wirelessH264Stream = stream
-                wirelessStream?.stop()
-                wirelessStream = nil
-                stream.start()
-                return
-            }
+        guard let host = srtURL.host, !host.isEmpty else {
+            failWirelessStart(WirelessMirrorError.invalidEndpoint.localizedDescription)
+            return
         }
-
-        startWirelessMJPEGAttempt(mjpegURL: mjpegURL, generation: generation)
-    }
-
-    @MainActor
-    private func startWirelessMJPEGAttempt(mjpegURL: URL, generation: UInt64) {
-        guard generation == wirelessGeneration,
-              state == .starting || state == .running,
-              !disposed else { return }
-
-        let stream = WirelessMJPEGStream(
-            url: mjpegURL,
-            onFrame: { [weak self] jpegData in
-                self?.receiveWirelessFrame(jpegData, generation: generation)
+        let stream = WirelessSRTH264Stream(
+            host: host,
+            port: srtURL.port ?? 9_200,
+            onFrame: { [weak self] sampleBuffer in
+                self?.receiveWirelessSampleBuffer(
+                    sampleBuffer,
+                    generation: generation
+                )
             },
             onFailure: { [weak self] error in
                 Task { @MainActor in
@@ -320,24 +316,13 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 }
             }
         )
-        wirelessStream?.stop()
-        wirelessStream = stream
+        wirelessSRTStream?.stop()
+        wirelessSRTStream = stream
         stream.start()
-    }
-
-    private func receiveWirelessFrame(_ jpegData: Data, generation: UInt64) {
-        guard let sampleBuffer = WirelessJPEGDecoder.sampleBuffer(from: jpegData) else { return }
-
-        receiveWirelessSampleBuffer(
-            sampleBuffer,
-            jpegData: jpegData,
-            generation: generation
-        )
     }
 
     private func receiveWirelessSampleBuffer(
         _ sampleBuffer: CMSampleBuffer,
-        jpegData: Data?,
         generation: UInt64
     ) {
 
@@ -352,8 +337,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         let ratio = Double(dimensions.width) / Double(dimensions.height)
 
         let previewSource = WirelessPreviewSource(
-            sampleBuffer: sampleBuffer,
-            jpegData: jpegData
+            sampleBuffer: sampleBuffer
         )
         Task { @MainActor [weak self, previewSource] in
             guard let self,
@@ -361,6 +345,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                   self.state == .starting || self.state == .running else { return }
             if self.state == .starting {
                 self.state = .running
+                self.wirelessStartupDetail = nil
+                self.wirelessStartupBeganAt = nil
                 let onRunning = self.wirelessOnRunning
                 self.wirelessOnRunning = nil
                 onRunning?()
@@ -379,9 +365,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @MainActor
     private static func previewImage(_ source: WirelessPreviewSource) -> NSImage? {
-        if let jpegData = source.jpegData, let image = NSImage(data: jpegData) {
-            return image
-        }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(source.sampleBuffer) else { return nil }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let representation = NSCIImageRep(ciImage: ciImage)
@@ -391,26 +374,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     }
 
     @MainActor
-    private func handleWirelessH264Failure(_ error: Error, generation: UInt64) {
-        guard generation == wirelessGeneration,
-              state == .starting || state == .running,
-              !disposed,
-              let mjpegURL else { return }
-        wirelessH264Unavailable = true
-        wirelessH264Stream?.stop()
-        wirelessH264Stream = nil
-        startWirelessMJPEGAttempt(mjpegURL: mjpegURL, generation: generation)
-    }
-
-    @MainActor
     private func handleWirelessFailure(_ error: Error, generation: UInt64) {
         guard generation == wirelessGeneration,
               state == .starting || state == .running,
               !disposed else { return }
-        wirelessStream?.stop()
-        wirelessStream = nil
-        wirelessH264Stream?.stop()
-        wirelessH264Stream = nil
+        wirelessSRTStream?.stop()
+        wirelessSRTStream = nil
 
         let elapsed = Date().timeIntervalSince(wirelessStartedAt ?? Date())
         guard elapsed < 120 else {
@@ -422,7 +391,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         state = .starting
         wirelessRetryTask?.cancel()
         wirelessRetryTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             self?.startWirelessAttempt(generation: generation)
         }
@@ -464,7 +433,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
 private struct WirelessPreviewSource: @unchecked Sendable {
     let sampleBuffer: CMSampleBuffer
-    let jpegData: Data?
 }
 
 enum MirrorError: LocalizedError {
@@ -490,236 +458,13 @@ enum MirrorError: LocalizedError {
     }
 }
 
-private final class WirelessMJPEGStream: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private static let jpegStart = Data([0xFF, 0xD8])
-    private static let jpegEnd = Data([0xFF, 0xD9])
-    private static let maximumBufferSize = 32 * 1_024 * 1_024
-
-    private let url: URL
-    private let onFrame: @Sendable (Data) -> Void
-    private let onFailure: @Sendable (Error) -> Void
-    private let stateLock = NSLock()
-    private let frameDecodeQueue = DispatchQueue(
-        label: "stupidmirror.wireless-mjpeg.decode",
-        qos: .userInitiated
-    )
-    private var buffer = Data()
-    private var stopped = false
-    private var pendingFrame: Data?
-    private var frameDrainScheduled = false
-    private var session: URLSession?
-    private var task: URLSessionDataTask?
-
-    init(
-        url: URL,
-        onFrame: @escaping @Sendable (Data) -> Void,
-        onFailure: @escaping @Sendable (Error) -> Void
-    ) {
-        self.url = url
-        self.onFrame = onFrame
-        self.onFailure = onFailure
-    }
-
-    func start() {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 8
-        configuration.timeoutIntervalForResource = 24 * 60 * 60
-        configuration.connectionProxyDictionary = [:]
-        let delegateQueue = OperationQueue()
-        delegateQueue.name = "stupidmirror.wireless-mjpeg"
-        delegateQueue.maxConcurrentOperationCount = 1
-        let session = URLSession(
-            configuration: configuration,
-            delegate: self,
-            delegateQueue: delegateQueue
-        )
-        self.session = session
-        let task = session.dataTask(with: url)
-        self.task = task
-        task.resume()
-    }
-
-    func stop() {
-        stateLock.lock()
-        stopped = true
-        buffer.removeAll(keepingCapacity: false)
-        pendingFrame = nil
-        stateLock.unlock()
-        task?.cancel()
-        session?.invalidateAndCancel()
-        task = nil
-        session = nil
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        dataTask: URLSessionDataTask,
-        didReceive response: URLResponse,
-        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
-    ) {
-        guard let response = response as? HTTPURLResponse,
-              (200..<300).contains(response.statusCode) else {
-            completionHandler(.cancel)
-            return
-        }
-        completionHandler(.allow)
-    }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        stateLock.lock()
-        guard !stopped else {
-            stateLock.unlock()
-            return
-        }
-        buffer.append(data)
-        let newestFrame = extractFramesLocked().last
-        if buffer.count > Self.maximumBufferSize {
-            if let start = buffer.range(of: Self.jpegStart)?.lowerBound {
-                buffer.removeSubrange(buffer.startIndex..<start)
-            } else {
-                buffer.removeAll(keepingCapacity: true)
-            }
-        }
-        stateLock.unlock()
-        if let newestFrame {
-            submitNewestFrame(newestFrame)
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        didCompleteWithError error: Error?
-    ) {
-        stateLock.lock()
-        let wasStopped = stopped
-        stateLock.unlock()
-        guard !wasStopped else { return }
-        onFailure(error ?? WirelessMirrorError.streamEnded)
-    }
-
-    /// Must be called with `stateLock` held. Returning complete frames keeps
-    /// ImageIO decoding outside the lock while buffer mutation remains atomic.
-    private func extractFramesLocked() -> [Data] {
-        var frames: [Data] = []
-        while let startRange = buffer.range(of: Self.jpegStart),
-              let endRange = buffer.range(
-                of: Self.jpegEnd,
-                in: startRange.lowerBound..<buffer.endIndex
-              ) {
-            let frameEnd = endRange.upperBound
-            let frame = Data(buffer[startRange.lowerBound..<frameEnd])
-            buffer.removeSubrange(buffer.startIndex..<frameEnd)
-            frames.append(frame)
-        }
-        return frames
-    }
-
-    private func submitNewestFrame(_ frame: Data) {
-        stateLock.lock()
-        guard !stopped else {
-            stateLock.unlock()
-            return
-        }
-        pendingFrame = frame
-        let shouldSchedule = !frameDrainScheduled
-        frameDrainScheduled = true
-        stateLock.unlock()
-        guard shouldSchedule else { return }
-        frameDecodeQueue.async { [weak self] in
-            self?.drainLatestFrames()
-        }
-    }
-
-    private func drainLatestFrames() {
-        while true {
-            stateLock.lock()
-            guard !stopped, let frame = pendingFrame else {
-                pendingFrame = nil
-                frameDrainScheduled = false
-                stateLock.unlock()
-                return
-            }
-            pendingFrame = nil
-            stateLock.unlock()
-            onFrame(frame)
-        }
-    }
-}
-
-private enum WirelessJPEGDecoder {
-    static func sampleBuffer(from data: Data) -> CMSampleBuffer? {
-        autoreleasepool {
-            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-                  image.width > 0,
-                  image.height > 0 else { return nil }
-
-            var pixelBuffer: CVPixelBuffer?
-            let attributes: [CFString: Any] = [
-                kCVPixelBufferCGImageCompatibilityKey: true,
-                kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-                kCVPixelBufferIOSurfacePropertiesKey: [:]
-            ]
-            guard CVPixelBufferCreate(
-                kCFAllocatorDefault,
-                image.width,
-                image.height,
-                kCVPixelFormatType_32BGRA,
-                attributes as CFDictionary,
-                &pixelBuffer
-            ) == kCVReturnSuccess,
-            let pixelBuffer else { return nil }
-
-            CVPixelBufferLockBaseAddress(pixelBuffer, [])
-            defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-            guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
-                  let context = CGContext(
-                    data: baseAddress,
-                    width: image.width,
-                    height: image.height,
-                    bitsPerComponent: 8,
-                    bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
-                    space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue
-                        | CGImageAlphaInfo.premultipliedFirst.rawValue
-                  ) else { return nil }
-
-            // The JPEG bytes are already in display orientation. Applying the
-            // usual Core Graphics Y-axis flip here mirrors the wireless frame
-            // vertically, while NSImage-based dashboard previews stay correct.
-            context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-
-            var formatDescription: CMVideoFormatDescription?
-            guard CMVideoFormatDescriptionCreateForImageBuffer(
-                allocator: kCFAllocatorDefault,
-                imageBuffer: pixelBuffer,
-                formatDescriptionOut: &formatDescription
-            ) == noErr,
-            let formatDescription else { return nil }
-
-            var timing = CMSampleTimingInfo(
-                duration: .invalid,
-                presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
-                decodeTimeStamp: .invalid
-            )
-            var sampleBuffer: CMSampleBuffer?
-            guard CMSampleBufferCreateReadyWithImageBuffer(
-                allocator: kCFAllocatorDefault,
-                imageBuffer: pixelBuffer,
-                formatDescription: formatDescription,
-                sampleTiming: &timing,
-                sampleBufferOut: &sampleBuffer
-            ) == noErr else { return nil }
-            return sampleBuffer
-        }
-    }
-}
-
 private enum WirelessMirrorError: LocalizedError {
-    case streamEnded
+    case invalidEndpoint
 
     var errorDescription: String? {
-        "The wireless iPhone video stream ended."
+        switch self {
+        case .invalidEndpoint:
+            "The wireless iPhone endpoint is invalid."
+        }
     }
 }

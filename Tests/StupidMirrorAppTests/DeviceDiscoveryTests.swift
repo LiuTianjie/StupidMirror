@@ -59,7 +59,7 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertEqual(lookup["device-1"], "fresh")
     }
 
-    func testCoreDeviceParserKeepsPairedWirelessIPhonesWhileTunnelIsIdle() throws {
+    func testCoreDeviceParserReadsDynamicTunnelAndAllEndpointCandidates() throws {
         let data = try XCTUnwrap(
             """
             {
@@ -69,7 +69,10 @@ final class DeviceDiscoveryTests: XCTestCase {
                     "connectionProperties": {
                       "pairingState": "paired",
                       "transportType": "localNetwork",
-                      "localHostnames": ["Test-iPhone.coredevice.local"]
+                      "localHostnames": ["Test-iPhone.coredevice.local"],
+                      "potentialHostnames": ["wireless-udid.coredevice.local"],
+                      "tunnelIPAddress": "fd00::1234",
+                      "tunnelState": "connected"
                     },
                     "deviceProperties": {
                       "bootState": "booted",
@@ -111,17 +114,62 @@ final class DeviceDiscoveryTests: XCTestCase {
                     name: "Test iPhone",
                     productType: "iPhone18,4",
                     osVersion: "26.5",
-                    hostname: "Test-iPhone.coredevice.local"
+                    hostname: "Test-iPhone.coredevice.local",
+                    hostnames: [
+                        "Test-iPhone.coredevice.local",
+                        "wireless-udid.coredevice.local"
+                    ],
+                    tunnelIPAddress: "fd00::1234",
+                    tunnelState: "connected"
                 )
             ]
         )
+
+        let device = try XCTUnwrap(CoreDeviceDiscoveryService.parseWirelessDevices(data).first)
+        XCTAssertTrue(device.isTunnelConnected)
+        XCTAssertEqual(device.endpointURLs(port: 8100).map(\.absoluteString), [
+            "http://[fd00::1234]:8100",
+            "http://Test-iPhone.coredevice.local:8100",
+            "http://wireless-udid.coredevice.local:8100"
+        ])
     }
 
-    func testWirelessWDAUsesOrdinaryBonjourHostnameForTheScreenStream() {
+    func testWirelessTunnelMustBeConnectedBeforeItIsUsable() {
+        let device = WirelessDeviceMetadata(
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            hostname: "device.coredevice.local",
+            tunnelIPAddress: "198.18.0.1",
+            tunnelState: "disconnected"
+        )
+
+        XCTAssertFalse(device.isTunnelConnected)
+        XCTAssertEqual(device.endpointURLs(port: 9200).first?.absoluteString, "http://198.18.0.1:9200")
+    }
+
+    func testWirelessWDAKeepsAppleCoreDeviceHostnameForControlDiscovery() {
         XCTAssertEqual(
             WirelessWDAService.lanHostname(from: "Test-iPhone.coredevice.local"),
-            "Test-iPhone.local"
+            "Test-iPhone.coredevice.local"
         )
+    }
+
+    func testWirelessWDAEndpointUsesReportedLANAddressForVideo() throws {
+        let controlURL = try XCTUnwrap(URL(string: "http://[fd68:8f67:2e76::1]:8100"))
+        let endpoint = WirelessWDAService.endpoint(
+            baseURL: controlURL,
+            statusJSON: [
+                "value": [
+                    "ready": true,
+                    "ios": ["ip": "192.168.31.135"]
+                ]
+            ]
+        )
+
+        XCTAssertEqual(endpoint?.controlURL, controlURL)
+        XCTAssertEqual(endpoint?.videoHost, "192.168.31.135")
     }
 
     func testWirelessWDADetectsLockedAndUnavailableDestinations() {

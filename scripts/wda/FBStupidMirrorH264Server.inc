@@ -6,13 +6,22 @@
 @import CoreMedia;
 @import CoreVideo;
 @import VideoToolbox;
+#import <libsrt/srt.h>
+#import <netinet/in.h>
 
 static const uint16_t SMH264DefaultPort = 9200;
 static const NSUInteger SMH264DefaultFPS = 45;
 static const NSUInteger SMH264DefaultSourceQuality = 90;
 static const NSUInteger SMH264DefaultBitrate = 16000000;
 static const NSTimeInterval SMH264FrameTimeout = 1.0;
-static NSString *const SMH264ServerName = @"StupidMirror H264 Server";
+static const NSUInteger SMSRTMaximumMessageSize = 1316;
+static const NSUInteger SMSRTHeaderSize = 24;
+static const NSUInteger SMSRTMaximumPayloadSize = SMSRTMaximumMessageSize - SMSRTHeaderSize;
+
+// Export startup health through WDA's existing /status response. This keeps
+// transport observability on the same probe the desktop already performs.
+volatile int SMStupidMirrorSRTStartupState = 0;
+char SMStupidMirrorSRTStartupError[512] = {0};
 
 @class FBStupidMirrorH264Server;
 
@@ -24,11 +33,11 @@ static void SMH264CompressionOutputCallback(
   CMSampleBufferRef sampleBuffer
 );
 
-@interface FBStupidMirrorH264Server : NSObject <FBTCPSocketDelegate>
+@interface FBStupidMirrorH264Server : NSObject
 
 @property (nonatomic, readonly) dispatch_queue_t captureQueue;
-@property (nonatomic, readonly) NSMutableArray<GCDAsyncSocket *> *clients;
-@property (nonatomic, readonly) FBTCPSocket *broadcaster;
+@property (nonatomic, readonly) dispatch_queue_t srtAcceptQueue;
+@property (nonatomic, readonly) dispatch_queue_t srtSendQueue;
 @property (nonatomic, readonly) CIContext *ciContext;
 @property (nonatomic, readonly) long long mainScreenID;
 @property (nonatomic, assign) VTCompressionSessionRef compressionSession;
@@ -37,8 +46,10 @@ static void SMH264CompressionOutputCallback(
 @property (nonatomic, assign) BOOL isRunning;
 @property (nonatomic, assign) NSUInteger inFlightFrameCount;
 @property (nonatomic, assign) BOOL needsKeyFrame;
-@property (nonatomic, assign) NSUInteger sentFrames;
-@property (nonatomic, assign) NSUInteger sentBytes;
+@property (nonatomic, assign) SRTSOCKET srtListener;
+@property (nonatomic, assign) SRTSOCKET srtClient;
+@property (nonatomic, assign) uint32_t srtFrameID;
+@property (nonatomic, assign) NSUInteger srtPendingFrames;
 
 - (instancetype)initWithPort:(uint16_t)port;
 - (void)stop;
@@ -57,7 +68,14 @@ static void SMH264CompressionOutputCallback(
       "com.stupidmirror.wda.h264.capture",
       dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)
     );
-    _clients = [NSMutableArray array];
+    _srtAcceptQueue = dispatch_queue_create(
+      "com.stupidmirror.wda.h264.srt-accept",
+      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)
+    );
+    _srtSendQueue = dispatch_queue_create(
+      "com.stupidmirror.wda.h264.srt-send",
+      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0)
+    );
     _ciContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer: @NO}];
     _mainScreenID = [XCUIScreen.mainScreen displayID];
     _encodedWidth = 0;
@@ -65,25 +83,133 @@ static void SMH264CompressionOutputCallback(
     _isRunning = YES;
     _inFlightFrameCount = 0;
     _needsKeyFrame = YES;
-    _sentFrames = 0;
-    _sentBytes = 0;
-    _broadcaster = [[FBTCPSocket alloc] initWithPort:port];
-    _broadcaster.delegate = self;
-    NSError *error;
-    if (![_broadcaster startWithError:&error]) {
-      [FBLogger logFmt:@"Cannot start StupidMirror H.264 stream on port %@: %@", @(port), error.description];
-      _broadcaster.delegate = nil;
-      _broadcaster = nil;
-      _isRunning = NO;
-      return self;
-    }
+    _srtListener = SRT_INVALID_SOCK;
+    _srtClient = SRT_INVALID_SOCK;
+    _srtFrameID = arc4random();
+    _srtPendingFrames = 0;
+    [self startSRTListenerOnPort:port];
     __weak typeof(self) weakSelf = self;
     dispatch_async(_captureQueue, ^{
       [weakSelf captureNextFrame];
     });
-    [FBLogger logFmt:@"StupidMirror H.264 stream listening on port %@", @(port)];
   }
   return self;
+}
+
+- (BOOL)setSRTOption:(SRT_SOCKOPT)option
+               value:(const void *)value
+              length:(int)length
+            onSocket:(SRTSOCKET)socket
+{
+  return srt_setsockflag(socket, option, value, length) != SRT_ERROR;
+}
+
+- (void)startSRTListenerOnPort:(uint16_t)port
+{
+  SMStupidMirrorSRTStartupState = 1;
+  if (srt_startup() != 0) {
+    SMStupidMirrorSRTStartupState = -1;
+    strlcpy(SMStupidMirrorSRTStartupError, srt_getlasterror_str(), sizeof(SMStupidMirrorSRTStartupError));
+    [FBLogger log:@"Cannot initialize StupidMirror SRT transport"];
+    return;
+  }
+  SRTSOCKET listener = srt_create_socket();
+  if (listener == SRT_INVALID_SOCK) {
+    SMStupidMirrorSRTStartupState = -2;
+    strlcpy(SMStupidMirrorSRTStartupError, srt_getlasterror_str(), sizeof(SMStupidMirrorSRTStartupError));
+    [FBLogger logFmt:@"Cannot create StupidMirror SRT listener: %s", srt_getlasterror_str()];
+    return;
+  }
+  int32_t transport = SRTT_LIVE;
+  bool sender = true;
+  bool tooLateDrop = true;
+  int32_t peerLatency = 80;
+  int32_t sendTimeout = 80;
+  int32_t receiveTimeout = 500;
+  int32_t payloadSize = (int32_t)SMSRTMaximumMessageSize;
+  BOOL configured =
+    [self setSRTOption:SRTO_TRANSTYPE value:&transport length:sizeof(transport) onSocket:listener] &&
+    [self setSRTOption:SRTO_SENDER value:&sender length:sizeof(sender) onSocket:listener] &&
+    [self setSRTOption:SRTO_TLPKTDROP value:&tooLateDrop length:sizeof(tooLateDrop) onSocket:listener] &&
+    [self setSRTOption:SRTO_PEERLATENCY value:&peerLatency length:sizeof(peerLatency) onSocket:listener] &&
+    [self setSRTOption:SRTO_SNDTIMEO value:&sendTimeout length:sizeof(sendTimeout) onSocket:listener] &&
+    [self setSRTOption:SRTO_RCVTIMEO value:&receiveTimeout length:sizeof(receiveTimeout) onSocket:listener] &&
+    [self setSRTOption:SRTO_PAYLOADSIZE value:&payloadSize length:sizeof(payloadSize) onSocket:listener];
+  struct sockaddr_in address = {0};
+  address.sin_len = sizeof(address);
+  address.sin_family = AF_INET;
+  address.sin_port = htons(port);
+  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  if (!configured ||
+      srt_bind(listener, (const struct sockaddr *)&address, sizeof(address)) == SRT_ERROR ||
+      srt_listen(listener, 1) == SRT_ERROR) {
+    SMStupidMirrorSRTStartupState = -3;
+    strlcpy(SMStupidMirrorSRTStartupError, srt_getlasterror_str(), sizeof(SMStupidMirrorSRTStartupError));
+    [FBLogger logFmt:@"Cannot start StupidMirror SRT listener: %s", srt_getlasterror_str()];
+    srt_close(listener);
+    return;
+  }
+  self.srtListener = listener;
+  SMStupidMirrorSRTStartupState = 2;
+  SMStupidMirrorSRTStartupError[0] = '\0';
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(self.srtAcceptQueue, ^{
+    [weakSelf acceptSRTClients];
+  });
+  [FBLogger logFmt:@"StupidMirror SRT/H.264 stream listening on UDP port %@", @(port)];
+}
+
+- (void)acceptSRTClients
+{
+  while (self.isRunning) {
+    SRTSOCKET listener = self.srtListener;
+    if (listener == SRT_INVALID_SOCK) {
+      return;
+    }
+    SRTSOCKET client = srt_accept(listener, NULL, NULL);
+    if (client == SRT_INVALID_SOCK) {
+      if (self.isRunning) {
+        [FBLogger logFmt:@"StupidMirror SRT accept failed: %s", srt_getlasterror_str()];
+      }
+      return;
+    }
+    @synchronized (self) {
+      if (self.srtClient != SRT_INVALID_SOCK) {
+        srt_close(self.srtClient);
+      }
+      self.srtClient = client;
+      self.needsKeyFrame = YES;
+      self.srtFrameID = arc4random();
+    }
+    [FBLogger log:@"StupidMirror SRT client connected"];
+    [self receiveControlMessagesFromClient:client];
+    __block BOOL shouldCloseClient = NO;
+    @synchronized (self) {
+      if (self.srtClient == client) {
+        self.srtClient = SRT_INVALID_SOCK;
+        shouldCloseClient = YES;
+      }
+    }
+    if (shouldCloseClient) {
+      srt_close(client);
+    }
+    [FBLogger log:@"StupidMirror SRT client disconnected"];
+  }
+}
+
+- (void)receiveControlMessagesFromClient:(SRTSOCKET)client
+{
+  char buffer[64];
+  const uint8_t keyFrameRequest[] = {'S', 'M', 'K', 'F'};
+  while (self.isRunning && srt_getsockstate(client) == SRTS_CONNECTED) {
+    int received = srt_recvmsg(client, buffer, sizeof(buffer));
+    if (received == sizeof(keyFrameRequest) &&
+        memcmp(buffer, keyFrameRequest, sizeof(keyFrameRequest)) == 0) {
+      @synchronized (self) {
+        self.needsKeyFrame = YES;
+      }
+    }
+  }
 }
 
 - (NSUInteger)configuredUnsignedInteger:(NSString *)key
@@ -149,8 +275,9 @@ static void SMH264CompressionOutputCallback(
 
 - (BOOL)hasClients
 {
-  @synchronized (self.clients) {
-    return self.clients.count > 0;
+  @synchronized (self) {
+    return self.srtClient != SRT_INVALID_SOCK &&
+      srt_getsockstate(self.srtClient) == SRTS_CONNECTED;
   }
 }
 
@@ -291,8 +418,8 @@ static void SMH264CompressionOutputCallback(
   VTSessionSetProperty(session, kVTCompressionPropertyKey_ExpectedFrameRate, (__bridge CFTypeRef)@(fps));
   VTSessionSetProperty(session, kVTCompressionPropertyKey_AverageBitRate, (__bridge CFTypeRef)@(bitrate));
   VTSessionSetProperty(session, kVTCompressionPropertyKey_DataRateLimits, (__bridge CFArrayRef)@[@(bitrate / 8 * 2), @2]);
-  VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, (__bridge CFTypeRef)@(fps * 2));
-  VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, (__bridge CFTypeRef)@2.0);
+  VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxKeyFrameInterval, (__bridge CFTypeRef)@(fps));
+  VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, (__bridge CFTypeRef)@1.0);
   VTSessionSetProperty(session, kVTCompressionPropertyKey_MaxFrameDelayCount, (__bridge CFTypeRef)@1);
   status = VTCompressionSessionPrepareToEncodeFrames(session);
   if (status != noErr) {
@@ -407,76 +534,104 @@ static void SMH264CompressionOutputCallback(
 
 - (void)sendPayload:(NSData *)payload presentationTime:(CMTime)presentationTime keyFrame:(BOOL)isKeyFrame
 {
-  uint32_t payloadLength = CFSwapInt32HostToBig((uint32_t)payload.length);
-  Float64 seconds = CMTimeGetSeconds(presentationTime);
-  uint64_t micros = isfinite(seconds) && seconds >= 0 ? (uint64_t)llround(seconds * 1000000.0) : 0;
-  uint64_t presentationMicros = CFSwapInt64HostToBig(micros);
-  uint8_t flags = isKeyFrame ? 1 : 0;
-  uint8_t reserved[3] = {0, 0, 0};
-  NSMutableData *packet = [NSMutableData dataWithCapacity:16 + payload.length];
-  [packet appendBytes:&payloadLength length:sizeof(payloadLength)];
-  [packet appendBytes:&presentationMicros length:sizeof(presentationMicros)];
-  [packet appendBytes:&flags length:sizeof(flags)];
-  [packet appendBytes:reserved length:sizeof(reserved)];
-  [packet appendData:payload];
-
-  @synchronized (self.clients) {
-    NSArray<GCDAsyncSocket *> *clients = self.clients.copy;
-    for (GCDAsyncSocket *client in clients) {
-      [client writeData:packet withTimeout:SMH264FrameTimeout tag:1];
-    }
-    self.sentFrames++;
-    self.sentBytes += packet.length * clients.count;
-    if (self.sentFrames % MAX(self.targetFPS, 1) == 0) {
-      [FBLogger verboseLog:[NSString stringWithFormat:@"StupidMirror H.264 stats: clients=%@ frames=%@ bytes=%@",
-        @(clients.count), @(self.sentFrames), @(self.sentBytes)]];
-    }
-  }
-}
-
-- (void)didClientConnect:(GCDAsyncSocket *)newClient
-{
-  [newClient readDataWithTimeout:-1 tag:0];
-}
-
-- (void)didClientSendData:(GCDAsyncSocket *)client
-{
-  @synchronized (self.clients) {
-    if ([self.clients containsObject:client]) {
+  @synchronized (self) {
+    if (self.srtPendingFrames >= 2) {
+      self.needsKeyFrame = YES;
       return;
     }
-    [self.clients addObject:client];
+    self.srtPendingFrames++;
   }
-  NSString *header = [NSString stringWithFormat:
-    @"HTTP/1.0 200 OK\r\nServer: %@\r\nConnection: close\r\nCache-Control: no-cache, private\r\nContent-Type: application/x-stupidmirror-h264\r\n\r\n",
-    SMH264ServerName];
-  NSMutableData *response = [[header dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
-  const uint8_t magic[] = {'S', 'M', 'H', '1'};
-  [response appendBytes:magic length:sizeof(magic)];
-  [client writeData:response withTimeout:SMH264FrameTimeout tag:0];
-  @synchronized (self) {
-    self.needsKeyFrame = YES;
-  }
-  [FBLogger logFmt:@"Starting StupidMirror H.264 stream for %@:%@", client.connectedHost, @(client.connectedPort)];
+  __weak typeof(self) weakSelf = self;
+  dispatch_async(self.srtSendQueue, ^{
+    __strong typeof(weakSelf) strongSelf = weakSelf;
+    if (strongSelf != nil) {
+      [strongSelf sendSRTPayloadOnSendQueue:payload
+                           presentationTime:presentationTime
+                                  keyFrame:isKeyFrame];
+      @synchronized (strongSelf) {
+        if (strongSelf.srtPendingFrames > 0) {
+          strongSelf.srtPendingFrames--;
+        }
+      }
+    }
+  });
 }
 
-- (void)didClientDisconnect:(GCDAsyncSocket *)client
+- (void)sendSRTPayloadOnSendQueue:(NSData *)annexB
+                 presentationTime:(CMTime)presentationTime
+                        keyFrame:(BOOL)isKeyFrame
 {
-  @synchronized (self.clients) {
-    [self.clients removeObject:client];
+  __block SRTSOCKET client = SRT_INVALID_SOCK;
+  __block uint32_t frameID = 0;
+  @synchronized (self) {
+    client = self.srtClient;
+    frameID = self.srtFrameID++;
+  }
+  if (client == SRT_INVALID_SOCK || srt_getsockstate(client) != SRTS_CONNECTED) {
+    return;
+  }
+  Float64 seconds = CMTimeGetSeconds(presentationTime);
+  uint64_t presentationMicros = isfinite(seconds) && seconds >= 0
+    ? (uint64_t)llround(seconds * 1000000.0)
+    : 0;
+  NSUInteger fragmentCountValue = (annexB.length + SMSRTMaximumPayloadSize - 1) /
+    SMSRTMaximumPayloadSize;
+  if (fragmentCountValue == 0 || fragmentCountValue > UINT16_MAX) {
+    @synchronized (self) {
+      self.needsKeyFrame = YES;
+    }
+    return;
+  }
+  uint16_t fragmentCount = (uint16_t)fragmentCountValue;
+  uint32_t networkFrameID = CFSwapInt32HostToBig(frameID);
+  uint64_t networkPresentationMicros = CFSwapInt64HostToBig(presentationMicros);
+  uint16_t networkFragmentCount = CFSwapInt16HostToBig(fragmentCount);
+  const uint8_t magic[] = {'S', 'M', 'S', '2'};
+  BOOL sendFailed = NO;
+  for (uint16_t index = 0; index < fragmentCount; index++) {
+    NSUInteger offset = (NSUInteger)index * SMSRTMaximumPayloadSize;
+    NSUInteger length = MIN(SMSRTMaximumPayloadSize, annexB.length - offset);
+    uint16_t networkIndex = CFSwapInt16HostToBig(index);
+    uint8_t flags = isKeyFrame ? 1 : 0;
+    uint8_t reserved[3] = {0, 0, 0};
+    NSMutableData *message = [NSMutableData dataWithCapacity:SMSRTHeaderSize + length];
+    [message appendBytes:magic length:sizeof(magic)];
+    [message appendBytes:&networkFrameID length:sizeof(networkFrameID)];
+    [message appendBytes:&networkPresentationMicros length:sizeof(networkPresentationMicros)];
+    [message appendBytes:&networkIndex length:sizeof(networkIndex)];
+    [message appendBytes:&networkFragmentCount length:sizeof(networkFragmentCount)];
+    [message appendBytes:&flags length:sizeof(flags)];
+    [message appendBytes:reserved length:sizeof(reserved)];
+    [message appendBytes:(const uint8_t *)annexB.bytes + offset length:length];
+    int sent = srt_sendmsg(client, message.bytes, (int)message.length, 200, 0);
+    if (sent != (int)message.length) {
+      sendFailed = YES;
+      break;
+    }
+  }
+  if (sendFailed) {
+    @synchronized (self) {
+      self.needsKeyFrame = YES;
+    }
   }
 }
 
 - (void)stop
 {
   self.isRunning = NO;
-  [self.broadcaster stop];
-  @synchronized (self.clients) {
-    NSArray<GCDAsyncSocket *> *clients = self.clients.copy;
-    [self.clients removeAllObjects];
-    for (GCDAsyncSocket *client in clients) {
-      [client disconnect];
-    }
+  __block SRTSOCKET listener = SRT_INVALID_SOCK;
+  __block SRTSOCKET client = SRT_INVALID_SOCK;
+  @synchronized (self) {
+    listener = self.srtListener;
+    client = self.srtClient;
+    self.srtListener = SRT_INVALID_SOCK;
+    self.srtClient = SRT_INVALID_SOCK;
+  }
+  if (listener != SRT_INVALID_SOCK) {
+    srt_close(listener);
+  }
+  if (client != SRT_INVALID_SOCK) {
+    srt_close(client);
   }
   [self invalidateEncoder];
 }

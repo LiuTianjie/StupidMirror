@@ -116,7 +116,7 @@ struct DeviceSession: Identifiable {
         case .usb:
             "usb:\(captureDevice?.uniqueID ?? id)"
         case .wireless:
-            "wireless:\(wirelessDevice?.hostname ?? id)"
+            "wireless:\(wirelessDevice?.preferredEndpointHost ?? id)"
         }
     }
 
@@ -141,9 +141,7 @@ struct DeviceSession: Identifiable {
         self.captureDevice = nil
         self.wirelessDevice = wirelessDevice
         self.mirrorSession = MirrorCaptureSession(
-            mjpegURL: URL(
-                string: "http://\(WirelessWDAService.lanHostname(from: wirelessDevice.hostname)):9100"
-            )!
+            wirelessEndpointURL: wirelessDevice.endpointURLs(port: 8_100).first!
         )
         self.controlSession = AppiumControlSession(device: device)
         self.wirelessWDA = WirelessWDAService()

@@ -212,9 +212,26 @@ struct DeviceDetailView: View {
                 } else if mirrorSession.state == .starting {
                     ProgressView().controlSize(.small)
                     if session.transport == .wireless {
-                        Text(store.t("detail.wirelessStarting"))
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            VStack(spacing: 4) {
+                                Text(mirrorSession.wirelessStartupDetail
+                                    ?? store.t("detail.wirelessStarting"))
+                                Text(String(
+                                    format: store.t("wireless.start.elapsed"),
+                                    wirelessStartupElapsed(at: context.date)
+                                ))
+                                .foregroundStyle(.tertiary)
+                            }
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 220)
+                        }
+                        Button(store.t("wireless.start.cancel")) {
+                            store.stop(session)
+                        }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
                     }
                 } else if session.transport == .wireless && mirrorSession.state == .stopped {
                     Image(systemName: "play.circle")
@@ -236,6 +253,11 @@ struct DeviceDetailView: View {
                 }
             }
         }
+    }
+
+    private func wirelessStartupElapsed(at date: Date) -> Int {
+        guard let beganAt = mirrorSession.wirelessStartupBeganAt else { return 0 }
+        return max(0, Int(date.timeIntervalSince(beganAt)))
     }
 
     private func fittedSize(in container: CGSize, aspect: Double) -> CGSize {

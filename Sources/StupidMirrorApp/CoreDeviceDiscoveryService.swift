@@ -7,6 +7,72 @@ struct WirelessDeviceMetadata: Hashable, Sendable {
     let productType: String
     let osVersion: String
     let hostname: String
+    let hostnames: [String]
+    let tunnelIPAddress: String?
+    let tunnelState: String?
+
+    init(
+        udid: String,
+        name: String,
+        productType: String,
+        osVersion: String,
+        hostname: String,
+        hostnames: [String] = [],
+        tunnelIPAddress: String? = nil,
+        tunnelState: String? = nil
+    ) {
+        self.udid = udid
+        self.name = name
+        self.productType = productType
+        self.osVersion = osVersion
+        self.hostname = hostname
+        self.hostnames = Self.uniqueHosts([hostname] + hostnames)
+        self.tunnelIPAddress = tunnelIPAddress?.nonEmpty
+        self.tunnelState = tunnelState?.nonEmpty
+    }
+
+    var isTunnelConnected: Bool {
+        tunnelState == "connected" && !endpointHosts.isEmpty
+    }
+
+    var endpointHosts: [String] {
+        Self.uniqueHosts([tunnelIPAddress].compactMap { $0?.nonEmpty } + hostnames)
+    }
+
+    var preferredEndpointHost: String {
+        endpointHosts.first ?? hostname
+    }
+
+    var formattedPreferredEndpointHost: String {
+        Self.formattedURLHost(preferredEndpointHost)
+    }
+
+    func endpointURLs(port: Int, path: String = "") -> [URL] {
+        endpointHosts.compactMap { host in
+            var components = URLComponents()
+            components.scheme = "http"
+            components.host = Self.formattedURLHost(host)
+            components.port = port
+            components.path = path
+            return components.url
+        }
+    }
+
+    private static func formattedURLHost(_ host: String) -> String {
+        host.contains(":") && !(host.hasPrefix("[") && host.hasSuffix("]"))
+            ? "[\(host)]"
+            : host
+    }
+
+    private static func uniqueHosts(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.compactMap { value in
+            guard let host = value.nonEmpty else { return nil }
+            let key = host.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return host
+        }
+    }
 }
 
 /// Discovers Xcode-paired iPhones through Apple's supported `devicectl` CLI.
@@ -64,21 +130,26 @@ enum CoreDeviceDiscoveryService {
                   device.connectionProperties.pairingState == "paired",
                   device.connectionProperties.transportType == "localNetwork",
                   let udid = device.hardwareProperties.udid?.nonEmpty,
-                  let name = device.deviceProperties.name?.nonEmpty,
-                  let hostname = preferredHostname(for: device)?.nonEmpty else {
+                  let name = device.deviceProperties.name?.nonEmpty else {
                 return nil
             }
+            let hostnames = preferredHostnames(for: device)
+            let tunnelIPAddress = device.connectionProperties.tunnelIPAddress?.nonEmpty
+            guard let hostname = hostnames.first ?? tunnelIPAddress else { return nil }
             return WirelessDeviceMetadata(
                 udid: udid,
                 name: name,
                 productType: device.hardwareProperties.productType?.nonEmpty ?? "iOS Device",
                 osVersion: device.deviceProperties.osVersionNumber?.nonEmpty ?? "",
-                hostname: hostname
+                hostname: hostname,
+                hostnames: hostnames,
+                tunnelIPAddress: tunnelIPAddress,
+                tunnelState: device.connectionProperties.tunnelState
             )
         }
     }
 
-    private static func preferredHostname(for device: CoreDeviceRecord) -> String? {
+    private static func preferredHostnames(for device: CoreDeviceRecord) -> [String] {
         let candidates = (device.connectionProperties.localHostnames ?? [])
             + (device.connectionProperties.potentialHostnames ?? [])
         let valid = candidates.filter { hostname in
@@ -87,15 +158,22 @@ enum CoreDeviceDiscoveryService {
                 && !normalized.contains("/")
                 && !normalized.contains(":")
         }
-        guard !valid.isEmpty else { return nil }
+        guard !valid.isEmpty else { return [] }
 
         let normalizedName = device.deviceProperties.name?
             .replacingOccurrences(of: " ", with: "-")
             .lowercased()
-        return valid.first { hostname in
+        let preferred = valid.first { hostname in
             guard let normalizedName else { return false }
             return hostname.lowercased().hasPrefix(normalizedName)
-        } ?? valid[0]
+        }
+        var ordered = valid
+        if let preferred, let index = ordered.firstIndex(of: preferred) {
+            ordered.remove(at: index)
+            ordered.insert(preferred, at: 0)
+        }
+        var seen = Set<String>()
+        return ordered.filter { seen.insert($0.lowercased()).inserted }
     }
 }
 
@@ -117,6 +195,8 @@ private struct CoreDeviceConnectionProperties: Decodable {
     let localHostnames: [String]?
     let pairingState: String?
     let potentialHostnames: [String]?
+    let tunnelIPAddress: String?
+    let tunnelState: String?
     let transportType: String?
 }
 

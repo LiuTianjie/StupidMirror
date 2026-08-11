@@ -10,7 +10,7 @@ final class LicenseManagerTests: XCTestCase {
     private let receipt1 = "8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1"
     private let receipt2 = "5e7dbd7e-6717-4cde-9db1-c8f910c5108e"
 
-    func testUnactivatedInstallHasOneDeviceAndNoControl() async throws {
+    func testUnactivatedInstallAllowsOneDeviceAndOneControl() async throws {
         let store = MemoryLicenseStore()
         let manager = LicenseManager(
             store: store,
@@ -22,7 +22,8 @@ final class LicenseManagerTests: XCTestCase {
 
         XCTAssertEqual(manager.state, .unlicensed)
         XCTAssertEqual(manager.state.capabilities.maximumSimultaneousDevices, 1)
-        XCTAssertFalse(manager.state.capabilities.controlEnabled)
+        XCTAssertEqual(manager.state.capabilities.maximumSimultaneousControls, 1)
+        XCTAssertTrue(manager.state.capabilities.controlEnabled)
     }
 
     func testBootstrapRetriesAfterATemporaryKeychainFailure() async {
@@ -88,6 +89,32 @@ final class LicenseManagerTests: XCTestCase {
         XCTAssertEqual(decision.allowedIDs, ["iphone-b", "iphone-c"])
         XCTAssertTrue(decision.blockedIDs.isEmpty)
         XCTAssertTrue(LicenseCapabilities.activated.controlEnabled)
+    }
+
+    func testUnactivatedControlPolicyAllowsFirstControlAndBlocksSecond() {
+        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(
+            capabilities: .unactivated,
+            activeIDs: [],
+            targetID: "iphone-a"
+        ))
+        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(
+            capabilities: .unactivated,
+            activeIDs: ["iphone-a"],
+            targetID: "iphone-a"
+        ))
+        XCTAssertFalse(LicenseCapabilityPolicy.canStartControl(
+            capabilities: .unactivated,
+            activeIDs: ["iphone-a"],
+            targetID: "iphone-b"
+        ))
+    }
+
+    func testActivatedControlPolicyAllowsMultipleControls() {
+        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(
+            capabilities: .activated,
+            activeIDs: ["iphone-a", "iphone-b"],
+            targetID: "iphone-c"
+        ))
     }
 
     func testActivationNormalizesCodeAndPersistsReceipt() async throws {

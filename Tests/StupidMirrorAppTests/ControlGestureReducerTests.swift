@@ -266,7 +266,7 @@ final class ControlGestureReducerTests: XCTestCase {
         let framework = runner
             .appendingPathComponent("PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework", isDirectory: true)
         try FileManager.default.createDirectory(at: framework, withIntermediateDirectories: true)
-        try Data("binary application/x-stupidmirror-h264 marker".utf8)
+        try Data("binary StupidMirror SRT/H.264 stream marker".utf8)
             .write(to: framework.appendingPathComponent("WebDriverAgentLib"))
         XCTAssertTrue(DeviceGalleryStore.hasCachedWDABuild(
             udid: udid,

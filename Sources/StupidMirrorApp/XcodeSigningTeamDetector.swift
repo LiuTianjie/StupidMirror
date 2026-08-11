@@ -4,6 +4,13 @@ import Security
 struct XcodeSigningTeam: Identifiable, Hashable, Sendable {
     let id: String
     let name: String
+    let isFreeProvisioningTeam: Bool?
+
+    init(id: String, name: String, isFreeProvisioningTeam: Bool? = nil) {
+        self.id = id
+        self.name = name
+        self.isFreeProvisioningTeam = isFreeProvisioningTeam
+    }
 }
 
 struct DevelopmentSigningIdentity: Hashable, Sendable {
@@ -14,11 +21,17 @@ struct DevelopmentSigningIdentity: Hashable, Sendable {
 enum XcodeSigningTeamDetector {
     static func detect() async -> [XcodeSigningTeam] {
         await Task.detached(priority: .userInitiated) {
-            teams(from: developmentSigningIdentities())
+            teams(
+                from: developmentSigningIdentities(),
+                configuredTeams: configuredSigningTeams()
+            )
         }.value
     }
 
-    static func teams(from identities: [DevelopmentSigningIdentity]) -> [XcodeSigningTeam] {
+    static func teams(
+        from identities: [DevelopmentSigningIdentity],
+        configuredTeams: [XcodeSigningTeam] = []
+    ) -> [XcodeSigningTeam] {
         var teamsByID: [String: XcodeSigningTeam] = [:]
         for identity in identities {
             guard identity.commonName.hasPrefix("Apple Development:")
@@ -31,7 +44,27 @@ enum XcodeSigningTeamDetector {
             teamsByID[teamID] = XcodeSigningTeam(id: teamID, name: name)
         }
 
+        // Xcode's account preferences are the source of truth for teams the user
+        // can provision with. They also cover a freshly signed-in account before
+        // Xcode has created a local development certificate. Prefer their clearer
+        // team names over certificate common names when both sources contain a team.
+        for team in configuredTeams {
+            teamsByID[team.id] = team
+        }
+
         return teamsByID.values.sorted {
+            if $0.isFreeProvisioningTeam != $1.isFreeProvisioningTeam {
+                // Prefer paid organization teams, then certificate-only teams,
+                // and finally personal/free provisioning teams.
+                let rank: (Bool?) -> Int = { value in
+                    switch value {
+                    case false: 0
+                    case nil: 1
+                    case true: 2
+                    }
+                }
+                return rank($0.isFreeProvisioningTeam) < rank($1.isFreeProvisioningTeam)
+            }
             if $0.name == $1.name { return $0.id < $1.id }
             return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
@@ -54,7 +87,42 @@ enum XcodeSigningTeamDetector {
                 return applicationTeam
             }
         }
-        return teams.count == 1 ? teams[0].id : nil
+        // Wireless setup promises automatic account selection and has no account
+        // picker. A paid team is normally the least restrictive choice; if the
+        // user only has personal or certificate-derived teams, use the first
+        // deterministic result instead of incorrectly reporting "not signed in".
+        return teams.first(where: { $0.isFreeProvisioningTeam == false })?.id
+            ?? teams.first?.id
+    }
+
+    static func configuredTeams(from provisioningValue: Any?) -> [XcodeSigningTeam] {
+        guard let accounts = provisioningValue as? [String: Any] else { return [] }
+        var teamsByID: [String: XcodeSigningTeam] = [:]
+
+        for value in accounts.values {
+            guard let teams = value as? [[String: Any]] else { continue }
+            for team in teams {
+                guard let rawID = team["teamID"] as? String else { continue }
+                let teamID = rawID.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                guard teamID.range(of: #"^[A-Z0-9]{10}$"#, options: .regularExpression) != nil else {
+                    continue
+                }
+                let teamName = (team["teamName"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                teamsByID[teamID] = XcodeSigningTeam(
+                    id: teamID,
+                    name: teamName?.isEmpty == false ? teamName! : teamID,
+                    isFreeProvisioningTeam: team["isFreeProvisioningTeam"] as? Bool
+                )
+            }
+        }
+
+        return Array(teamsByID.values)
+    }
+
+    private static func configuredSigningTeams() -> [XcodeSigningTeam] {
+        let preferences = UserDefaults.standard.persistentDomain(forName: "com.apple.dt.Xcode")
+        return configuredTeams(from: preferences?["IDEProvisioningTeamByIdentifier"])
     }
 
     static func currentApplicationTeamID() -> String? {

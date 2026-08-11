@@ -155,7 +155,11 @@ struct StandaloneMirrorWindowView: View {
             let phoneShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
 
             ZStack {
-                MirrorPreviewView(mirrorSession: mirrorSession, cornerRadius: cornerRadius)
+                // One opaque backing plus one rounded clip avoids the bright
+                // fringe caused by two slightly different antialiased masks.
+                Color.black
+
+                MirrorPreviewView(mirrorSession: mirrorSession, cornerRadius: 0)
                     .overlay(controlGestureLayer)
                     .overlay(keyboardForwardingLayer)
 
@@ -178,11 +182,8 @@ struct StandaloneMirrorWindowView: View {
             .clipShape(phoneShape)
             .overlay(
                 phoneShape
-                    .strokeBorder(.white.opacity(0.42), lineWidth: 0.7)
-            )
-            .overlay(
-                phoneShape
-                    .strokeBorder(.black.opacity(0.055), lineWidth: 0.5)
+                    .strokeBorder(.black.opacity(0.42), lineWidth: 0.75)
+                    .allowsHitTesting(false)
             )
             .shadow(color: .black.opacity(0.11), radius: 20, y: 10)
             .contentShape(phoneShape)
@@ -196,6 +197,28 @@ struct StandaloneMirrorWindowView: View {
                 .font(.system(size: 24, weight: .semibold))
             Text(statusTitle)
                 .font(.headline)
+            if mirrorSession.state == .starting && session.transport == .wireless {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VStack(spacing: 5) {
+                        Text(mirrorSession.wirelessStartupDetail
+                            ?? store.t("detail.wirelessStarting"))
+                        Text(String(
+                            format: store.t("wireless.start.elapsed"),
+                            wirelessStartupElapsed(at: context.date)
+                        ))
+                        .foregroundStyle(.white.opacity(0.5))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.72))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                }
+                Button(store.t("wireless.start.cancel")) {
+                    store.stop(session)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
             if session.device.connectionState != .connected {
                 Text(store.t("mirror.reconnectingBody"))
                     .font(.caption)
@@ -209,6 +232,14 @@ struct StandaloneMirrorWindowView: View {
                     .foregroundStyle(.white.opacity(0.7))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
+                if session.transport == .wireless
+                    && session.device.connectionState == .connected {
+                    Button(store.t("wireless.start.retry")) {
+                        store.start(session)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
             }
         }
         .foregroundStyle(.white)
@@ -220,6 +251,11 @@ struct StandaloneMirrorWindowView: View {
         session.device.connectionState == .connected
             ? store.mirrorStateLabel(mirrorSession.state)
             : store.connectionStateLabel(session.device.connectionState)
+    }
+
+    private func wirelessStartupElapsed(at date: Date) -> Int {
+        guard let beganAt = mirrorSession.wirelessStartupBeganAt else { return 0 }
+        return max(0, Int(date.timeIntervalSince(beganAt)))
     }
 
     private func phoneCornerRadius(for size: CGSize) -> CGFloat {

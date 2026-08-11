@@ -43,9 +43,9 @@ final class XcodeSigningTeamDetectorTests: XCTestCase {
     func testExtractsTeamIDFromRFC2253CertificateSubject() {
         XCTAssertEqual(
             XcodeSigningTeamDetector.certificateTeamID(
-                inRFC2253Subject: "subject=C=CN,O=Example Corp\\, Ltd.,OU=L95PYLFT86,CN=Redacted"
+                inRFC2253Subject: "subject=C=CN,O=Example Corp\\, Ltd.,OU=PAIDTEAM01,CN=Redacted"
             ),
-            "L95PYLFT86"
+            "PAIDTEAM01"
         )
         XCTAssertNil(
             XcodeSigningTeamDetector.certificateTeamID(
@@ -75,6 +75,57 @@ final class XcodeSigningTeamDetectorTests: XCTestCase {
                 teams: teams
             ),
             "ABCDEFGHIJ"
+        )
+    }
+
+    func testReadsXcodeConfiguredTeamsAndPrefersPaidTeamAutomatically() {
+        let configuredValue: [String: Any] = [
+            "account-id": [
+                [
+                    "teamID": "FREETEAM01",
+                    "teamName": "Example Personal Team",
+                    "isFreeProvisioningTeam": true
+                ],
+                [
+                    "teamID": "PAIDTEAM01",
+                    "teamName": "Example Company",
+                    "isFreeProvisioningTeam": false
+                ]
+            ]
+        ]
+
+        let configuredTeams = XcodeSigningTeamDetector.configuredTeams(from: configuredValue)
+        let teams = XcodeSigningTeamDetector.teams(from: [], configuredTeams: configuredTeams)
+
+        XCTAssertEqual(teams.map(\.id), ["PAIDTEAM01", "FREETEAM01"])
+        XCTAssertEqual(
+            XcodeSigningTeamDetector.preferredTeamID(
+                savedID: "",
+                applicationTeamID: nil,
+                teams: teams
+            ),
+            "PAIDTEAM01"
+        )
+    }
+
+    func testXcodeConfiguredTeamNameOverridesCertificateName() {
+        let identities = [
+            DevelopmentSigningIdentity(
+                commonName: "Apple Development: Person (CERTID0001)",
+                organizationalUnit: "ABCDEFGHIJ"
+            )
+        ]
+        let configured = [
+            XcodeSigningTeam(
+                id: "ABCDEFGHIJ",
+                name: "Example Company",
+                isFreeProvisioningTeam: false
+            )
+        ]
+
+        XCTAssertEqual(
+            XcodeSigningTeamDetector.teams(from: identities, configuredTeams: configured),
+            configured
         )
     }
 }

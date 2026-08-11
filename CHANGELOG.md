@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.9 - 2026-08-11
+
+- Replace the wireless video fallback stack with a complete-access-unit H.264 transport over pinned SRT libraries, including stricter frame reassembly and VideoToolbox decoding.
+- Follow Xcode/CoreDevice tunnel endpoints, expose detailed wireless startup progress, and retry only transient Agent launch failures.
+- Read available signing teams from the user's live Xcode account configuration, automatically prefer an appropriate team without fixed account IDs, and coalesce concurrent detection requests.
+- Allow an unactivated installation to control one mirrored iPhone while continuing to reserve simultaneous multi-device control for activated installations.
+
 ## 0.2.8 - 2026-08-11
 
 - Add an independent, localized wireless setup guide that detects USB and signing readiness, prepares the wireless screen agent without enabling control, and then runs active discovery.

@@ -126,6 +126,7 @@ final class DeviceGalleryStore: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var refreshGeneration: UInt64 = 0
     private var shutdownTask: Task<Void, Never>?
+    private var signingTeamDetectionTask: Task<[XcodeSigningTeam], Never>?
     private var refreshRequestedWhileRunning = false
     private var thumbnailCaptures: [String: ThumbnailCapture] = [:]
     private var wirelessThumbnailTasks: [String: Task<Void, Never>] = [:]
@@ -196,7 +197,7 @@ final class DeviceGalleryStore: ObservableObject {
             DiagnosticItem(
                 name: t("diagnostic.backend"),
                 value: wirelessMirroringEnabled
-                    ? "USB: AVFoundation / Wireless: WDA H.264 (MJPEG fallback)"
+                    ? "USB: AVFoundation / Wireless: WDA H.264 over SRT"
                     : "CoreMediaIO + AVFoundation"
             ),
             DiagnosticItem(
@@ -259,11 +260,7 @@ final class DeviceGalleryStore: ObservableObject {
             .sink { [weak self] state in
                 guard let self else { return }
                 self.enforceSimultaneousDeviceLimit(state.capabilities)
-                if !state.capabilities.controlEnabled {
-                    for session in self.sessions {
-                        session.controlSession.stop(serverURL: self.appiumServerURL)
-                    }
-                }
+                self.enforceSimultaneousControlLimit(state.capabilities)
                 self.refresh()
             }
             .store(in: &cancellables)
@@ -611,15 +608,15 @@ final class DeviceGalleryStore: ObservableObject {
                 name: wirelessDevice.name,
                 productType: wirelessDevice.productType,
                 osVersion: wirelessDevice.osVersion,
-                connectionState: .connected,
+                connectionState: wirelessDevice.isTunnelConnected ? .connected : .unavailable,
                 trustState: .trusted
             )
             guard connectedIDs.insert(identity.id).inserted else { continue }
 
             if let existing = existingByID[identity.id],
                existing.transport == .wireless,
-               existing.wirelessDevice?.hostname == wirelessDevice.hostname,
-               existing.device.connectionState == .connected {
+               existing.wirelessDevice == wirelessDevice,
+               existing.device.connectionState == identity.connectionState {
                 disconnectedSince[identity.id] = nil
                 var updatedSession = existing
                 updatedSession.device = identity
@@ -993,23 +990,55 @@ final class DeviceGalleryStore: ObservableObject {
             await self.detectSigningTeams()
             guard !Task.isCancelled, !self.isShuttingDown else { return }
             do {
-                _ = try await wirelessWDA.ensureRunning(
-                    device: wirelessDevice,
-                    configuration: self.controlConfiguration(for: session),
-                    progress: { [weak self] progress in
-                        await MainActor.run {
-                            guard let self else { return }
-                            switch progress {
-                            case .launching:
-                                self.statusMessage = self.t("status.wirelessLaunching")
-                            case .waitingForUnlock:
-                                self.statusMessage = self.t("status.wirelessUnlockRequired")
-                            case .waitingForLocalNetwork:
-                                self.statusMessage = self.t("status.wirelessLocalNetworkWaiting")
+                var resolvedEndpoint: WirelessWDAEndpoint?
+                var lastError: Error?
+                for attempt in 0..<3 {
+                    do {
+                        resolvedEndpoint = try await wirelessWDA.ensureRunning(
+                            device: wirelessDevice,
+                            configuration: self.controlConfiguration(for: session),
+                            progress: { [weak self] progress in
+                                await MainActor.run {
+                                    guard let self else { return }
+                                    let key = switch progress {
+                                    case .checkingExistingAgent: "wireless.start.checkingAgent"
+                                    case .connectingDevice: "wireless.start.connectingDevice"
+                                    case .launchingInstalledAgent: "wireless.start.launchingAgent"
+                                    case .preparingAgent: "wireless.start.preparingAgent"
+                                    case .installingAgent: "wireless.start.installingAgent"
+                                    case .waitingForAgent: "wireless.start.waitingForAgent"
+                                    case .connectingVideo: "wireless.start.connectingVideo"
+                                    }
+                                    let message = self.t(key)
+                                    self.statusMessage = message
+                                    mirrorSession.updateWirelessStartupDetail(message)
+                                }
                             }
+                        )
+                        break
+                    } catch {
+                        lastError = error
+                        guard attempt < 2,
+                              self.shouldRetryWirelessWDA(error),
+                              self.desiredMirrorIDs.contains(sessionID),
+                              !Task.isCancelled else {
+                            throw error
                         }
+                        let message = self.t("wireless.start.retryingAgent")
+                        self.statusMessage = message
+                        mirrorSession.updateWirelessStartupDetail(message)
+                        try await Task.sleep(for: .seconds(attempt + 1))
                     }
-                )
+                }
+                guard let resolvedEndpoint else {
+                    throw lastError ?? WirelessWDAError.launchFailed
+                }
+                guard !Task.isCancelled,
+                      self.desiredMirrorIDs.contains(sessionID),
+                      self.sessions.contains(where: {
+                          $0.id == sessionID && $0.mirrorSession === mirrorSession
+                      }) else { return }
+                mirrorSession.connectWirelessVideo(host: resolvedEndpoint.videoHost)
             } catch is CancellationError {
                 return
             } catch {
@@ -1029,6 +1058,17 @@ final class DeviceGalleryStore: ObservableObject {
                     self.statusMessage = localizedMessage
                 }
             }
+        }
+    }
+
+    private func shouldRetryWirelessWDA(_ error: Error) -> Bool {
+        guard let wirelessError = error as? WirelessWDAError else { return true }
+        return switch wirelessError {
+        case .deviceUnavailable, .launchFailed, .timedOut:
+            true
+        case .missingSigningTeam, .missingRuntime, .firstUSBSetupRequired,
+             .deviceLocked, .localNetworkDenied, .buildFailed:
+            false
         }
     }
 
@@ -1103,7 +1143,7 @@ final class DeviceGalleryStore: ObservableObject {
     func connectControl(for session: DeviceSession) {
         guard !isShuttingDown,
               session.device.connectionState == .connected else { return }
-        guard canUseControl else {
+        guard canStartControl(for: session) else {
             statusMessage = t("status.activationControlRequired")
             showActivation(for: [])
             return
@@ -1151,7 +1191,7 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func connectControlForAutomation(for session: DeviceSession) async throws {
-        guard canUseControl else {
+        guard canStartControl(for: session) else {
             showActivation(for: [])
             throw DeviceAutomationError.activationRequired
         }
@@ -1233,10 +1273,22 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func detectSigningTeams() async {
-        guard !isDetectingSigningTeams else { return }
-        isDetectingSigningTeams = true
-        let teams = await XcodeSigningTeamDetector.detect()
+        let detectionTask: Task<[XcodeSigningTeam], Never>
+        if let runningTask = signingTeamDetectionTask {
+            detectionTask = runningTask
+        } else {
+            let newTask = Task { await XcodeSigningTeamDetector.detect() }
+            signingTeamDetectionTask = newTask
+            isDetectingSigningTeams = true
+            detectionTask = newTask
+        }
+
+        // All callers await and apply the shared result. Previously a second
+        // caller returned immediately while detection was in flight, then tried
+        // to start wireless mirroring with an empty Team ID.
+        let teams = await detectionTask.value
         detectedSigningTeams = teams
+        signingTeamDetectionTask = nil
         isDetectingSigningTeams = false
 
         controlXcodeOrgID = XcodeSigningTeamDetector.preferredTeamID(
@@ -1269,10 +1321,23 @@ final class DeviceGalleryStore: ObservableObject {
             useNewWDA: false,
             derivedDataPath: wdaDerivedDataPath,
             directDeviceHost: session.wirelessDevice.map {
-                WirelessWDAService.lanHostname(from: $0.hostname)
+                $0.formattedPreferredEndpointHost
             } ?? "",
-            platformVersion: session.wirelessDevice?.osVersion ?? ""
+            platformVersion: session.wirelessDevice?.osVersion ?? "",
+            xcodeConfigFile: srtXcodeConfigPath
         )
+    }
+
+    private var srtXcodeConfigPath: String {
+        let support = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return support
+            .appendingPathComponent("StupidMirror/AppiumHome/stupidmirror-srt", isDirectory: true)
+            .appendingPathComponent("StupidMirrorSRT.xcconfig")
+            .path
     }
 
     private func preparedControlConfiguration(
@@ -1283,11 +1348,11 @@ final class DeviceGalleryStore: ObservableObject {
               let wirelessWDA = session.wirelessWDA else {
             return configuration
         }
-        let url = try await wirelessWDA.ensureRunning(
+        let endpoint = try await wirelessWDA.ensureRunning(
             device: wirelessDevice,
             configuration: configuration
         )
-        configuration.webDriverAgentURL = url.absoluteString
+        configuration.webDriverAgentURL = endpoint.controlURL.absoluteString
         configuration.preferInstalledWDA = false
         configuration.usePrebuiltWDA = false
         return configuration
@@ -1312,7 +1377,7 @@ final class DeviceGalleryStore: ObservableObject {
             .appendingPathComponent("PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework")
             .appendingPathComponent("WebDriverAgentLib")
         guard let binaryData = try? Data(contentsOf: h264ServerBinary, options: .mappedIfSafe),
-              binaryData.range(of: Data("application/x-stupidmirror-h264".utf8)) != nil else {
+              binaryData.range(of: Data("StupidMirror SRT/H.264 stream".utf8)) != nil else {
             return false
         }
         guard let contents = try? FileManager.default.contentsOfDirectory(
@@ -1405,6 +1470,32 @@ final class DeviceGalleryStore: ObservableObject {
                 self?.statusMessage = error.localizedDescription
             }
         }
+    }
+
+    private func canStartControl(for session: DeviceSession) -> Bool {
+        LicenseCapabilityPolicy.canStartControl(
+            capabilities: licenseManager.state.capabilities,
+            activeIDs: Set(sessions.compactMap { candidate in
+                candidate.controlSession.isReady || candidate.controlSession.isConnecting
+                    ? candidate.id
+                    : nil
+            }),
+            targetID: session.id
+        )
+    }
+
+    private func enforceSimultaneousControlLimit(_ capabilities: LicenseCapabilities) {
+        guard let limit = capabilities.maximumSimultaneousControls else { return }
+        let active = sessions.filter {
+            $0.controlSession.isReady || $0.controlSession.isConnecting
+        }
+        guard active.count > limit else { return }
+        let preferred = active.first { $0.id == selectedSessionID }
+        let retainedIDs = Set(([preferred].compactMap { $0 } + active).prefix(limit).map(\.id))
+        for session in active where !retainedIDs.contains(session.id) {
+            session.controlSession.stop(serverURL: appiumServerURL)
+        }
+        statusMessage = t("status.activationControlRequired")
     }
 
     func select(_ session: DeviceSession) {
