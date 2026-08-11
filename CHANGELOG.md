@@ -4,7 +4,8 @@
 
 ## 0.2.8 - 2026-08-11
 
-- Add active wireless discovery after one USB setup, preserve paired devices across cable disconnects, and allow devices to be removed and rediscovered when connected again.
+- Add an independent, localized wireless setup guide that detects USB and signing readiness, prepares the wireless screen agent without enabling control, and then runs active discovery.
+- Preserve paired devices across cable disconnects, and allow devices to be removed and rediscovered when connected again.
 - Add a full-resolution wireless H.264 path with iPhone-side VideoToolbox encoding, Mac-side VideoToolbox decoding, a 45 FPS target, and automatic MJPEG fallback.
 - Keep wireless mirroring independent from control: starting a mirror no longer prepares control, while explicit control actions still launch the Agent when requested.
 - Limit unactivated installations only to one mirrored device and disabled control; keep wireless mirroring, diagnostics, settings, device removal, and other non-control features available.

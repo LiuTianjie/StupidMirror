@@ -9,6 +9,7 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     case settings
     case activation
     case controlSetup
+    case wirelessSetup
     case wirelessAccess
 
     var id: String { rawValue }
@@ -16,6 +17,13 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     static func toggling(_ target: DashboardSheet, from current: DashboardSheet?) -> DashboardSheet? {
         current == target ? nil : target
     }
+}
+
+enum WirelessSetupState: Equatable, Sendable {
+    case idle
+    case preparing
+    case ready
+    case failed(String)
 }
 
 enum DashboardSettingsTab: Hashable, Sendable {
@@ -101,6 +109,7 @@ final class DeviceGalleryStore: ObservableObject {
     }
     @Published private(set) var detectedSigningTeams: [XcodeSigningTeam] = []
     @Published private(set) var isDetectingSigningTeams = false
+    @Published private(set) var wirelessSetupState: WirelessSetupState = .idle
     @Published private(set) var activeSheet: DashboardSheet?
     @Published private(set) var settingsTab: DashboardSettingsTab = .general
     @Published var selectedSessionID: String?
@@ -136,6 +145,7 @@ final class DeviceGalleryStore: ObservableObject {
     private static let languageDefaultsKey = "StupidMirror.language"
     private static let autoStartMirrorsDefaultsKey = "StupidMirror.autoStartMirrors"
     private static let wirelessMirroringEnabledDefaultsKey = "StupidMirror.wirelessMirroringEnabled"
+    private static let wirelessSetupGuideSeenDefaultsKey = "StupidMirror.wirelessSetupGuideSeen"
     private static let audioPlaybackEnabledDefaultsKey = "StupidMirror.audioPlaybackEnabled"
     private static let appiumServerURLDefaultsKey = "StupidMirror.appiumServerURL"
     private static let controlBundleIDDefaultsKey = "StupidMirror.controlBundleID"
@@ -278,11 +288,85 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func discoverWirelessDevices() {
+        wirelessMirroringEnabled = true
+        guard UserDefaults.standard.bool(forKey: Self.wirelessSetupGuideSeenDefaultsKey) else {
+            presentWirelessSetup()
+            return
+        }
+        continueWirelessDiscovery()
+    }
+
+    private func continueWirelessDiscovery() {
         statusMessage = t("status.discoveringWireless")
         if wirelessMirroringEnabled {
             refresh()
         } else {
             wirelessMirroringEnabled = true
+        }
+    }
+
+    func presentWirelessSetup() {
+        if let usb = wirelessSetupUSBSession {
+            select(usb)
+            wirelessSetupState = hasCachedWDABuild(for: usb.device.udid) ? .ready : .idle
+        } else {
+            wirelessSetupState = .idle
+        }
+        setActiveSheet(.wirelessSetup)
+    }
+
+    func prepareWirelessSetup() async {
+        guard let session = wirelessSetupUSBSession,
+              let udid = session.device.udid, !udid.isEmpty else {
+            wirelessSetupState = .failed(t("wireless.setup.error.connectUSB"))
+            return
+        }
+        await detectSigningTeams()
+        guard !controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            wirelessSetupState = .failed(t("wireless.error.missingSigningTeam"))
+            return
+        }
+
+        wirelessSetupState = .preparing
+        statusMessage = t("wireless.setup.preparing")
+        do {
+            try await WirelessWDAService.prepareInitialUSBSetup(
+                udid: udid,
+                configuration: controlConfiguration(for: session)
+            )
+            guard hasCachedWDABuild(for: udid) else {
+                throw WirelessWDAError.buildFailed
+            }
+            UserDefaults.standard.set(true, forKey: Self.wirelessSetupGuideSeenDefaultsKey)
+            wirelessSetupState = .ready
+            statusMessage = t("wireless.setup.ready")
+        } catch is CancellationError {
+            wirelessSetupState = .idle
+        } catch {
+            let message = wirelessWDAErrorMessage(error)
+            wirelessSetupState = .failed(message)
+            statusMessage = message
+        }
+    }
+
+    func finishWirelessSetupAndDiscover() {
+        UserDefaults.standard.set(true, forKey: Self.wirelessSetupGuideSeenDefaultsKey)
+        setActiveSheet(nil)
+        continueWirelessDiscovery()
+    }
+
+    var wirelessSetupUSBSession: DeviceSession? {
+        if let selectedSessionID,
+           let selected = sessions.first(where: { $0.id == selectedSessionID }),
+           selected.transport == .usb,
+           selected.device.connectionState == .connected,
+           selected.device.udid?.isEmpty == false {
+            return selected
+        }
+        return sessions.first {
+            $0.transport == .usb
+                && $0.device.connectionState == .connected
+                && $0.device.udid?.isEmpty == false
         }
     }
 
@@ -938,6 +1022,9 @@ final class DeviceGalleryStore: ObservableObject {
                     self.statusMessage = self.t("status.wirelessUnlockRequired")
                 } else if error as? WirelessWDAError == .deviceUnavailable {
                     self.statusMessage = self.t("status.wirelessUnavailable")
+                } else if error as? WirelessWDAError == .firstUSBSetupRequired {
+                    self.statusMessage = localizedMessage
+                    self.setActiveSheet(.wirelessSetup)
                 } else {
                     self.statusMessage = localizedMessage
                 }

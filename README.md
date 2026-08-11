@@ -129,10 +129,12 @@ mirroring remains available and new mirror sessions do not attach audio.
 
 Wireless mode does not require Camera permission. Enable it under Settings,
 then keep the Mac and iPhone on the same local network. The first setup for each
-iPhone must be completed over USB: connect control once so Xcode can sign,
-install, and cache WebDriverAgent. Later wireless sessions wake the Xcode-paired
-device with `devicectl`, start the cached XCUITest runner, and read WDA over the
-iPhone's normal Bonjour address. Wireless audio is not currently available.
+iPhone must be completed over USB: open the independent Wireless Setup Guide,
+which checks the connected device and Apple development account before signing
+and caching the screen agent. This does not connect or enable iPhone control.
+Later wireless sessions wake the Xcode-paired device with `devicectl`, start the
+cached XCUITest runner, and read WDA over the iPhone's normal Bonjour address.
+Wireless audio is not currently available.
 
 If permission is denied:
 

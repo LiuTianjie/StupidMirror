@@ -76,6 +76,61 @@ final class WirelessWDAService: @unchecked Sendable {
 
     deinit { stop() }
 
+    /// Builds the patched WDA runner while the iPhone is connected by USB.
+    /// This prepares wireless mirroring only; it does not create an Appium
+    /// session or enable Mac-side iPhone control.
+    static func prepareInitialUSBSetup(
+        udid: String,
+        configuration: AppiumControlConfiguration
+    ) async throws {
+        let isolated = configuration.isolated(forDeviceUDID: udid)
+        let team = isolated.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !team.isEmpty else { throw WirelessWDAError.missingSigningTeam }
+        let bundleID = isolated.installationWDABundleID
+        guard !bundleID.isEmpty else { throw WirelessWDAError.missingSigningTeam }
+        guard let project = webDriverAgentProjectURL() else {
+            throw WirelessWDAError.missingRuntime
+        }
+
+        try await Task.detached(priority: .userInitiated) {
+            var arguments = [
+                "xcodebuild", "-quiet",
+                "-project", project.path,
+                "-scheme", "WebDriverAgentRunner",
+                "-destination", "id=\(udid)",
+                "-derivedDataPath", isolated.derivedDataPath,
+                "-allowProvisioningUpdates"
+            ]
+            if isolated.allowProvisioningDeviceRegistration {
+                arguments.append("-allowProvisioningDeviceRegistration")
+            }
+            arguments.append(contentsOf: [
+                "DEVELOPMENT_TEAM=\(team)",
+                "CODE_SIGN_STYLE=Automatic",
+                "CODE_SIGN_IDENTITY=\(isolated.xcodeSigningID)",
+                "PRODUCT_BUNDLE_IDENTIFIER=\(bundleID)",
+                "build-for-testing"
+            ])
+            do {
+                _ = try run(
+                    "/usr/bin/xcrun",
+                    arguments: arguments,
+                    environment: ["STUPIDMIRROR_SKIP_WDA_ICON_EMBED": "1"]
+                )
+            } catch let failure as CommandFailure {
+                if outputIndicatesLockedDevice(failure.output) {
+                    throw WirelessWDAError.deviceLocked
+                }
+                logger.error("Initial wireless WDA build failed: \(failure.output, privacy: .public)")
+                throw WirelessWDAError.buildFailed
+            } catch let error as WirelessWDAError {
+                throw error
+            } catch {
+                throw WirelessWDAError.buildFailed
+            }
+        }.value
+    }
+
     func ensureRunning(
         device: WirelessDeviceMetadata,
         configuration: AppiumControlConfiguration,
@@ -401,11 +456,38 @@ final class WirelessWDAService: @unchecked Sendable {
     }
 
     @discardableResult
-    private static func run(_ executable: String, arguments: [String]) throws -> String {
+    private static func webDriverAgentProjectURL() -> URL? {
+        let relativePath = "home/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent/WebDriverAgent.xcodeproj"
+        var candidates: [URL] = []
+        if let resources = Bundle.main.resourceURL {
+            candidates.append(
+                resources.appendingPathComponent("Appium", isDirectory: true)
+                    .appendingPathComponent(relativePath)
+            )
+        }
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        candidates.append(
+            repositoryRoot.appendingPathComponent(".build/appium-runtime", isDirectory: true)
+                .appendingPathComponent(relativePath)
+        )
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private static func run(
+        _ executable: String,
+        arguments: [String],
+        environment: [String: String] = [:]
+    ) throws -> String {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
         process.standardOutput = pipe
         process.standardError = pipe
         try process.run()

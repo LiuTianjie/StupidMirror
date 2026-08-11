@@ -54,6 +54,10 @@ struct GalleryView: View {
                 ControlSetupGuideView()
                     .environmentObject(store)
                     .frame(width: 560)
+            case .wirelessSetup:
+                WirelessSetupGuideView()
+                    .environmentObject(store)
+                    .frame(width: 600)
             case .wirelessAccess:
                 WirelessNetworkAccessView()
                     .environmentObject(store)
@@ -334,6 +338,182 @@ private struct WirelessNetworkAccessView: View {
             }
         }
         .padding(28)
+    }
+}
+
+private struct WirelessSetupGuideView: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @Environment(\.dismiss) private var dismiss
+
+    private var usbSession: DeviceSession? { store.wirelessSetupUSBSession }
+    private var hasSigningTeam: Bool {
+        !store.controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private var isPreparing: Bool { store.wirelessSetupState == .preparing }
+    private var isReady: Bool { store.wirelessSetupState == .ready }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "wifi")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Theme.Palette.live)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(store.t("wireless.setup.title"))
+                        .font(.title2.weight(.semibold))
+                    Text(store.t("wireless.setup.subtitle"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Label(store.t("common.close"), systemImage: "xmark")
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+            }
+            .padding(20)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 18) {
+                wirelessStep(
+                    number: 1,
+                    title: store.t("wireless.setup.step1.title"),
+                    body: store.t("wireless.setup.step1.body"),
+                    status: usbSession.map {
+                        String(format: store.t("wireless.setup.usbConnected"), $0.device.name)
+                    } ?? store.t("wireless.setup.usbWaiting"),
+                    statusIcon: usbSession == nil ? "iphone.slash" : "checkmark.circle.fill",
+                    statusColor: usbSession == nil ? Theme.Palette.pending : Theme.Palette.live
+                )
+
+                wirelessStep(
+                    number: 2,
+                    title: store.t("wireless.setup.step2.title"),
+                    body: store.t("wireless.setup.step2.body"),
+                    status: hasSigningTeam
+                        ? store.t("wireless.setup.accountReady")
+                        : store.t("wireless.setup.accountMissing"),
+                    statusIcon: hasSigningTeam ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                    statusColor: hasSigningTeam ? Theme.Palette.live : Theme.Palette.pending
+                )
+
+                wirelessStep(
+                    number: 3,
+                    title: store.t("wireless.setup.step3.title"),
+                    body: store.t("wireless.setup.step3.body"),
+                    status: preparationStatus,
+                    statusIcon: preparationStatusIcon,
+                    statusColor: preparationStatusColor
+                )
+
+                wirelessStep(
+                    number: 4,
+                    title: store.t("wireless.setup.step4.title"),
+                    body: store.t("wireless.setup.step4.body"),
+                    status: nil,
+                    statusIcon: nil,
+                    statusColor: .secondary
+                )
+
+                Text(store.t("wireless.setup.noControl"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+            }
+            .padding(20)
+
+            Divider()
+
+            HStack {
+                Button(store.t("wireless.setup.skip")) {
+                    store.finishWirelessSetupAndDiscover()
+                }
+                .disabled(isPreparing)
+                Spacer()
+                Button(store.t("common.cancel")) {
+                    dismiss()
+                }
+                .disabled(isPreparing)
+                Button(isReady ? store.t("wireless.setup.finish") : store.t("wireless.setup.prepare")) {
+                    if isReady {
+                        store.finishWirelessSetupAndDiscover()
+                    } else {
+                        Task { await store.prepareWirelessSetup() }
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Palette.accent)
+                .disabled(isPreparing || (!isReady && (usbSession == nil || !hasSigningTeam)))
+            }
+            .padding(20)
+        }
+        .task {
+            await store.detectSigningTeams()
+        }
+    }
+
+    private var preparationStatus: String? {
+        switch store.wirelessSetupState {
+        case .idle: store.t("wireless.setup.notPrepared")
+        case .preparing: store.t("wireless.setup.preparingDetail")
+        case .ready: store.t("wireless.setup.prepared")
+        case let .failed(message): message
+        }
+    }
+
+    private var preparationStatusIcon: String? {
+        switch store.wirelessSetupState {
+        case .idle: "circle.dashed"
+        case .preparing: "hourglass"
+        case .ready: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var preparationStatusColor: Color {
+        switch store.wirelessSetupState {
+        case .idle: .secondary
+        case .preparing: Theme.Palette.pending
+        case .ready: Theme.Palette.live
+        case .failed: Theme.Palette.danger
+        }
+    }
+
+    private func wirelessStep(
+        number: Int,
+        title: String,
+        body: String,
+        status: String?,
+        statusIcon: String?,
+        statusColor: Color
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.callout.bold())
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Theme.Palette.accent, in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                Text(body)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let status, let statusIcon {
+                    Label(status, systemImage: statusIcon)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(statusColor)
+                        .padding(.top, 2)
+                }
+            }
+        }
     }
 }
 
@@ -902,6 +1082,9 @@ struct SettingsView: View {
                         Text(store.t("settings.wirelessMirroringHelp"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        Button(store.t("wireless.setup.open")) {
+                            store.presentWirelessSetup()
+                        }
                         Toggle(
                             store.t("settings.audioPlayback"),
                             isOn: Binding(
