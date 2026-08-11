@@ -28,7 +28,7 @@ wanted_stamp="appium=${appium_version}
 node=${node_version}
 driver=${xcuitest_driver_name}@${xcuitest_driver_version}
 remotexpc=${remote_xpc_version}
-layout=7"
+layout=9"
 
 assert_runtime_versions() {
   local driver_package="${cache_dir}/home/node_modules/appium-xcuitest-driver/package.json"
@@ -100,6 +100,12 @@ prune_runtime() {
     -path '*/node_modules/@img/sharp-libvips-darwin-x64' \
   \) -prune -exec rm -rf {} +
 
+  # This app build is arm64-only. Native prebuilds for Intel Macs and iOS
+  # simulators can never be loaded, and keeping them only multiplies nested
+  # code-signing work for the final bundle.
+  find "$cache_dir" -type d -path '*/prebuilds/*' \
+    ! -name 'darwin-arm64' -prune -exec rm -rf {} +
+
   find "$cache_dir" -type l -exec sh -c '
     for path do
       target=$(readlink "$path")
@@ -148,6 +154,7 @@ else
 fi
 
 assert_runtime_versions
+APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
 
 mkdir -p "${cache_dir}/bin"
 cat > "${cache_dir}/bin/appium" <<'SH'

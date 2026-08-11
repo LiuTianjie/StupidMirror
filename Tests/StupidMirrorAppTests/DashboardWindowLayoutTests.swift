@@ -14,9 +14,7 @@ final class DashboardWindowLayoutTests: XCTestCase {
 
     func testDashboardShowsActivationEntryUntilLicensed() {
         XCTAssertFalse(LicenseState.checking.showsDashboardActivationEntry)
-        XCTAssertTrue(LicenseState.trialNotStarted.showsDashboardActivationEntry)
-        XCTAssertTrue(LicenseState.trial(expiresAt: .distantFuture).showsDashboardActivationEntry)
-        XCTAssertTrue(LicenseState.expired(expiresAt: .distantPast).showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.unlicensed.showsDashboardActivationEntry)
         XCTAssertTrue(LicenseState.unavailable("offline").showsDashboardActivationEntry)
         XCTAssertFalse(LicenseState.licensed(lastValidatedAt: nil).showsDashboardActivationEntry)
     }

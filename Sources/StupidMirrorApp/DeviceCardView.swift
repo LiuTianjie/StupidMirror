@@ -5,6 +5,7 @@ struct DeviceRowView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
     @ObservedObject private var controlSession: AppiumControlSession
+    @State private var confirmsRemoval = false
 
     let session: DeviceSession
 
@@ -49,13 +50,33 @@ struct DeviceRowView: View {
             Divider()
             Button(store.t("card.refreshThumbnail")) { store.refreshThumbnail(for: session) }
                 .disabled(!isConnected)
+            Divider()
+            Button(store.t("device.remove"), role: .destructive) {
+                confirmsRemoval = true
+            }
+        }
+        .confirmationDialog(
+            store.t("device.remove.title"),
+            isPresented: $confirmsRemoval,
+            titleVisibility: .visible
+        ) {
+            Button(store.t("device.remove"), role: .destructive) {
+                store.removeDevice(session)
+            }
+            Button(store.t("common.cancel"), role: .cancel) {}
+        } message: {
+            Text(String(format: store.t("device.remove.message"), session.device.name))
         }
     }
 
     private var statusLabel: String {
-        isConnected
+        let state = isConnected
             ? store.mirrorStateLabel(mirrorSession.state)
             : store.connectionStateLabel(session.device.connectionState)
+        let transport = session.transport == .wireless
+            ? store.t("transport.wireless")
+            : store.t("transport.usb")
+        return "\(state) · \(transport)"
     }
 
     private var statusColor: Color {
@@ -111,6 +132,13 @@ struct DeviceDetailView: View {
                     .lineLimit(1)
             }
 
+            StatusPill(
+                title: session.transport == .wireless
+                    ? store.t("transport.wireless")
+                    : store.t("transport.usb"),
+                color: session.transport == .wireless ? Theme.Palette.control : .secondary
+            )
+
             Spacer(minLength: 0)
         }
         .padding(.horizontal, Theme.Spacing.lg)
@@ -133,7 +161,12 @@ struct DeviceDetailView: View {
                     .shadow(color: .black.opacity(0.25), radius: 16, y: 8)
 
                 Group {
-                    if let thumbnail = store.thumbnails[session.id] {
+                    if session.transport == .wireless,
+                       let wirelessFrame = mirrorSession.latestWirelessFrame {
+                        Image(nsImage: wirelessFrame)
+                            .resizable()
+                            .scaledToFill()
+                    } else if let thumbnail = store.thumbnails[session.id] {
                         Image(nsImage: thumbnail)
                             .resizable()
                             .scaledToFill()
@@ -167,7 +200,30 @@ struct DeviceDetailView: View {
         ZStack {
             Color(nsColor: .windowBackgroundColor)
             VStack(spacing: 8) {
-                if store.thumbnailErrors[session.id] != nil {
+                if case let .failed(message) = mirrorSession.state {
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.secondary)
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 220)
+                } else if mirrorSession.state == .starting {
+                    ProgressView().controlSize(.small)
+                    if session.transport == .wireless {
+                        Text(store.t("detail.wirelessStarting"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if session.transport == .wireless && mirrorSession.state == .stopped {
+                    Image(systemName: "play.circle")
+                        .font(.system(size: 26))
+                        .foregroundStyle(.secondary)
+                    Text(store.t("detail.wirelessStopped"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if store.thumbnailErrors[session.id] != nil {
                     Image(systemName: "photo.badge.exclamationmark")
                         .font(.system(size: 26))
                         .foregroundStyle(.secondary)
@@ -194,7 +250,7 @@ struct DeviceDetailView: View {
 
     private func controlGestureLayer(aspectRatio: Double) -> some View {
         ControlGestureOverlay(
-            isEnabled: controlSession.isReady,
+            isEnabled: store.canUseControl && controlSession.isReady,
             aspectRatio: aspectRatio,
             onTap: { point in
                 store.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
@@ -334,6 +390,7 @@ struct DeviceActionBar: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
     @ObservedObject private var controlSession: AppiumControlSession
+    @State private var confirmsRemoval = false
 
     let session: DeviceSession
 
@@ -374,8 +431,8 @@ struct DeviceActionBar: View {
                 )
             }
             .controlSize(.small)
-            .disabled(session.device.udid == nil || !isConnected)
-            .help(store.t("detail.controlHelp"))
+            .disabled(!isConnected || (store.canUseControl && session.device.udid == nil))
+            .help(store.t(store.canUseControl ? "detail.controlHelp" : "detail.controlActivationHelp"))
 
             Button {
                 store.pressBack(for: session)
@@ -384,7 +441,7 @@ struct DeviceActionBar: View {
             }
             .labelStyle(.iconOnly)
             .controlSize(.small)
-            .disabled(!controlSession.isReady)
+            .disabled(!store.canUseControl || !controlSession.isReady)
             .help(store.t("mirror.back"))
 
             Button {
@@ -394,7 +451,7 @@ struct DeviceActionBar: View {
             }
             .labelStyle(.iconOnly)
             .controlSize(.small)
-            .disabled(!controlSession.isReady)
+            .disabled(!store.canUseControl || !controlSession.isReady)
             .help(store.t("mirror.home"))
 
             Button {
@@ -404,7 +461,7 @@ struct DeviceActionBar: View {
             }
             .labelStyle(.iconOnly)
             .controlSize(.small)
-            .disabled(!controlSession.isReady)
+            .disabled(!store.canUseControl || !controlSession.isReady)
             .help(store.t("mirror.appSwitcher"))
 
             Button {
@@ -419,6 +476,29 @@ struct DeviceActionBar: View {
             .controlSize(.small)
             .tint(isLive ? Theme.Palette.danger : Theme.Palette.accent)
             .disabled(!isConnected)
+
+            Menu {
+                Button(store.t("device.remove"), role: .destructive) {
+                    confirmsRemoval = true
+                }
+            } label: {
+                Label(store.t("device.actions"), systemImage: "ellipsis.circle")
+            }
+            .labelStyle(.iconOnly)
+            .controlSize(.small)
+            .help(store.t("device.actions"))
+        }
+        .confirmationDialog(
+            store.t("device.remove.title"),
+            isPresented: $confirmsRemoval,
+            titleVisibility: .visible
+        ) {
+            Button(store.t("device.remove"), role: .destructive) {
+                store.removeDevice(session)
+            }
+            Button(store.t("common.cancel"), role: .cancel) {}
+        } message: {
+            Text(String(format: store.t("device.remove.message"), session.device.name))
         }
     }
 
@@ -430,11 +510,11 @@ struct DeviceActionBar: View {
 
     private var controlButtonTitle: String {
         if controlSession.isReady {
-            store.t("detail.disconnectControl")
+            return store.t("detail.disconnectControl")
         } else if controlSession.isConnecting {
-            store.t("common.cancel")
+            return store.t("common.cancel")
         } else {
-            store.t("detail.installControlAgent")
+            return store.t("detail.installControlAgent")
         }
     }
 
@@ -447,13 +527,16 @@ struct DeviceActionBar: View {
     }
 
     private var controlStatusLabel: String {
+        if !store.canUseControl {
+            return store.t("control.state.activationRequired")
+        }
         switch controlSession.state {
         case .connecting:
-            compactControlStatus(controlSession.statusMessage)
+            return compactControlStatus(controlSession.statusMessage)
         case let .failed(message):
-            localizedControlFailure(message)
+            return localizedControlFailure(message)
         default:
-            store.controlStateLabel(controlSession.state)
+            return store.controlStateLabel(controlSession.state)
         }
     }
 
@@ -488,11 +571,12 @@ struct DeviceActionBar: View {
     }
 
     private var controlColor: Color {
+        if !store.canUseControl { return Theme.Palette.pending }
         switch controlSession.state {
-        case .ready: Theme.Palette.control
-        case .connecting: Theme.Palette.pending
-        case .failed: Theme.Palette.danger
-        case .unavailable: .secondary
+        case .ready: return Theme.Palette.control
+        case .connecting: return Theme.Palette.pending
+        case .failed: return Theme.Palette.danger
+        case .unavailable: return .secondary
         }
     }
 }

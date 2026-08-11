@@ -5,26 +5,79 @@ import Security
 
 enum LicenseState: Equatable, Sendable {
     case checking
-    case trialNotStarted
-    case trial(expiresAt: Date)
-    case expired(expiresAt: Date)
+    case unlicensed
     case licensed(lastValidatedAt: Date?)
     case unavailable(String)
+
+    var isActivated: Bool {
+        if case .licensed = self { return true }
+        return false
+    }
+
+    var capabilities: LicenseCapabilities {
+        isActivated ? .activated : .unactivated
+    }
 
     var showsDashboardActivationEntry: Bool {
         switch self {
         case .checking, .licensed:
             false
-        case .trialNotStarted, .trial, .expired, .unavailable:
+        case .unlicensed, .unavailable:
             true
         }
     }
 }
 
-enum MirrorStartAuthorization: Equatable, Sendable {
-    case allowed
-    case activationRequired
-    case unavailable(String)
+struct LicenseCapabilities: Equatable, Sendable {
+    let maximumSimultaneousDevices: Int?
+    let controlEnabled: Bool
+
+    static let unactivated = LicenseCapabilities(
+        maximumSimultaneousDevices: 1,
+        controlEnabled: false
+    )
+    static let activated = LicenseCapabilities(
+        maximumSimultaneousDevices: nil,
+        controlEnabled: true
+    )
+}
+
+struct MirrorStartPolicyDecision: Equatable, Sendable {
+    let allowedIDs: Set<String>
+    let blockedIDs: Set<String>
+}
+
+enum LicenseCapabilityPolicy {
+    nonisolated static func mirrorStartDecision(
+        capabilities: LicenseCapabilities,
+        activeIDs: Set<String>,
+        requestedIDs: [String],
+        preferredID: String?
+    ) -> MirrorStartPolicyDecision {
+        let requested = requestedIDs.filter { !activeIDs.contains($0) }
+        guard let limit = capabilities.maximumSimultaneousDevices else {
+            return MirrorStartPolicyDecision(
+                allowedIDs: Set(requestedIDs),
+                blockedIDs: []
+            )
+        }
+
+        let remainingSlots = max(limit - activeIDs.count, 0)
+        var ordered = requested
+        if let preferredID,
+           let preferredIndex = ordered.firstIndex(of: preferredID),
+           preferredIndex != ordered.startIndex {
+            ordered.remove(at: preferredIndex)
+            ordered.insert(preferredID, at: ordered.startIndex)
+        }
+        let newlyAllowed = Set(ordered.prefix(remainingSlots))
+        let alreadyActive = Set(requestedIDs).intersection(activeIDs)
+        let allowed = alreadyActive.union(newlyAllowed)
+        return MirrorStartPolicyDecision(
+            allowedIDs: allowed,
+            blockedIDs: Set(requestedIDs).subtracting(allowed)
+        )
+    }
 }
 
 struct LocalLicenseRecord: Codable, Equatable, Sendable {
@@ -122,7 +175,6 @@ enum LicenseServiceError: LocalizedError, Equatable, Sendable {
 /// and a stale receipt is validated in one coalesced background request.
 @MainActor
 final class LicenseManager: ObservableObject {
-    static let trialDuration: TimeInterval = 3 * 24 * 60 * 60
     static let validationInterval: TimeInterval = 24 * 60 * 60
     static let maximumServerClockSkew: TimeInterval = 5 * 60
 
@@ -132,7 +184,6 @@ final class LicenseManager: ObservableObject {
     private let store: any LicenseRecordStoring
     private let remote: any LicenseRemoteServicing
     private let clock: any LicenseClock
-    private let trialDuration: TimeInterval
     private let validationInterval: TimeInterval
 
     private var record: LocalLicenseRecord?
@@ -143,13 +194,11 @@ final class LicenseManager: ObservableObject {
         store: any LicenseRecordStoring,
         remote: any LicenseRemoteServicing,
         clock: any LicenseClock = SystemLicenseClock(),
-        trialDuration: TimeInterval = LicenseManager.trialDuration,
         validationInterval: TimeInterval = LicenseManager.validationInterval
     ) {
         self.store = store
         self.remote = remote
         self.clock = clock
-        self.trialDuration = trialDuration
         self.validationInterval = validationInterval
     }
 
@@ -176,75 +225,11 @@ final class LicenseManager: ObservableObject {
                 record = created
             }
             try invalidateMalformedLocalReceiptIfNeeded()
-            try advanceTrustedTrialTime()
             refreshStateFromLocalRecord()
             didBootstrap = true
             validateInBackgroundIfNeeded()
         } catch {
             didBootstrap = false
-            state = .unavailable(storageMessage(for: error))
-        }
-    }
-
-    /// Checks the local entitlement before a new mirror is opened. A trial is
-    /// not started here: it is committed only after AVFoundation reports that
-    /// the capture session is actually running.
-    func authorizeMirrorStart() async -> MirrorStartAuthorization {
-        await bootstrap()
-        do {
-            try invalidateMalformedLocalReceiptIfNeeded()
-        } catch {
-            return .unavailable(storageMessage(for: error))
-        }
-        guard var record else {
-            return .unavailable(unavailableStateMessage)
-        }
-
-        if let receipt = record.activationReceipt, LicenseReceiptFormat.isValid(receipt) {
-            state = .licensed(lastValidatedAt: record.lastValidatedAt)
-            validateInBackgroundIfNeeded()
-            return .allowed
-        }
-
-        guard let trialStartedAt = record.trialStartedAt else {
-            state = .trialNotStarted
-            return .allowed
-        }
-
-        let wallTime = clock.now
-        let trustedTime = max(wallTime, record.lastTrustedTime ?? trialStartedAt)
-        if record.lastTrustedTime.map({ trustedTime > $0 }) ?? true {
-            record.lastTrustedTime = trustedTime
-            do {
-                try save(record)
-            } catch {
-                return .unavailable(storageMessage(for: error))
-            }
-        }
-
-        let expiresAt = trialStartedAt.addingTimeInterval(trialDuration)
-        if trustedTime >= expiresAt {
-            state = .expired(expiresAt: expiresAt)
-            return .activationRequired
-        }
-
-        state = .trial(expiresAt: expiresAt)
-        return .allowed
-    }
-
-    /// Called from the capture-session success callback. This makes failed
-    /// capture attempts free and starts the 72-hour clock only on real use.
-    func noteMirrorDidStart() {
-        guard var record, record.activationReceipt?.isEmpty != false else { return }
-        guard record.trialStartedAt == nil else { return }
-
-        let now = clock.now
-        record.trialStartedAt = now
-        record.lastTrustedTime = now
-        do {
-            try save(record)
-            state = .trial(expiresAt: now.addingTimeInterval(trialDuration))
-        } catch {
             state = .unavailable(storageMessage(for: error))
         }
     }
@@ -323,16 +308,8 @@ final class LicenseManager: ObservableObject {
         validationTask = nil
     }
 
-    /// Persists the greatest wall-clock value observed while a trial exists.
-    /// Normal AppKit shutdown calls this once; it does not run a polling timer
-    /// and therefore cannot create repeated Keychain interactions.
     func checkpointTrustedTime() {
-        do {
-            try advanceTrustedTrialTime()
-            refreshStateFromLocalRecord()
-        } catch {
-            state = .unavailable(storageMessage(for: error))
-        }
+        refreshStateFromLocalRecord()
     }
 
     static func normalize(code: String) -> String {
@@ -391,25 +368,7 @@ final class LicenseManager: ObservableObject {
             state = .licensed(lastValidatedAt: record.lastValidatedAt)
             return
         }
-        guard let trialStartedAt = record.trialStartedAt else {
-            state = .trialNotStarted
-            return
-        }
-        let trustedTime = max(clock.now, record.lastTrustedTime ?? trialStartedAt)
-        let expiresAt = trialStartedAt.addingTimeInterval(trialDuration)
-        state = trustedTime >= expiresAt ? .expired(expiresAt: expiresAt) : .trial(expiresAt: expiresAt)
-    }
-
-    private func advanceTrustedTrialTime() throws {
-        guard var record,
-              record.activationReceipt?.isEmpty != false,
-              record.trialStartedAt != nil else {
-            return
-        }
-        let trustedTime = max(clock.now, record.lastTrustedTime ?? .distantPast)
-        guard record.lastTrustedTime.map({ trustedTime > $0 }) ?? true else { return }
-        record.lastTrustedTime = trustedTime
-        try save(record)
+        state = .unlicensed
     }
 
     private func invalidateMalformedLocalReceiptIfNeeded() throws {

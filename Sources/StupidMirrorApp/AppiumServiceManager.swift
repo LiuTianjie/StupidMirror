@@ -359,6 +359,9 @@ final class AppiumServiceManager: ObservableObject {
             .merging(launch.environment) { _, new in new }
             .merging([
             "STUPIDMIRROR_SKIP_WDA_ICON_EMBED": "1",
+            // Ask the XCUITest driver to use Apple's public devicectl CLI for
+            // paired Wi-Fi devices when usbmux does not report the UDID.
+            "APPIUM_XCUITEST_PREFER_DEVICECTL": "1",
             ManagedProcessRecord.identityEnvironmentKey: instanceID
         ]) { _, new in new }
 

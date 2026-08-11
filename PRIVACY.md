@@ -12,14 +12,20 @@ The app may process:
 - Optional Appium/WebDriverAgent control events such as taps, swipes, and typed
   text.
 - Local thumbnails used in the dashboard.
-- A random StupidMirror installation identifier, the local trial timestamps, and
-  an activation receipt stored in the macOS Keychain. These values are not an
-  iPhone UDID, Mac serial number, or advertising identifier.
+- A random StupidMirror installation identifier and an activation receipt stored
+  in the macOS Keychain. Upgraded installations may retain unused legacy trial
+  timestamps. These values are not an iPhone UDID, Mac serial number, or
+  advertising identifier.
 
 ## Network Behavior
 
 StupidMirror does not intentionally upload screen frames, thumbnails, device
 metadata, or control events to a remote service.
+
+Wireless mirroring receives screen frames directly from WebDriverAgent on the
+same local network. The preferred stream is hardware-encoded H.264; MJPEG is
+used only as a compatibility fallback. Neither path requires ReplayKit or an
+iPhone companion app.
 
 Optional control support talks to the configured Appium server URL. The default
 is `http://127.0.0.1:4723`.

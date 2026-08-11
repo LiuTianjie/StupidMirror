@@ -54,6 +54,10 @@ struct GalleryView: View {
                 ControlSetupGuideView()
                     .environmentObject(store)
                     .frame(width: 560)
+            case .wirelessAccess:
+                WirelessNetworkAccessView()
+                    .environmentObject(store)
+                    .frame(width: 500)
             }
         }
     }
@@ -116,7 +120,8 @@ struct GalleryView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if store.permissionStatus != .authorized {
+        if store.permissionStatus != .authorized
+            && !store.connectedSessions.contains(where: { $0.transport == .wireless }) {
             PermissionView()
         } else {
             VStack(spacing: 0) {
@@ -178,10 +183,12 @@ struct GalleryView: View {
             Toggle(isOn: $store.autoStartMirrors) {
                 ToolbarIconLabel(
                     title: store.t("toolbar.autoStart"),
-                    systemImage: "bolt.badge.a"
+                    systemImage: "bolt.badge.a",
+                    iconColor: store.autoStartMirrors ? Theme.Palette.accent : .primary,
+                    titleColor: store.autoStartMirrors ? Theme.Palette.accent : .secondary
                 )
             }
-            .toggleStyle(.button)
+            .toggleStyle(ToolbarSelectionToggleStyle(color: Theme.Palette.accent))
             .help(store.t("settings.autoOpen"))
         }
         ToolbarItemGroup(placement: .automatic) {
@@ -227,6 +234,17 @@ struct GalleryView: View {
             .help(store.t("toolbar.refresh"))
 
             Button {
+                store.discoverWirelessDevices()
+            } label: {
+                ToolbarIconLabel(
+                    title: store.t("toolbar.discoverWireless"),
+                    systemImage: "wifi",
+                    iconColor: store.wirelessMirroringEnabled ? Theme.Palette.live : .primary
+                )
+            }
+            .help(store.t("toolbar.discoverWirelessHelp"))
+
+            Button {
                 store.presentMCPSettings()
             } label: {
                 MCPToolbarLabel(manager: store.mcpServer)
@@ -266,9 +284,9 @@ struct GalleryView: View {
 
     private var licenseBadgeColor: Color {
         switch store.licenseManager.state {
-        case .expired, .unavailable:
+        case .unavailable:
             Theme.Palette.danger
-        case .trialNotStarted, .trial:
+        case .unlicensed:
             Theme.Palette.pending
         case .checking, .licensed:
             .secondary
@@ -277,11 +295,45 @@ struct GalleryView: View {
 
     private var licenseBadgeIcon: String {
         switch store.licenseManager.state {
-        case .expired, .unavailable:
+        case .unavailable:
             "lock.fill"
-        case .trialNotStarted, .trial, .checking, .licensed:
+        case .unlicensed, .checking, .licensed:
             "key.fill"
         }
+    }
+}
+
+private struct WirelessNetworkAccessView: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: Theme.Spacing.lg) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(Theme.Palette.pending)
+
+            VStack(spacing: Theme.Spacing.sm) {
+                Text(store.t("wireless.access.title"))
+                    .font(.title3.weight(.semibold))
+                Text(store.t("wireless.access.body"))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            HStack {
+                Button(store.t("common.cancel")) {
+                    dismiss()
+                }
+                Button(store.t("wireless.access.openSettings")) {
+                    store.openLocalNetworkPrivacySettings()
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Palette.accent)
+            }
+        }
+        .padding(28)
     }
 }
 
@@ -348,6 +400,13 @@ struct PermissionView: View {
                     store.recheckCameraPermission()
                 } label: {
                     Label(store.t("permission.recheck"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    store.discoverWirelessDevices()
+                } label: {
+                    Label(store.t("toolbar.discoverWireless"), systemImage: "wifi")
                 }
                 .buttonStyle(.bordered)
             }
@@ -469,14 +528,23 @@ struct EmptyDevicesView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
-            Button {
-                refresh()
-            } label: {
-                Label(store.t("toolbar.refresh"), systemImage: "arrow.clockwise")
+            HStack(spacing: Theme.Spacing.sm) {
+                Button {
+                    refresh()
+                } label: {
+                    Label(store.t("toolbar.refresh"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.Palette.accent)
+
+                Button {
+                    store.discoverWirelessDevices()
+                } label: {
+                    Label(store.t("toolbar.discoverWireless"), systemImage: "wifi")
+                }
+                .buttonStyle(.bordered)
             }
             .controlSize(.large)
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.Palette.accent)
             .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -723,6 +791,7 @@ private struct ToolbarIconLabel: View {
     let title: String
     let systemImage: String
     var iconColor: Color = .primary
+    var titleColor: Color = .secondary
 
     var body: some View {
         VStack(spacing: 1) {
@@ -732,13 +801,37 @@ private struct ToolbarIconLabel: View {
                 .frame(height: 17)
             Text(title)
                 .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(titleColor)
                 .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .frame(minWidth: 48)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ToolbarSelectionToggleStyle: ToggleStyle {
+    let color: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            configuration.isOn.toggle()
+        } label: {
+            configuration.label
+                .padding(.horizontal, 3)
+                .padding(.vertical, 3)
+                .background {
+                    Capsule(style: .continuous)
+                        .fill(configuration.isOn ? color.opacity(0.12) : .clear)
+                }
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(configuration.isOn ? color.opacity(0.24) : .clear, lineWidth: 1)
+                }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -802,6 +895,13 @@ struct SettingsView: View {
 
                     Section(store.t("settings.mirroring")) {
                         Toggle(store.t("settings.autoOpen"), isOn: $store.autoStartMirrors)
+                        Toggle(
+                            store.t("settings.wirelessMirroring"),
+                            isOn: $store.wirelessMirroringEnabled
+                        )
+                        Text(store.t("settings.wirelessMirroringHelp"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Toggle(
                             store.t("settings.audioPlayback"),
                             isOn: Binding(

@@ -403,6 +403,6 @@ final class MCPServerManager: ObservableObject {
     }
 
     nonisolated private static let instructions = """
-    Automate iPhones through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Call connect_control before control tools. Use screenshot or get_ui_tree to inspect state, then use normalized coordinates from 0 to 1. After every action, take another screenshot to verify the result. start_mirror may return activation_required after the trial; all other MCP tools remain available.
+    Automate iPhones through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror one device at a time; control tools require activation. Call connect_control before control tools. Use screenshot or get_ui_tree to inspect state, then use normalized coordinates from 0 to 1. After every action, take another screenshot to verify the result.
     """
 }

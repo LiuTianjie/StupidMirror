@@ -10,28 +10,7 @@ final class LicenseManagerTests: XCTestCase {
     private let receipt1 = "8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1"
     private let receipt2 = "5e7dbd7e-6717-4cde-9db1-c8f910c5108e"
 
-    func testTrialStartsOnlyAfterCaptureActuallyRuns() async throws {
-        let store = MemoryLicenseStore()
-        let clock = TestLicenseClock(now: baseDate)
-        let manager = LicenseManager(store: store, remote: FakeLicenseRemote(), clock: clock)
-
-        let firstDecision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(firstDecision, .allowed)
-        XCTAssertEqual(manager.state, .trialNotStarted)
-        XCTAssertNil(try store.load()?.trialStartedAt)
-
-        manager.noteMirrorDidStart()
-
-        let record = try XCTUnwrap(store.load())
-        XCTAssertEqual(record.trialStartedAt, baseDate)
-        XCTAssertEqual(record.lastTrustedTime, baseDate)
-        XCTAssertEqual(
-            manager.state,
-            .trial(expiresAt: baseDate.addingTimeInterval(LicenseManager.trialDuration))
-        )
-    }
-
-    func testFailedStartDoesNotConsumeTrial() async throws {
+    func testUnactivatedInstallHasOneDeviceAndNoControl() async throws {
         let store = MemoryLicenseStore()
         let manager = LicenseManager(
             store: store,
@@ -39,9 +18,11 @@ final class LicenseManagerTests: XCTestCase {
             clock: TestLicenseClock(now: baseDate)
         )
 
-        let decision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(decision, .allowed)
-        XCTAssertNil(try store.load()?.trialStartedAt)
+        await manager.bootstrap()
+
+        XCTAssertEqual(manager.state, .unlicensed)
+        XCTAssertEqual(manager.state.capabilities.maximumSimultaneousDevices, 1)
+        XCTAssertFalse(manager.state.capabilities.controlEnabled)
     }
 
     func testBootstrapRetriesAfterATemporaryKeychainFailure() async {
@@ -52,48 +33,61 @@ final class LicenseManagerTests: XCTestCase {
             clock: TestLicenseClock(now: baseDate)
         )
 
-        let firstDecision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(firstDecision, .unavailable("temporary Keychain failure"))
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .unavailable("temporary Keychain failure"))
 
-        let secondDecision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(secondDecision, .allowed)
-        XCTAssertEqual(manager.state, .trialNotStarted)
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .unlicensed)
     }
 
-    func testExpiredTrialCannotBeRestoredByRollingClockBack() async throws {
+    func testLegacyTrialTimestampsDoNotRestrictMirroringCapabilities() async throws {
         var record = LocalLicenseRecord(installationID: UUID())
         record.trialStartedAt = baseDate
-        record.lastTrustedTime = baseDate.addingTimeInterval(LicenseManager.trialDuration + 1)
+        record.lastTrustedTime = baseDate.addingTimeInterval(10 * 365 * 24 * 60 * 60)
         let store = MemoryLicenseStore(record: record)
-        let clock = TestLicenseClock(now: baseDate.addingTimeInterval(60))
-        let manager = LicenseManager(store: store, remote: FakeLicenseRemote(), clock: clock)
+        let manager = LicenseManager(store: store, remote: FakeLicenseRemote())
 
-        let decision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(decision, .activationRequired)
-        XCTAssertEqual(
-            manager.state,
-            .expired(expiresAt: baseDate.addingTimeInterval(LicenseManager.trialDuration))
-        )
+        await manager.bootstrap()
+
+        XCTAssertEqual(manager.state, .unlicensed)
+        XCTAssertEqual(manager.state.capabilities, .unactivated)
     }
 
-    func testTrialBoundaryIsExclusive() async {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.trialStartedAt = baseDate
-        record.lastTrustedTime = baseDate
-        let clock = TestLicenseClock(
-            now: baseDate.addingTimeInterval(LicenseManager.trialDuration - 1)
-        )
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(record: record),
-            remote: FakeLicenseRemote(),
-            clock: clock
+    func testUnactivatedMirrorPolicyAllowsOnlyOneRequestedDevice() {
+        let decision = LicenseCapabilityPolicy.mirrorStartDecision(
+            capabilities: .unactivated,
+            activeIDs: [],
+            requestedIDs: ["iphone-a", "iphone-b"],
+            preferredID: "iphone-b"
         )
 
-        let beforeBoundary = await manager.authorizeMirrorStart()
-        XCTAssertEqual(beforeBoundary, .allowed)
-        clock.set(baseDate.addingTimeInterval(LicenseManager.trialDuration))
-        let atBoundary = await manager.authorizeMirrorStart()
-        XCTAssertEqual(atBoundary, .activationRequired)
+        XCTAssertEqual(decision.allowedIDs, ["iphone-b"])
+        XCTAssertEqual(decision.blockedIDs, ["iphone-a"])
+    }
+
+    func testUnactivatedMirrorPolicyBlocksSecondActiveDevice() {
+        let decision = LicenseCapabilityPolicy.mirrorStartDecision(
+            capabilities: .unactivated,
+            activeIDs: ["iphone-a"],
+            requestedIDs: ["iphone-b"],
+            preferredID: "iphone-b"
+        )
+
+        XCTAssertTrue(decision.allowedIDs.isEmpty)
+        XCTAssertEqual(decision.blockedIDs, ["iphone-b"])
+    }
+
+    func testActivatedMirrorPolicyAllowsAllDevicesAndControl() {
+        let decision = LicenseCapabilityPolicy.mirrorStartDecision(
+            capabilities: .activated,
+            activeIDs: ["iphone-a"],
+            requestedIDs: ["iphone-b", "iphone-c"],
+            preferredID: nil
+        )
+
+        XCTAssertEqual(decision.allowedIDs, ["iphone-b", "iphone-c"])
+        XCTAssertTrue(decision.blockedIDs.isEmpty)
+        XCTAssertTrue(LicenseCapabilities.activated.controlEnabled)
     }
 
     func testActivationNormalizesCodeAndPersistsReceipt() async throws {
@@ -113,8 +107,7 @@ final class LicenseManagerTests: XCTestCase {
         XCTAssertEqual(call?.code, "SM1ABCD")
         XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
         XCTAssertEqual(manager.state, .licensed(lastValidatedAt: baseDate))
-        let decision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(decision, .allowed)
+        XCTAssertEqual(manager.state.capabilities, .activated)
     }
 
     func testActivatedReceiptAllowsOfflineStartWhileValidationFails() async {
@@ -128,8 +121,7 @@ final class LicenseManagerTests: XCTestCase {
             clock: TestLicenseClock(now: baseDate)
         )
 
-        let decision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(decision, .allowed)
+        await manager.bootstrap()
         XCTAssertEqual(manager.state, .licensed(lastValidatedAt: nil))
     }
 
@@ -156,7 +148,6 @@ final class LicenseManagerTests: XCTestCase {
     func testInvalidReceiptClearsOfflineEntitlement() async throws {
         var record = LocalLicenseRecord(installationID: UUID())
         record.trialStartedAt = baseDate
-        record.lastTrustedTime = baseDate.addingTimeInterval(LicenseManager.trialDuration + 1)
         record.activationReceipt = receipt1
         let store = MemoryLicenseStore(record: record)
         let remote = FakeLicenseRemote(
@@ -165,21 +156,19 @@ final class LicenseManagerTests: XCTestCase {
         let manager = LicenseManager(
             store: store,
             remote: remote,
-            clock: TestLicenseClock(now: baseDate.addingTimeInterval(LicenseManager.trialDuration + 2))
+            clock: TestLicenseClock(now: baseDate)
         )
 
         await manager.bootstrap()
         await manager.waitForBackgroundValidation()
 
         XCTAssertNil(try store.load()?.activationReceipt)
-        let decision = await manager.authorizeMirrorStart()
-        XCTAssertEqual(decision, .activationRequired)
+        XCTAssertEqual(manager.state, .unlicensed)
     }
 
     func testMalformedLocalReceiptIsInvalidatedBeforeItCanAuthorizeAStart() async throws {
         var record = LocalLicenseRecord(installationID: UUID())
         record.trialStartedAt = baseDate
-        record.lastTrustedTime = baseDate.addingTimeInterval(LicenseManager.trialDuration + 1)
         record.activationReceipt = "forged-or-damaged"
         record.lastValidatedAt = baseDate
         let store = MemoryLicenseStore(record: record)
@@ -187,12 +176,12 @@ final class LicenseManagerTests: XCTestCase {
         let manager = LicenseManager(
             store: store,
             remote: remote,
-            clock: TestLicenseClock(now: baseDate.addingTimeInterval(LicenseManager.trialDuration + 2))
+            clock: TestLicenseClock(now: baseDate)
         )
 
-        let decision = await manager.authorizeMirrorStart()
+        await manager.bootstrap()
 
-        XCTAssertEqual(decision, .activationRequired)
+        XCTAssertEqual(manager.state, .unlicensed)
         XCTAssertNil(try store.load()?.activationReceipt)
         XCTAssertNil(try store.load()?.lastValidatedAt)
         let validationCallCount = await remote.validationCallCount()
@@ -202,7 +191,6 @@ final class LicenseManagerTests: XCTestCase {
     func testFutureValidationTimestampCannotSuppressBackgroundValidation() async throws {
         var record = LocalLicenseRecord(installationID: UUID())
         record.trialStartedAt = baseDate
-        record.lastTrustedTime = baseDate.addingTimeInterval(LicenseManager.trialDuration + 1)
         record.activationReceipt = receipt1
         record.lastValidatedAt = baseDate.addingTimeInterval(365 * 24 * 60 * 60)
         let store = MemoryLicenseStore(record: record)

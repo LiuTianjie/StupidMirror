@@ -24,6 +24,11 @@ enum DeviceTrustState: String, Codable, Sendable {
     case unauthorized
 }
 
+enum DeviceTransport: String, Codable, Sendable {
+    case usb
+    case wireless
+}
+
 struct DeviceIdentity: Identifiable, Hashable, Sendable {
     let id: String
     let udid: String?
@@ -98,18 +103,50 @@ enum ControlConnectionPhase: Equatable, Sendable {
 struct DeviceSession: Identifiable {
     let id: String
     var device: DeviceIdentity
-    let captureDevice: AVCaptureDevice
+    let transport: DeviceTransport
+    let captureDevice: AVCaptureDevice?
+    let wirelessDevice: WirelessDeviceMetadata?
     let mirrorSession: MirrorCaptureSession
     let controlSession: AppiumControlSession
+    let wirelessWDA: WirelessWDAService?
     var mirrorState: MirrorState
+
+    var sourceID: String {
+        switch transport {
+        case .usb:
+            "usb:\(captureDevice?.uniqueID ?? id)"
+        case .wireless:
+            "wireless:\(wirelessDevice?.hostname ?? id)"
+        }
+    }
 
     @MainActor
     init(device: DeviceIdentity, captureDevice: AVCaptureDevice) {
         self.id = device.id
         self.device = device
+        self.transport = .usb
         self.captureDevice = captureDevice
+        self.wirelessDevice = nil
         self.mirrorSession = MirrorCaptureSession(device: captureDevice)
         self.controlSession = AppiumControlSession(device: device)
+        self.wirelessWDA = nil
+        self.mirrorState = .stopped
+    }
+
+    @MainActor
+    init(device: DeviceIdentity, wirelessDevice: WirelessDeviceMetadata) {
+        self.id = device.id
+        self.device = device
+        self.transport = .wireless
+        self.captureDevice = nil
+        self.wirelessDevice = wirelessDevice
+        self.mirrorSession = MirrorCaptureSession(
+            mjpegURL: URL(
+                string: "http://\(WirelessWDAService.lanHostname(from: wirelessDevice.hostname)):9100"
+            )!
+        )
+        self.controlSession = AppiumControlSession(device: device)
+        self.wirelessWDA = WirelessWDAService()
         self.mirrorState = .stopped
     }
 }

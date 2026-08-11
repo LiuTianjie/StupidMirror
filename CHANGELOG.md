@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.8 - 2026-08-11
+
+- Add active wireless discovery after one USB setup, preserve paired devices across cable disconnects, and allow devices to be removed and rediscovered when connected again.
+- Add a full-resolution wireless H.264 path with iPhone-side VideoToolbox encoding, Mac-side VideoToolbox decoding, a 45 FPS target, and automatic MJPEG fallback.
+- Keep wireless mirroring independent from control: starting a mirror no longer prepares control, while explicit control actions still launch the Agent when requested.
+- Limit unactivated installations only to one mirrored device and disabled control; keep wireless mirroring, diagnostics, settings, device removal, and other non-control features available.
+- Improve light-appearance contrast and shorten license validation errors so status messages no longer crowd the layout.
+
 ## 0.2.5 - 2026-08-10
 
 - Replace the translucent Agent loading material with an opaque adaptive surface and dimmed phone backdrop so every loading message stays readable over any mirrored content.

@@ -193,6 +193,33 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertEqual(capabilities["appium:allowProvisioningDeviceRegistration"] as? Bool, true)
     }
 
+    func testWirelessSessionUsesDirectWDAHostWithoutMacPortForwarding() {
+        var configuration = AppiumControlConfiguration()
+        configuration.directDeviceHost = "test-iphone.local"
+        configuration.platformVersion = "26.5"
+        configuration.webDriverAgentURL = "http://test-iphone.local:8100"
+        let isolated = configuration.isolated(forDeviceUDID: "wireless-device")
+        let capabilities = AppiumSessionCapabilities.make(
+            udid: "wireless-device",
+            bundleID: "",
+            configuration: isolated
+        )
+
+        XCTAssertEqual(isolated.wdaLocalPort, 8_100)
+        XCTAssertEqual(isolated.mjpegServerPort, 9_100)
+        XCTAssertEqual(
+            capabilities["appium:wdaBaseUrl"] as? String,
+            "http://test-iphone.local"
+        )
+        XCTAssertEqual(capabilities["appium:platformVersion"] as? String, "26.5")
+        XCTAssertEqual(
+            capabilities["appium:webDriverAgentUrl"] as? String,
+            "http://test-iphone.local:8100"
+        )
+        XCTAssertEqual(capabilities["appium:wdaRemotePort"] as? Int, 8_100)
+        XCTAssertNil(capabilities["appium:mjpegServerPort"])
+    }
+
     func testPreinstalledWDAReuseUsesShortProbeTimeout() {
         let configuration = AppiumControlConfiguration()
         let probe = configuration.preinstalledProbeConfiguration
@@ -231,6 +258,16 @@ final class ControlGestureReducerTests: XCTestCase {
         ))
 
         try Data().write(to: products.appendingPathComponent("WebDriverAgentRunner.xctestrun"))
+        XCTAssertFalse(DeviceGalleryStore.hasCachedWDABuild(
+            udid: udid,
+            derivedDataPath: root.path
+        ))
+
+        let framework = runner
+            .appendingPathComponent("PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework", isDirectory: true)
+        try FileManager.default.createDirectory(at: framework, withIntermediateDirectories: true)
+        try Data("binary application/x-stupidmirror-h264 marker".utf8)
+            .write(to: framework.appendingPathComponent("WebDriverAgentLib"))
         XCTAssertTrue(DeviceGalleryStore.hasCachedWDABuild(
             udid: udid,
             derivedDataPath: root.path

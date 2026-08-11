@@ -44,25 +44,30 @@ struct StandaloneMirrorWindowView: View {
 
             Divider()
 
-            Button(controlSession.isReady ? store.t("mirror.disconnectControl") : store.t("card.installControlAgent")) {
+            Button(controlSession.isReady
+                ? store.t("mirror.disconnectControl")
+                : store.t("card.installControlAgent")) {
                 controlSession.isReady ? store.stopControl(for: session) : store.connectControl(for: session)
             }
-            .disabled(session.device.udid == nil || session.device.connectionState != .connected)
+            .disabled(
+                session.device.connectionState != .connected
+                    || (store.canUseControl && session.device.udid == nil)
+            )
 
             Button(store.t("mirror.home")) {
                 store.pressHome(for: session)
             }
-            .disabled(!controlSession.isReady)
+            .disabled(!store.canUseControl || !controlSession.isReady)
 
             Button(store.t("mirror.appSwitcher")) {
                 store.openAppSwitcher(for: session)
             }
-            .disabled(!controlSession.isReady)
+            .disabled(!store.canUseControl || !controlSession.isReady)
 
             Button(store.t("mirror.pasteClipboard")) {
                 pasteClipboardText()
             }
-            .disabled(!controlSession.isReady)
+            .disabled(!store.canUseControl || !controlSession.isReady)
 
             Divider()
 
@@ -224,7 +229,7 @@ struct StandaloneMirrorWindowView: View {
 
     private var controlGestureLayer: some View {
         ControlGestureOverlay(
-            isEnabled: controlSession.isReady,
+            isEnabled: store.canUseControl && controlSession.isReady,
             aspectRatio: store.displayAspectRatio(for: session),
             onTap: { point in
                 store.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
@@ -241,7 +246,9 @@ struct StandaloneMirrorWindowView: View {
 
     private var keyboardForwardingLayer: some View {
         KeyboardForwardingView(
-            isEnabled: controlSession.isReady && session.device.connectionState == .connected
+            isEnabled: store.canUseControl
+                && controlSession.isReady
+                && session.device.connectionState == .connected
         ) { text in
             store.typeControlText(text, for: session)
         }
@@ -304,17 +311,17 @@ private struct MirrorWindowChromeBar: View {
                     ChromeIconButton(systemName: "chevron.backward", help: store.t("mirror.back")) {
                         store.pressBack(for: session)
                     }
-                    .disabled(!session.controlSession.isReady)
+                    .disabled(!store.canUseControl || !session.controlSession.isReady)
 
                     ChromeIconButton(systemName: "house", help: store.t("mirror.home")) {
                         store.pressHome(for: session)
                     }
-                    .disabled(!session.controlSession.isReady)
+                    .disabled(!store.canUseControl || !session.controlSession.isReady)
 
                     ChromeIconButton(systemName: "rectangle.grid.2x2", help: store.t("mirror.appSwitcher")) {
                         store.openAppSwitcher(for: session)
                     }
-                    .disabled(!session.controlSession.isReady)
+                    .disabled(!store.canUseControl || !session.controlSession.isReady)
                 }
             }
             .padding(.leading, 18)

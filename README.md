@@ -1,10 +1,12 @@
 # StupidMirror
 
-StupidMirror is a native macOS menu bar app for mirroring a USB-connected iPhone.
-It discovers the iPhone screen source exposed by macOS through CoreMediaIO and
-AVFoundation, opens each device in a standalone floating mirror window, and can
-optionally forward basic touch and keyboard actions through a Mac-managed
-Appium/WebDriverAgent control agent.
+StupidMirror is a native macOS menu bar app for mirroring an iPhone over USB or,
+after one USB setup, the same local network. USB video uses the iPhone screen
+source exposed by macOS through CoreMediaIO and AVFoundation. Wireless video
+reuses an Xcode-signed WebDriverAgent build: VideoToolbox encodes its
+full-resolution screen frames as H.264 on the iPhone, and the Mac decodes them
+with VideoToolbox. MJPEG remains available as an automatic compatibility
+fallback.
 
 > This project is experimental. It depends on private-feeling system behavior:
 > macOS exposes the iPhone screen as an AVFoundation capture source, which means
@@ -13,14 +15,19 @@ Appium/WebDriverAgent control agent.
 ## Features
 
 - USB iPhone screen source discovery through CoreMediaIO/AVFoundation.
+- Optional wireless discovery through Apple's `devicectl`, with no custom or
+  private device transport implementation.
+- High-quality wireless H.264 mirroring over the local network, without a
+  ReplayKit Broadcast Extension or companion iPhone app.
 - Menu bar dashboard with device list, thumbnails, diagnostics, and settings.
 - Standalone mirror windows with device-ratio sizing.
 - Chinese and English UI copy.
 - Optional Appium/XCUITest control support for tap, swipe, text input, clipboard
   paste, Home, and app switcher actions.
 - Bundled Mac-side Appium runtime for packaged release builds.
-- Three-day trial and one-time activation through a private Supabase license
-  service; the purchase QR area is currently an explicit placeholder.
+- Free one-device mirroring with one-time activation for simultaneous
+  multi-device mirroring and iPhone control. Activation uses a private Supabase
+  license service; the purchase QR area is currently an explicit placeholder.
 - Local probes for AVFoundation discovery, frame capture, device discovery, and
   WebDriverAgent readiness.
 
@@ -28,7 +35,7 @@ Appium/WebDriverAgent control agent.
 
 - macOS 15 or newer.
 - Xcode or the Swift toolchain with Swift 6 support.
-- A USB-connected iPhone that trusts this Mac.
+- An iPhone that trusts this Mac. USB is required for initial wireless setup.
 - Camera permission for the packaged app or the terminal process running
   `swift run`.
 - Optional Microphone permission if iPhone audio should play through the Mac.
@@ -119,6 +126,13 @@ Camera access is required because macOS exposes USB iPhone screen sources
 through AVFoundation camera capture APIs. Microphone access is optional and is
 used only for the iPhone audio track. If Microphone access is declined, video
 mirroring remains available and new mirror sessions do not attach audio.
+
+Wireless mode does not require Camera permission. Enable it under Settings,
+then keep the Mac and iPhone on the same local network. The first setup for each
+iPhone must be completed over USB: connect control once so Xcode can sign,
+install, and cache WebDriverAgent. Later wireless sessions wake the Xcode-paired
+device with `devicectl`, start the cached XCUITest runner, and read WDA over the
+iPhone's normal Bonjour address. Wireless audio is not currently available.
 
 If permission is denied:
 

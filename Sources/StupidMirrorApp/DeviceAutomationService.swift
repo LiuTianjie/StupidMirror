@@ -9,7 +9,6 @@ enum DeviceAutomationError: LocalizedError, Sendable {
     case controlNotReady
     case controlFailed(String)
     case activationRequired
-    case licenseUnavailable(String)
     case mirrorFailed(String)
     case invalidArgument(String)
     case timedOut(String)
@@ -24,7 +23,6 @@ enum DeviceAutomationError: LocalizedError, Sendable {
         case .controlNotReady: "control_not_ready"
         case .controlFailed: "control_failed"
         case .activationRequired: "activation_required"
-        case .licenseUnavailable: "license_unavailable"
         case .mirrorFailed: "mirror_failed"
         case .invalidArgument: "invalid_argument"
         case .timedOut: "timed_out"
@@ -40,15 +38,15 @@ enum DeviceAutomationError: LocalizedError, Sendable {
         case .deviceUnavailable:
             "The selected iPhone is unavailable or reconnecting."
         case .permissionRequired:
-            "Camera permission is required to discover iPhone mirror sources."
+            "Camera permission is required for USB mirroring. Enable wireless mode to discover Xcode-paired devices without it."
         case .appiumUnavailable:
             "The local Appium service could not start."
         case .controlNotReady:
             "iPhone control is not ready. Call connect_control first."
-        case let .controlFailed(message), let .licenseUnavailable(message), let .mirrorFailed(message), let .timedOut(message):
+        case let .controlFailed(message), let .mirrorFailed(message), let .timedOut(message):
             message
         case .activationRequired:
-            "The mirror trial has expired. Activate StupidMirror before starting a mirror."
+            "Activation is required for iPhone control or for using more than one device at the same time."
         case let .invalidArgument(message):
             message
         }
@@ -420,6 +418,9 @@ final class DeviceAutomationService: @unchecked Sendable {
     }
 
     private func readyControlSession(deviceID: String?) throws -> DeviceSession {
+        guard store.canUseControl else {
+            throw DeviceAutomationError.activationRequired
+        }
         let session = try selectSession(deviceID: deviceID)
         guard session.controlSession.isReady else { throw DeviceAutomationError.controlNotReady }
         return session

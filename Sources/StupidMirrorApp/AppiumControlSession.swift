@@ -19,6 +19,9 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 15
     var newCommandTimeoutSeconds: Int = 300
     var allowProvisioningDeviceRegistration: Bool = true
+    var directDeviceHost: String = ""
+    var platformVersion: String = ""
+    var webDriverAgentURL: String = ""
 
     var installationWDABundleID: String {
         let configured = wdaBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -65,8 +68,15 @@ struct AppiumControlConfiguration: Hashable, Sendable {
         let hash = StableDeviceHash.fnv1a64(normalizedUDID)
         let slot = Int(hash % 20_000)
         var result = self
-        result.wdaLocalPort = 10_000 + slot
-        result.mjpegServerPort = 30_000 + slot
+        if directDeviceHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            result.wdaLocalPort = 10_000 + slot
+            result.mjpegServerPort = 30_000 + slot
+        } else {
+            // Direct Wi-Fi connections are isolated by device hostname, so all
+            // devices can use WDA's standard remote ports without Mac-side forwarding.
+            result.wdaLocalPort = 8_100
+            result.mjpegServerPort = 9_100
+        }
 
         let basePath = derivedDataPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let baseURL: URL
@@ -1121,7 +1131,6 @@ enum AppiumSessionCapabilities {
             "appium:udid": udid,
             "appium:noReset": true,
             "appium:wdaLocalPort": configuration.wdaLocalPort,
-            "appium:mjpegServerPort": configuration.mjpegServerPort,
             "appium:useNewWDA": configuration.useNewWDA,
             "appium:wdaStartupRetries": configuration.wdaStartupRetries,
             "appium:wdaStartupRetryInterval": configuration.wdaStartupRetryIntervalMS,
@@ -1130,6 +1139,22 @@ enum AppiumSessionCapabilities {
             "appium:newCommandTimeout": configuration.newCommandTimeoutSeconds,
             "appium:allowProvisioningDeviceRegistration": configuration.allowProvisioningDeviceRegistration
         ]
+        let platformVersion = configuration.platformVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !platformVersion.isEmpty {
+            capabilities["appium:platformVersion"] = platformVersion
+        }
+        let webDriverAgentURL = configuration.webDriverAgentURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !webDriverAgentURL.isEmpty {
+            capabilities["appium:webDriverAgentUrl"] = webDriverAgentURL
+        }
+        let directDeviceHost = configuration.directDeviceHost
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if directDeviceHost.isEmpty {
+            capabilities["appium:mjpegServerPort"] = configuration.mjpegServerPort
+        } else {
+            capabilities["appium:wdaBaseUrl"] = "http://\(directDeviceHost)"
+            capabilities["appium:wdaRemotePort"] = configuration.wdaLocalPort
+        }
         let launchBundleID = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         if !launchBundleID.isEmpty {
             capabilities["appium:bundleId"] = launchBundleID

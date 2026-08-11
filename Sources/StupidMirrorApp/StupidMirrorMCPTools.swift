@@ -7,7 +7,7 @@ enum StupidMirrorMCPToolCatalog {
         tool("refresh_devices", "Refresh iPhone discovery and return the updated device list."),
         tool("get_device_status", "Get detailed state for one iPhone.", deviceProperties, readOnly: true),
         tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, WDA, and device diagnostics.", readOnly: true),
-        tool("start_mirror", "Open and start the iPhone mirror. Existing trial and activation rules apply.", deviceProperties),
+        tool("start_mirror", "Open and start the iPhone mirror. Unactivated installations can mirror one device at a time.", deviceProperties),
         tool("stop_mirror", "Stop and close the iPhone mirror.", deviceProperties, idempotent: true),
         tool(
             "set_mirror_floating",
@@ -16,7 +16,7 @@ enum StupidMirrorMCPToolCatalog {
             required: ["floating"],
             idempotent: true
         ),
-        tool("connect_control", "Start or reuse Appium and WDA, then wait until iPhone control is ready.", deviceProperties),
+        tool("connect_control", "Activated feature: start or reuse Appium and WDA, then wait until iPhone control is ready.", deviceProperties),
         tool("disconnect_control", "Delete the iPhone control session.", deviceProperties, idempotent: true),
         tool("screenshot", "Capture the current iPhone screen as a native PNG. Control must be ready.", deviceProperties, readOnly: true),
         tool("get_ui_tree", "Read the current iPhone accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),

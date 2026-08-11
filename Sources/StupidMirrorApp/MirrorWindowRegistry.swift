@@ -38,8 +38,8 @@ final class MirrorWindowRegistry {
 
     private init() {}
 
-    /// Opens a mirror after `DeviceGalleryStore` has granted the license gate.
-    /// Callers must never use this as an alternative start path.
+    /// Opens a mirror after `DeviceGalleryStore` has applied the simultaneous
+    /// device policy. Callers must never use this as an alternative start path.
     func openAuthorized(session: DeviceSession, store: DeviceGalleryStore) {
         if let window = windows[session.id] {
             startCapture(session: session, store: store)
@@ -86,9 +86,7 @@ final class MirrorWindowRegistry {
     }
 
     private func startCapture(session: DeviceSession, store: DeviceGalleryStore) {
-        session.mirrorSession.start { [weak licenseManager = store.licenseManager] in
-            licenseManager?.noteMirrorDidStart()
-        }
+        session.mirrorSession.start()
     }
 
     func close(session: DeviceSession) {

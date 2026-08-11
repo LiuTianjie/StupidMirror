@@ -9,6 +9,7 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     case settings
     case activation
     case controlSetup
+    case wirelessAccess
 
     var id: String { rawValue }
 
@@ -41,6 +42,15 @@ final class DeviceGalleryStore: ObservableObject {
     @Published var appiumService = AppiumServiceManager()
     @Published var autoStartMirrors = UserDefaults.standard.bool(forKey: DeviceGalleryStore.autoStartMirrorsDefaultsKey) {
         didSet { UserDefaults.standard.set(autoStartMirrors, forKey: Self.autoStartMirrorsDefaultsKey) }
+    }
+    @Published var wirelessMirroringEnabled = DeviceGalleryStore.boolDefault(
+        DeviceGalleryStore.wirelessMirroringEnabledDefaultsKey,
+        env: "STUPIDMIRROR_WIRELESS_MIRRORING"
+    ) {
+        didSet {
+            UserDefaults.standard.set(wirelessMirroringEnabled, forKey: Self.wirelessMirroringEnabledDefaultsKey)
+            refresh()
+        }
     }
     @Published var audioPlaybackEnabled = UserDefaults.standard.bool(forKey: DeviceGalleryStore.audioPlaybackEnabledDefaultsKey) {
         didSet {
@@ -102,17 +112,18 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private var observers: [NSObjectProtocol] = []
+    private var cancellables = Set<AnyCancellable>()
     private var refreshTimer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var refreshGeneration: UInt64 = 0
     private var shutdownTask: Task<Void, Never>?
     private var refreshRequestedWhileRunning = false
     private var thumbnailCaptures: [String: ThumbnailCapture] = [:]
+    private var wirelessThumbnailTasks: [String: Task<Void, Never>] = [:]
+    private var wirelessTransportTasks: [String: Task<Void, Never>] = [:]
+    private var removedDeviceIDs = Set<String>()
     private var desiredMirrorIDs = Set<String>()
-    private var pendingAuthorizationMirrorIDs = Set<String>()
     private var pendingActivationMirrorIDs = Set<String>()
-    private var startAuthorizationTask: Task<Void, Never>?
-    private var startAuthorizationGeneration: UInt64 = 0
     private var disconnectedSince: [String: Date] = [:]
     private var lastConnectedCount = 0
     private var lastReconnectingCount = 0
@@ -124,6 +135,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     private static let languageDefaultsKey = "StupidMirror.language"
     private static let autoStartMirrorsDefaultsKey = "StupidMirror.autoStartMirrors"
+    private static let wirelessMirroringEnabledDefaultsKey = "StupidMirror.wirelessMirroringEnabled"
     private static let audioPlaybackEnabledDefaultsKey = "StupidMirror.audioPlaybackEnabled"
     private static let appiumServerURLDefaultsKey = "StupidMirror.appiumServerURL"
     private static let controlBundleIDDefaultsKey = "StupidMirror.controlBundleID"
@@ -142,6 +154,13 @@ final class DeviceGalleryStore: ObservableObject {
             return value
         }
         return fallback
+    }
+
+    private static func boolDefault(_ key: String, env: String) -> Bool {
+        if let value = ProcessInfo.processInfo.environment[env]?.lowercased() {
+            return ["1", "true", "yes", "on"].contains(value)
+        }
+        return UserDefaults.standard.bool(forKey: key)
     }
 
     nonisolated static func latestValueByID<Value>(_ values: [Value], id: (Value) -> String) -> [String: Value] {
@@ -164,7 +183,16 @@ final class DeviceGalleryStore: ObservableObject {
         [
             DiagnosticItem(name: t("diagnostic.camera"), value: authorizationLabel(permissionStatus)),
             DiagnosticItem(name: t("diagnostic.microphone"), value: authorizationLabel(microphonePermissionStatus)),
-            DiagnosticItem(name: t("diagnostic.backend"), value: "CoreMediaIO + AVFoundation"),
+            DiagnosticItem(
+                name: t("diagnostic.backend"),
+                value: wirelessMirroringEnabled
+                    ? "USB: AVFoundation / Wireless: WDA H.264 (MJPEG fallback)"
+                    : "CoreMediaIO + AVFoundation"
+            ),
+            DiagnosticItem(
+                name: t("settings.wirelessMirroring"),
+                value: wirelessMirroringEnabled ? t("common.on") : t("common.off")
+            ),
             DiagnosticItem(name: t("diagnostic.detected"), value: "\(connectedSessions.count)"),
             DiagnosticItem(name: t("diagnostic.reconnecting"), value: "\(reconnectingSessions.count)"),
             DiagnosticItem(name: t("diagnostic.autoStart"), value: autoStartMirrors ? t("common.on") : t("common.off")),
@@ -191,6 +219,10 @@ final class DeviceGalleryStore: ObservableObject {
         sessions.filter { $0.device.connectionState == .disconnected }
     }
 
+    var canUseControl: Bool {
+        licenseManager.state.capabilities.controlEnabled
+    }
+
     private var deviceControlDiagnosticLabel: String {
         if sessions.contains(where: { $0.controlSession.isReady }) {
             return t("control.state.ready")
@@ -212,12 +244,26 @@ final class DeviceGalleryStore: ObservableObject {
         language = Self.initialLanguage
         let status = AVFoundationMirrorBackend.allowScreenCaptureDevices()
         statusMessage = "CoreMediaIO screen capture devices enabled: \(status)"
+        self.licenseManager.$state
+            .dropFirst()
+            .sink { [weak self] state in
+                guard let self else { return }
+                self.enforceSimultaneousDeviceLimit(state.capabilities)
+                if !state.capabilities.controlEnabled {
+                    for session in self.sessions {
+                        session.controlSession.stop(serverURL: self.appiumServerURL)
+                    }
+                }
+                self.refresh()
+            }
+            .store(in: &cancellables)
         installDeviceObservers()
         startPeriodicRefresh()
         refreshIfCameraAuthorized()
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.licenseManager.bootstrap()
+            self.refresh()
             await self.mcpServer.startIfEnabled()
         }
     }
@@ -225,17 +271,32 @@ final class DeviceGalleryStore: ObservableObject {
     func refreshIfCameraAuthorized() {
         permissionStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
         microphonePermissionStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
-        guard permissionStatus == .authorized else {
+        if permissionStatus != .authorized && !wirelessMirroringEnabled {
             statusMessage = t("status.permissionRequired")
-            return
         }
         refresh()
+    }
+
+    func discoverWirelessDevices() {
+        statusMessage = t("status.discoveringWireless")
+        if wirelessMirroringEnabled {
+            refresh()
+        } else {
+            wirelessMirroringEnabled = true
+        }
     }
 
     func openCameraPrivacySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") else {
             return
         }
+        NSWorkspace.shared.open(url)
+    }
+
+    func openLocalNetworkPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+        ) else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -292,32 +353,32 @@ final class DeviceGalleryStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = nil
         refreshRequestedWhileRunning = false
-        desiredMirrorIDs.removeAll()
-        pendingAuthorizationMirrorIDs.removeAll()
-        pendingActivationMirrorIDs.removeAll()
-        startAuthorizationTask?.cancel()
-        startAuthorizationTask = nil
-        startAuthorizationGeneration &+= 1
+        let usbIDs = Set(sessions.filter { $0.transport == .usb }.map(\.id))
+        desiredMirrorIDs.subtract(usbIDs)
+        pendingActivationMirrorIDs.subtract(usbIDs)
         dismissActivationSheetIfPresented()
-        MirrorWindowRegistry.shared.closeAll(sessions: sessions)
-        for session in sessions {
+        let usbSessions = sessions.filter { $0.transport == .usb }
+        MirrorWindowRegistry.shared.closeAll(sessions: usbSessions)
+        for session in usbSessions {
             session.mirrorSession.dispose()
+            session.wirelessWDA?.stop()
             session.controlSession.stop(serverURL: appiumServerURL)
         }
         for capture in thumbnailCaptures.values {
             capture.cancel()
         }
         thumbnailCaptures.removeAll()
-        thumbnails.removeAll()
-        thumbnailAspectRatios.removeAll()
-        thumbnailErrors.removeAll()
-        disconnectedSince.removeAll()
-        floatingMirrorIDs.removeAll()
-        sessions.removeAll()
-        selectedSessionID = nil
-        lastConnectedCount = 0
-        lastReconnectingCount = 0
-        statusMessage = t("status.permissionRequired")
+        for id in usbIDs {
+            clearThumbnail(for: id)
+            disconnectedSince[id] = nil
+            floatingMirrorIDs.remove(id)
+        }
+        sessions.removeAll { $0.transport == .usb }
+        if selectedSessionID.map(usbIDs.contains) == true {
+            selectedSessionID = sessions.first?.id
+        }
+        statusMessage = wirelessMirroringEnabled ? localizedStatusMessage : t("status.permissionRequired")
+        refresh()
     }
 
     private func updateMicrophonePermissionStatus(_ status: AVAuthorizationStatus) {
@@ -343,7 +404,7 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func refresh() {
-        guard permissionStatus == .authorized, !isShuttingDown else { return }
+        guard !isShuttingDown else { return }
         guard refreshTask == nil else {
             refreshRequestedWhileRunning = true
             return
@@ -351,26 +412,33 @@ final class DeviceGalleryStore: ObservableObject {
 
         refreshGeneration &+= 1
         let generation = refreshGeneration
+        let canDiscoverUSB = permissionStatus == .authorized
+        let discoverWireless = wirelessMirroringEnabled
         refreshTask = Task { [weak self] in
-            let metadata = await Task.detached(priority: .utility) {
-                DeviceMetadataService.connectedDevices()
+            async let metadataTask = Task.detached(priority: .utility) {
+                canDiscoverUSB ? DeviceMetadataService.connectedDevices() : []
             }.value
+            async let wirelessTask = Task.detached(priority: .utility) {
+                discoverWireless ? CoreDeviceDiscoveryService.wirelessDevices() : []
+            }.value
+            let metadata = await metadataTask
+            let wirelessDevices = await wirelessTask
             guard let self else { return }
             guard self.refreshGeneration == generation else { return }
-            guard !Task.isCancelled, self.permissionStatus == .authorized, !self.isShuttingDown else {
+            guard !Task.isCancelled, !self.isShuttingDown else {
                 self.finishRefresh(generation: generation)
                 return
             }
 
-            let devices = AVFoundationMirrorBackend.discoverMuxedDevices()
+            let devices = canDiscoverUSB ? AVFoundationMirrorBackend.discoverMuxedDevices() : []
             guard self.refreshGeneration == generation, !Task.isCancelled else { return }
-            self.applyRefresh(devices: devices, metadata: metadata)
+            self.applyRefresh(devices: devices, metadata: metadata, wirelessDevices: wirelessDevices)
             self.finishRefresh(generation: generation)
         }
     }
 
     func refreshForAutomation() async throws {
-        guard permissionStatus == .authorized else {
+        guard permissionStatus == .authorized || wirelessMirroringEnabled else {
             throw DeviceAutomationError.permissionRequired
         }
         refresh()
@@ -392,11 +460,16 @@ final class DeviceGalleryStore: ObservableObject {
         refresh()
     }
 
-    private func applyRefresh(devices: [AVCaptureDevice], metadata: [DeviceMetadata]) {
+    private func applyRefresh(
+        devices: [AVCaptureDevice],
+        metadata: [DeviceMetadata],
+        wirelessDevices: [WirelessDeviceMetadata]
+    ) {
         let existingByID = Self.latestValueByID(sessions) { $0.id }
         var nextSessions: [DeviceSession] = []
         var connectedIDs = Set<String>()
         var autoStartIDs = Set<String>()
+        var resumeAuthorizedIDs = Set<String>()
         let now = Date()
 
         for captureDevice in devices {
@@ -406,10 +479,12 @@ final class DeviceGalleryStore: ObservableObject {
                 candidates: metadata
             )
             let identity = AVFoundationMirrorBackend.identity(for: captureDevice, metadata: match)
+            guard !isRemovedDevice(identity.id) else { continue }
             guard connectedIDs.insert(identity.id).inserted else { continue }
 
             if let existing = existingByID[identity.id],
-               existing.captureDevice.uniqueID == captureDevice.uniqueID,
+               existing.transport == .usb,
+               existing.captureDevice?.uniqueID == captureDevice.uniqueID,
                existing.device.connectionState == .connected {
                 disconnectedSince[identity.id] = nil
                 var updatedSession = existing
@@ -418,14 +493,69 @@ final class DeviceGalleryStore: ObservableObject {
             } else {
                 let existing = existingByID[identity.id]
                 let wasReconnecting = existing?.device.connectionState == .disconnected
-                existing?.mirrorSession.stop()
-                existing?.controlSession.stop(serverURL: appiumServerURL)
+                if let existing {
+                    MirrorWindowRegistry.shared.close(session: existing)
+                    existing.mirrorSession.dispose()
+                    wirelessTransportTasks[existing.id]?.cancel()
+                    wirelessTransportTasks[existing.id] = nil
+                    existing.wirelessWDA?.stop()
+                    existing.controlSession.stop(serverURL: appiumServerURL)
+                    if desiredMirrorIDs.contains(identity.id) {
+                        resumeAuthorizedIDs.insert(identity.id)
+                    }
+                }
                 disconnectedSince[identity.id] = nil
                 let session = DeviceSession(device: identity, captureDevice: captureDevice)
                 session.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
                     playbackEnabled: audioPlaybackEnabled,
                     authorizationStatus: microphonePermissionStatus
                 ))
+                nextSessions.append(session)
+                if autoStartMirrors && !wasReconnecting {
+                    autoStartIDs.insert(session.id)
+                }
+            }
+        }
+
+        // A USB screen source always wins for quality and latency. Only create
+        // a wireless session when the same UDID was not discovered by AVFoundation.
+        for wirelessDevice in wirelessDevices where !connectedIDs.contains(wirelessDevice.udid) {
+            guard !isRemovedDevice(wirelessDevice.udid) else { continue }
+            let identity = DeviceIdentity(
+                id: wirelessDevice.udid,
+                udid: wirelessDevice.udid,
+                name: wirelessDevice.name,
+                productType: wirelessDevice.productType,
+                osVersion: wirelessDevice.osVersion,
+                connectionState: .connected,
+                trustState: .trusted
+            )
+            guard connectedIDs.insert(identity.id).inserted else { continue }
+
+            if let existing = existingByID[identity.id],
+               existing.transport == .wireless,
+               existing.wirelessDevice?.hostname == wirelessDevice.hostname,
+               existing.device.connectionState == .connected {
+                disconnectedSince[identity.id] = nil
+                var updatedSession = existing
+                updatedSession.device = identity
+                nextSessions.append(updatedSession)
+            } else {
+                let existing = existingByID[identity.id]
+                let wasReconnecting = existing?.device.connectionState == .disconnected
+                if let existing {
+                    MirrorWindowRegistry.shared.close(session: existing)
+                    existing.mirrorSession.dispose()
+                    wirelessTransportTasks[existing.id]?.cancel()
+                    wirelessTransportTasks[existing.id] = nil
+                    existing.wirelessWDA?.stop()
+                    existing.controlSession.stop(serverURL: appiumServerURL)
+                    if desiredMirrorIDs.contains(identity.id) {
+                        resumeAuthorizedIDs.insert(identity.id)
+                    }
+                }
+                disconnectedSince[identity.id] = nil
+                let session = DeviceSession(device: identity, wirelessDevice: wirelessDevice)
                 nextSessions.append(session)
                 if autoStartMirrors && !wasReconnecting {
                     autoStartIDs.insert(session.id)
@@ -441,6 +571,9 @@ final class DeviceGalleryStore: ObservableObject {
                 desiredMirrorIDs.remove(staleSession.id)
                 MirrorWindowRegistry.shared.close(session: staleSession)
                 staleSession.mirrorSession.dispose()
+                wirelessTransportTasks[staleSession.id]?.cancel()
+                wirelessTransportTasks[staleSession.id] = nil
+                staleSession.wirelessWDA?.stop()
                 staleSession.controlSession.stop(serverURL: appiumServerURL)
                 clearThumbnail(for: staleSession.id)
                 disconnectedSince[staleSession.id] = disconnectedSince[staleSession.id] ?? now
@@ -475,7 +608,11 @@ final class DeviceGalleryStore: ObservableObject {
         }
 
         sessions = nextSessions.sorted { $0.device.name.localizedStandardCompare($1.device.name) == .orderedAscending }
-        requestMirrorStarts(autoStartIDs)
+        requestMirrorStarts(autoStartIDs, presentActivationWhenBlocked: false)
+        for session in sessions where resumeAuthorizedIDs.contains(session.id) {
+            prepareWirelessTransportIfNeeded(for: session)
+            MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+        }
         if let selectedSessionID, !sessions.contains(where: { $0.id == selectedSessionID }) {
             self.selectedSessionID = sessions.first?.id
         } else if selectedSessionID == nil {
@@ -502,27 +639,45 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func retire(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
-        pendingAuthorizationMirrorIDs.remove(session.id)
         pendingActivationMirrorIDs.remove(session.id)
         floatingMirrorIDs.remove(session.id)
         thumbnailCaptures[session.id]?.cancel()
         thumbnailCaptures[session.id] = nil
+        wirelessThumbnailTasks[session.id]?.cancel()
+        wirelessThumbnailTasks[session.id] = nil
+        wirelessTransportTasks[session.id]?.cancel()
+        wirelessTransportTasks[session.id] = nil
         clearThumbnail(for: session.id)
         disconnectedSince[session.id] = nil
         MirrorWindowRegistry.shared.close(session: session)
         session.mirrorSession.dispose()
+        session.wirelessWDA?.stop()
         session.controlSession.stop(serverURL: appiumServerURL)
     }
 
+    func removeDevice(_ session: DeviceSession) {
+        guard sessions.contains(where: { $0.id == session.id }) else { return }
+        removedDeviceIDs.insert(session.id)
+        retire(session)
+        sessions.removeAll { $0.id == session.id }
+        if selectedSessionID == session.id {
+            selectedSessionID = sessions.first?.id
+        }
+        statusMessage = String(format: t("status.deviceRemoved"), session.device.name)
+    }
+
+    private func isRemovedDevice(_ id: String) -> Bool {
+        removedDeviceIDs.contains(id)
+    }
+
     func start(_ session: DeviceSession) {
-        guard permissionStatus == .authorized,
-              session.device.connectionState == .connected else { return }
+        guard session.device.connectionState == .connected,
+              session.transport == .wireless || permissionStatus == .authorized else { return }
         select(session)
         requestMirrorStarts([session.id])
     }
 
     func startAll() {
-        guard permissionStatus == .authorized else { return }
         requestMirrorStarts(Set(connectedSessions.map(\.id)))
     }
 
@@ -579,21 +734,22 @@ final class DeviceGalleryStore: ObservableObject {
 
     func stop(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
-        pendingAuthorizationMirrorIDs.remove(session.id)
         pendingActivationMirrorIDs.remove(session.id)
+        wirelessTransportTasks[session.id]?.cancel()
+        wirelessTransportTasks[session.id] = nil
+        session.wirelessWDA?.stop()
         MirrorWindowRegistry.shared.close(session: session)
     }
 
     func stopAll() {
         desiredMirrorIDs.removeAll()
-        pendingAuthorizationMirrorIDs.removeAll()
         pendingActivationMirrorIDs.removeAll()
-        startAuthorizationTask?.cancel()
-        startAuthorizationTask = nil
-        startAuthorizationGeneration &+= 1
         dismissActivationSheetIfPresented()
         MirrorWindowRegistry.shared.closeAll(sessions: sessions)
         for session in sessions {
+            wirelessTransportTasks[session.id]?.cancel()
+            wirelessTransportTasks[session.id] = nil
+            session.wirelessWDA?.stop()
             session.controlSession.stop(serverURL: appiumServerURL)
         }
     }
@@ -622,10 +778,6 @@ final class DeviceGalleryStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = nil
         refreshRequestedWhileRunning = false
-        startAuthorizationTask?.cancel()
-        startAuthorizationTask = nil
-        startAuthorizationGeneration &+= 1
-        pendingAuthorizationMirrorIDs.removeAll()
         pendingActivationMirrorIDs.removeAll()
         setActiveSheet(nil)
         licenseManager.checkpointTrustedTime()
@@ -643,6 +795,14 @@ final class DeviceGalleryStore: ObservableObject {
             capture.cancel()
         }
         thumbnailCaptures.removeAll()
+        for task in wirelessThumbnailTasks.values {
+            task.cancel()
+        }
+        wirelessThumbnailTasks.removeAll()
+        for task in wirelessTransportTasks.values {
+            task.cancel()
+        }
+        wirelessTransportTasks.removeAll()
         thumbnails.removeAll()
         thumbnailAspectRatios.removeAll()
         thumbnailErrors.removeAll()
@@ -651,6 +811,7 @@ final class DeviceGalleryStore: ObservableObject {
         let serverURL = appiumServerURL
         for session in activeSessions {
             session.mirrorSession.dispose()
+            session.wirelessWDA?.stop()
         }
         for session in activeSessions {
             await session.controlSession.shutdown(serverURL: serverURL)
@@ -663,46 +824,143 @@ final class DeviceGalleryStore: ObservableObject {
         selectedSessionID = nil
     }
 
-    private func requestMirrorStarts(_ sessionIDs: Set<String>) {
-        guard !isShuttingDown, permissionStatus == .authorized, !sessionIDs.isEmpty else { return }
+    @discardableResult
+    private func requestMirrorStarts(
+        _ sessionIDs: Set<String>,
+        presentActivationWhenBlocked: Bool = true
+    ) -> MirrorStartPolicyDecision {
+        guard !isShuttingDown, !sessionIDs.isEmpty else {
+            return MirrorStartPolicyDecision(allowedIDs: [], blockedIDs: [])
+        }
 
-        let connectedIDs = Set(connectedSessions.map(\.id))
-        pendingAuthorizationMirrorIDs.formUnion(sessionIDs.intersection(connectedIDs))
-        guard !pendingAuthorizationMirrorIDs.isEmpty, startAuthorizationTask == nil else { return }
-
-        startAuthorizationGeneration &+= 1
-        let generation = startAuthorizationGeneration
-        startAuthorizationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let authorization = await self.licenseManager.authorizeMirrorStart()
-            guard generation == self.startAuthorizationGeneration else { return }
-            guard !Task.isCancelled, !self.isShuttingDown else {
-                self.startAuthorizationTask = nil
-                return
+        let requestedIDs = connectedSessions
+            .filter { sessionIDs.contains($0.id) }
+            .map(\.id)
+        let activeIDs = Set(sessions.compactMap { session -> String? in
+            if desiredMirrorIDs.contains(session.id) { return session.id }
+            switch session.mirrorSession.state {
+            case .starting, .running: return session.id
+            case .stopped, .failed: return nil
             }
+        })
+        let decision = LicenseCapabilityPolicy.mirrorStartDecision(
+            capabilities: licenseManager.state.capabilities,
+            activeIDs: activeIDs,
+            requestedIDs: requestedIDs,
+            preferredID: selectedSessionID
+        )
+        performAuthorizedStarts(decision.allowedIDs)
+        if !decision.blockedIDs.isEmpty {
+            pendingActivationMirrorIDs.formUnion(decision.blockedIDs)
+            statusMessage = t("status.activationDeviceLimit")
+            if presentActivationWhenBlocked {
+                showActivation(for: decision.blockedIDs)
+            }
+        }
+        return decision
+    }
 
-            let requestedIDs = self.pendingAuthorizationMirrorIDs
-            self.pendingAuthorizationMirrorIDs.removeAll()
-            self.startAuthorizationTask = nil
+    private func performAuthorizedStarts(_ sessionIDs: Set<String>) {
+        guard !isShuttingDown else { return }
+        for session in sessions where sessionIDs.contains(session.id)
+            && session.device.connectionState == .connected {
+            guard session.transport == .wireless || permissionStatus == .authorized else { continue }
+            desiredMirrorIDs.insert(session.id)
+            prepareWirelessTransportIfNeeded(for: session)
+            MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+        }
+    }
 
-            switch authorization {
-            case .allowed:
-                self.performAuthorizedStarts(requestedIDs)
-            case .activationRequired:
-                self.showActivation(for: requestedIDs)
-            case let .unavailable(message):
-                self.statusMessage = message
+    private func enforceSimultaneousDeviceLimit(_ capabilities: LicenseCapabilities) {
+        guard let limit = capabilities.maximumSimultaneousDevices else { return }
+        let activeSessions = sessions.filter { session in
+            if desiredMirrorIDs.contains(session.id) { return true }
+            switch session.mirrorSession.state {
+            case .starting, .running: return true
+            case .stopped, .failed: return false
+            }
+        }
+        guard activeSessions.count > limit else { return }
+
+        let preferred = activeSessions.first { $0.id == selectedSessionID }
+            ?? activeSessions.first
+        let retainedIDs = Set([preferred].compactMap { $0?.id }.prefix(limit))
+        for session in activeSessions where !retainedIDs.contains(session.id) {
+            desiredMirrorIDs.remove(session.id)
+            pendingActivationMirrorIDs.insert(session.id)
+            MirrorWindowRegistry.shared.close(session: session)
+        }
+        statusMessage = t("status.activationDeviceLimit")
+    }
+
+    private func prepareWirelessTransportIfNeeded(for session: DeviceSession) {
+        guard session.transport == .wireless,
+              wirelessTransportTasks[session.id] == nil,
+              let wirelessDevice = session.wirelessDevice,
+              let wirelessWDA = session.wirelessWDA else { return }
+
+        let sessionID = session.id
+        let mirrorSession = session.mirrorSession
+        wirelessTransportTasks[sessionID] = Task { @MainActor [weak self, weak wirelessWDA, weak mirrorSession] in
+            await Task.yield()
+            guard let self, let wirelessWDA, let mirrorSession, !self.isShuttingDown else { return }
+            defer { self.wirelessTransportTasks[sessionID] = nil }
+
+            await self.detectSigningTeams()
+            guard !Task.isCancelled, !self.isShuttingDown else { return }
+            do {
+                _ = try await wirelessWDA.ensureRunning(
+                    device: wirelessDevice,
+                    configuration: self.controlConfiguration(for: session),
+                    progress: { [weak self] progress in
+                        await MainActor.run {
+                            guard let self else { return }
+                            switch progress {
+                            case .launching:
+                                self.statusMessage = self.t("status.wirelessLaunching")
+                            case .waitingForUnlock:
+                                self.statusMessage = self.t("status.wirelessUnlockRequired")
+                            case .waitingForLocalNetwork:
+                                self.statusMessage = self.t("status.wirelessLocalNetworkWaiting")
+                            }
+                        }
+                    }
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                let localizedMessage = self.wirelessWDAErrorMessage(error)
+                mirrorSession.failWirelessStart(localizedMessage)
+                if error as? WirelessWDAError == .localNetworkDenied {
+                    self.statusMessage = self.t("status.wirelessLocalNetworkDenied")
+                    self.setActiveSheet(.wirelessAccess)
+                } else if error as? WirelessWDAError == .deviceLocked {
+                    self.statusMessage = self.t("status.wirelessUnlockRequired")
+                } else if error as? WirelessWDAError == .deviceUnavailable {
+                    self.statusMessage = self.t("status.wirelessUnavailable")
+                } else {
+                    self.statusMessage = localizedMessage
+                }
             }
         }
     }
 
-    private func performAuthorizedStarts(_ sessionIDs: Set<String>) {
-        guard permissionStatus == .authorized, !isShuttingDown else { return }
-        for session in sessions where sessionIDs.contains(session.id)
-            && session.device.connectionState == .connected {
-            desiredMirrorIDs.insert(session.id)
-            MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+    private func wirelessWDAErrorMessage(_ error: Error) -> String {
+        guard let wirelessError = error as? WirelessWDAError else {
+            return error.localizedDescription
         }
+        let key = switch wirelessError {
+        case .missingSigningTeam: "wireless.error.missingSigningTeam"
+        case .missingRuntime: "wireless.error.missingRuntime"
+        case .firstUSBSetupRequired: "wireless.error.firstUSBSetupRequired"
+        case .buildFailed: "wireless.error.buildFailed"
+        case .launchFailed: "wireless.error.launchFailed"
+        case .localNetworkDenied: "wireless.error.localNetworkDenied"
+        case .deviceLocked: "wireless.error.deviceLocked"
+        case .deviceUnavailable: "wireless.error.deviceUnavailable"
+        case .timedOut: "wireless.error.timedOut"
+        }
+        return t(key)
     }
 
     private func showActivation(for sessionIDs: Set<String>) {
@@ -732,7 +990,10 @@ final class DeviceGalleryStore: ObservableObject {
         floatingMirrorIDs.contains(session.id)
     }
 
-    func prepareControl(for session: DeviceSession) {
+    func prepareControl(
+        for session: DeviceSession,
+        configuration: AppiumControlConfiguration? = nil
+    ) {
         guard !isShuttingDown,
               session.device.connectionState == .connected,
               session.device.udid?.isEmpty == false,
@@ -744,7 +1005,7 @@ final class DeviceGalleryStore: ObservableObject {
         session.controlSession.prepare(
             serverURL: appiumServerURL,
             bundleID: controlBundleID,
-            configuration: controlConfiguration(for: session)
+            configuration: configuration ?? controlConfiguration(for: session)
         ) { [weak self] message in
             guard let self, !self.isShuttingDown else { return }
             self.statusMessage = self.t(message)
@@ -755,6 +1016,11 @@ final class DeviceGalleryStore: ObservableObject {
     func connectControl(for session: DeviceSession) {
         guard !isShuttingDown,
               session.device.connectionState == .connected else { return }
+        guard canUseControl else {
+            statusMessage = t("status.activationControlRequired")
+            showActivation(for: [])
+            return
+        }
         guard session.device.udid?.isEmpty == false else {
             statusMessage = t("status.controlNoUDID")
             presentControlSetup(for: session)
@@ -780,7 +1046,15 @@ final class DeviceGalleryStore: ObservableObject {
                 guard session.controlSession.isConnecting else { return }
                 await detectSigningTeams()
                 guard session.controlSession.isConnecting else { return }
-                prepareControl(for: session)
+                do {
+                    let configuration = try await preparedControlConfiguration(for: session)
+                    guard session.controlSession.isConnecting else { return }
+                    prepareControl(for: session, configuration: configuration)
+                } catch {
+                    session.controlSession.failPreparation(error.localizedDescription)
+                    statusMessage = error.localizedDescription
+                    presentControlSetup(for: session)
+                }
             } else {
                 statusMessage = t("status.controlAppiumUnavailable")
                 session.controlSession.failPreparation("control.error.appiumUnavailable")
@@ -790,6 +1064,10 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func connectControlForAutomation(for session: DeviceSession) async throws {
+        guard canUseControl else {
+            showActivation(for: [])
+            throw DeviceAutomationError.activationRequired
+        }
         guard !isShuttingDown, session.device.connectionState == .connected else {
             throw DeviceAutomationError.deviceUnavailable
         }
@@ -815,7 +1093,9 @@ final class DeviceGalleryStore: ObservableObject {
         }
         await detectSigningTeams()
         guard session.controlSession.isConnecting else { throw CancellationError() }
-        prepareControl(for: session)
+        let configuration = try await preparedControlConfiguration(for: session)
+        guard session.controlSession.isConnecting else { throw CancellationError() }
+        prepareControl(for: session, configuration: configuration)
 
         let deadline = ContinuousClock.now + .seconds(240)
         while !session.controlSession.isReady {
@@ -836,17 +1116,14 @@ final class DeviceGalleryStore: ObservableObject {
         }
         if session.mirrorSession.state == .running { return }
 
-        switch await licenseManager.authorizeMirrorStart() {
-        case .allowed:
-            performAuthorizedStarts([session.id])
-        case .activationRequired:
-            showActivation(for: [session.id])
+        let decision = requestMirrorStarts([session.id])
+        if decision.blockedIDs.contains(session.id) {
             throw DeviceAutomationError.activationRequired
-        case let .unavailable(message):
-            throw DeviceAutomationError.licenseUnavailable(message)
         }
 
-        let deadline = ContinuousClock.now + .seconds(20)
+        let deadline = ContinuousClock.now + .seconds(
+            session.transport == .wireless ? 120 : 20
+        )
         while session.mirrorSession.state != .running {
             if case let .failed(message) = session.mirrorSession.state {
                 throw DeviceAutomationError.mirrorFailed(message)
@@ -903,8 +1180,30 @@ final class DeviceGalleryStore: ObservableObject {
             preferInstalledWDA: !hasCachedBuild,
             usePrebuiltWDA: hasCachedBuild,
             useNewWDA: false,
-            derivedDataPath: wdaDerivedDataPath
+            derivedDataPath: wdaDerivedDataPath,
+            directDeviceHost: session.wirelessDevice.map {
+                WirelessWDAService.lanHostname(from: $0.hostname)
+            } ?? "",
+            platformVersion: session.wirelessDevice?.osVersion ?? ""
         )
+    }
+
+    private func preparedControlConfiguration(
+        for session: DeviceSession
+    ) async throws -> AppiumControlConfiguration {
+        var configuration = controlConfiguration(for: session)
+        guard let wirelessDevice = session.wirelessDevice,
+              let wirelessWDA = session.wirelessWDA else {
+            return configuration
+        }
+        let url = try await wirelessWDA.ensureRunning(
+            device: wirelessDevice,
+            configuration: configuration
+        )
+        configuration.webDriverAgentURL = url.absoluteString
+        configuration.preferInstalledWDA = false
+        configuration.usePrebuiltWDA = false
+        return configuration
     }
 
     private func hasCachedWDABuild(for udid: String?) -> Bool {
@@ -922,6 +1221,13 @@ final class DeviceGalleryStore: ObservableObject {
             .appendingPathComponent("Debug-iphoneos", isDirectory: true)
             .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
         guard FileManager.default.fileExists(atPath: runner.path) else { return false }
+        let h264ServerBinary = runner
+            .appendingPathComponent("PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework")
+            .appendingPathComponent("WebDriverAgentLib")
+        guard let binaryData = try? Data(contentsOf: h264ServerBinary, options: .mappedIfSafe),
+              binaryData.range(of: Data("application/x-stupidmirror-h264".utf8)) != nil else {
+            return false
+        }
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: products,
             includingPropertiesForKeys: nil
@@ -998,6 +1304,11 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func performControlAction(_ action: @escaping @MainActor () async throws -> Void) {
+        guard canUseControl else {
+            statusMessage = t("status.activationControlRequired")
+            showActivation(for: [])
+            return
+        }
         Task { @MainActor [weak self] in
             do {
                 try await action()
@@ -1047,6 +1358,9 @@ final class DeviceGalleryStore: ObservableObject {
                 queue: .main
             ) { [weak self] _ in
                 Task { @MainActor in
+                    // “Remove Device” only hides the current attachment. A new
+                    // physical connection is an explicit request to show it again.
+                    self?.removedDeviceIDs.removeAll()
                     self?.statusMessage = self?.t("status.deviceConnectedRefreshing") ?? ""
                     self?.refresh()
                 }
@@ -1073,7 +1387,6 @@ final class DeviceGalleryStore: ObservableObject {
                 guard let self else { return }
                 self.updateCameraPermissionStatus(AVFoundationMirrorBackend.videoAuthorizationStatus())
                 self.updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
-                guard self.permissionStatus == .authorized else { return }
                 self.refresh()
             }
         }
@@ -1169,7 +1482,12 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func captureThumbnail(for session: DeviceSession) {
+        if session.transport == .wireless {
+            captureWirelessThumbnail(for: session)
+            return
+        }
         guard thumbnailCaptures[session.id] == nil else { return }
+        guard let captureDevice = session.captureDevice else { return }
 
         let capture = ThumbnailCapture { [weak self] result in
             guard let self else { return }
@@ -1191,11 +1509,49 @@ final class DeviceGalleryStore: ObservableObject {
         thumbnailCaptures[session.id] = capture
 
         do {
-            try capture.start(device: session.captureDevice)
+            try capture.start(device: captureDevice)
         } catch {
             thumbnailCaptures[session.id] = nil
             thumbnailErrors[session.id] = error.localizedDescription
         }
+    }
+
+    private func captureWirelessThumbnail(for session: DeviceSession) {
+        guard session.controlSession.isReady,
+              wirelessThumbnailTasks[session.id] == nil else { return }
+        let sessionID = session.id
+        let serverURL = appiumServerURL
+        wirelessThumbnailTasks[sessionID] = Task { @MainActor [weak self, weak controlSession = session.controlSession] in
+            defer { self?.wirelessThumbnailTasks[sessionID] = nil }
+            guard let self, let controlSession else { return }
+            do {
+                let data = try await controlSession.screenshot(serverURL: serverURL)
+                try Task.checkCancellation()
+                guard let image = NSImage(data: data) else {
+                    throw WirelessThumbnailError.invalidImage
+                }
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                    self.thumbnails[sessionID] = image
+                    self.thumbnailAspectRatios[sessionID] = max(
+                        Double(image.size.width / max(image.size.height, 1)),
+                        0.1
+                    )
+                    self.thumbnailErrors[sessionID] = nil
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self.thumbnailErrors[sessionID] = error.localizedDescription
+            }
+        }
+    }
+}
+
+private enum WirelessThumbnailError: LocalizedError {
+    case invalidImage
+
+    var errorDescription: String? {
+        "The wireless iPhone screenshot could not be decoded."
     }
 }
 

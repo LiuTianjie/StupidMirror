@@ -1,14 +1,26 @@
 # Licensing
 
-StupidMirror includes a three-day trial. The clock starts only after the first
-mirror capture actually reaches the running state. Once the trial expires, a
-new mirror start opens the activation sheet; an already-running mirror is not
-interrupted.
+StupidMirror can be used without activation indefinitely. An unactivated
+installation can mirror one iPhone at a time over USB or Wi-Fi. Audio,
+thumbnails, floating windows, diagnostics, settings, device removal, and
+non-control MCP operations remain available.
+
+Activation unlocks two capabilities:
+
+- Mirroring multiple iPhones at the same time.
+- Controlling iPhones from the Mac, including control MCP tools.
+
+If a second mirror is requested before activation, the existing mirror keeps
+running and the activation sheet explains the device limit. The WDA agent may
+still be prepared on an unactivated installation because wireless video uses
+its H.264 stream (with MJPEG fallback), but taps, swipes, typing, buttons, app
+actions, screenshots, and UI-tree access remain blocked until activation.
 
 ## Architecture
 
-- The app stores a random installation ID, trial timestamps, and an activation
-  receipt in macOS Keychain.
+- The app stores a random installation ID and an activation receipt in macOS
+  Keychain. Older records can contain legacy trial timestamps; current builds
+  ignore them and never restrict one-device mirroring by time.
 - The installation ID is scoped to the current Mac user; no Mac serial number,
   hardware UUID, or iPhone identifier is used for licensing. Removing only the
   app bundle normally leaves the Keychain record intact, so an official
@@ -63,8 +75,8 @@ customer's original code with the local-only administrator tool:
 Reset requires confirmation, preserves the old activation as revoked history,
 and makes the original code available for one new installation. Only the
 locally computed code hash is sent to Supabase. The old installation will lose
-its entitlement when it next validates online; an already-running mirror is
-not interrupted.
+its activated capabilities when it next validates online. It keeps one mirror
+running, closes any additional mirror windows, and disables control.
 
 Do not commit the generator, its Keychain token, pending journals, or generated
 text files to this repository.

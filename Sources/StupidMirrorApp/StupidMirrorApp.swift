@@ -59,6 +59,10 @@ struct MenuBarContentView: View {
             store.refresh()
         }
 
+        Button(store.t("toolbar.discoverWireless")) {
+            store.discoverWirelessDevices()
+        }
+
         Divider()
 
         Text("\(store.t("menu.devices")) (\(store.sessions.count))")

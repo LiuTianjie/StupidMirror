@@ -152,8 +152,7 @@ struct LicenseActivationView: View {
     private var statusIcon: String {
         switch licenseManager.state {
         case .licensed: "checkmark.seal.fill"
-        case .trial, .trialNotStarted: "clock.fill"
-        case .expired: "lock.fill"
+        case .unlicensed: "lock.open.fill"
         case .checking: "arrow.triangle.2.circlepath"
         case .unavailable: "exclamationmark.triangle.fill"
         }
@@ -162,8 +161,8 @@ struct LicenseActivationView: View {
     private var statusColor: Color {
         switch licenseManager.state {
         case .licensed: Theme.Palette.live
-        case .trial, .trialNotStarted: Theme.Palette.pending
-        case .expired, .unavailable: Theme.Palette.danger
+        case .unlicensed: Theme.Palette.pending
+        case .unavailable: Theme.Palette.danger
         case .checking: .secondary
         }
     }
@@ -172,12 +171,8 @@ struct LicenseActivationView: View {
         switch licenseManager.state {
         case .checking:
             store.t("license.status.checking")
-        case .trialNotStarted:
-            store.t("license.status.trialNotStarted")
-        case .trial:
-            store.t("license.status.trial")
-        case .expired:
-            store.t("license.status.expired")
+        case .unlicensed:
+            store.t("license.status.unlicensed")
         case .licensed:
             store.t("license.status.licensed")
         case .unavailable:
@@ -187,14 +182,14 @@ struct LicenseActivationView: View {
 
     private var statusDetail: String? {
         switch licenseManager.state {
-        case let .trial(expiresAt), let .expired(expiresAt):
-            return String(format: store.t("license.status.expires"), expiresAt.formatted(date: .abbreviated, time: .shortened))
-        case let .unavailable(message):
-            return message
-        case .trialNotStarted:
-            return store.t("license.status.trialStartsOnMirror")
-        case .licensed, .checking:
-            return nil
+        case .unavailable:
+            return store.t("license.error.storage")
+        case .unlicensed:
+            return store.t("license.capabilities.unactivated")
+        case .licensed:
+            return store.t("license.capabilities.activated")
+        case .checking:
+            return store.t("license.capabilities.checking")
         }
     }
 }
@@ -207,15 +202,14 @@ struct LicenseSettingsSection: View {
         Section(store.t("license.section")) {
             HStack {
                 Label(statusTitle, systemImage: statusIcon)
-                Spacer()
-                if case let .trial(expiresAt) = licenseManager.state {
-                    Text(expiresAt, style: .relative)
-                        .foregroundStyle(.secondary)
-                }
             }
 
-            if case let .unavailable(message) = licenseManager.state {
-                Text(message)
+            Text(capabilitySummary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if case .unavailable = licenseManager.state {
+                Text(store.t("license.error.storage"))
                     .font(.caption)
                     .foregroundStyle(Theme.Palette.danger)
             }
@@ -231,9 +225,7 @@ struct LicenseSettingsSection: View {
     private var statusTitle: String {
         switch licenseManager.state {
         case .checking: store.t("license.status.checking")
-        case .trialNotStarted: store.t("license.status.trialNotStarted")
-        case .trial: store.t("license.status.trial")
-        case .expired: store.t("license.status.expired")
+        case .unlicensed: store.t("license.status.unlicensed")
         case .licensed: store.t("license.status.licensed")
         case .unavailable: store.t("license.status.unavailable")
         }
@@ -242,10 +234,15 @@ struct LicenseSettingsSection: View {
     private var statusIcon: String {
         switch licenseManager.state {
         case .licensed: "checkmark.seal.fill"
-        case .trial, .trialNotStarted: "clock"
-        case .expired: "lock.fill"
+        case .unlicensed: "lock.open.fill"
         case .checking: "arrow.triangle.2.circlepath"
         case .unavailable: "exclamationmark.triangle.fill"
         }
+    }
+
+    private var capabilitySummary: String {
+        licenseManager.state.isActivated
+            ? store.t("license.capabilities.activated")
+            : store.t("license.capabilities.unactivated")
     }
 }
