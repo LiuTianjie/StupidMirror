@@ -682,12 +682,15 @@ final class DeviceGalleryStore: ObservableObject {
             guard connectedIDs.insert(identity.id).inserted else { continue }
 
             if let existing = existingByID[identity.id],
-               existing.transport == .wireless,
-               existing.wirelessDevice == wirelessDevice,
-               existing.device.connectionState == identity.connectionState {
+               Self.canReuseWirelessSession(existing, for: wirelessDevice) {
                 disconnectedSince[identity.id] = nil
                 var updatedSession = existing
                 updatedSession.device = identity
+                // CoreDevice tunnel addresses and hostname ordering can change
+                // between periodic discoveries. They are endpoint updates for
+                // the same UDID, not a new mirror/control session. Replacing the
+                // session here stops WDA and tears down a healthy SRT stream.
+                updatedSession.wirelessDevice = wirelessDevice
                 nextSessions.append(updatedSession)
             } else {
                 let existing = existingByID[identity.id]
@@ -821,6 +824,13 @@ final class DeviceGalleryStore: ObservableObject {
         thumbnails[sessionID] = nil
         thumbnailAspectRatios[sessionID] = nil
         thumbnailErrors[sessionID] = nil
+    }
+
+    static func canReuseWirelessSession(
+        _ existing: DeviceSession,
+        for discovered: WirelessDeviceMetadata
+    ) -> Bool {
+        existing.transport == .wireless && existing.device.udid == discovered.udid
     }
 
     private func retire(_ session: DeviceSession) {
@@ -1488,10 +1498,20 @@ final class DeviceGalleryStore: ObservableObject {
               let wirelessWDA = session.wirelessWDA else {
             return configuration
         }
-        let endpoint = try await wirelessWDA.ensureRunning(
-            device: wirelessDevice,
-            configuration: configuration
-        )
+        // A running wireless mirror is direct evidence that this WDA instance
+        // and endpoint are alive. Reuse that exact data plane for Appium
+        // control; probing and falling through to install can replace the
+        // runner that is currently producing the mirror stream.
+        let endpoint: WirelessWDAEndpoint
+        if session.mirrorSession.state == .running,
+           let activeEndpoint = wirelessWDA.activeEndpoint {
+            endpoint = activeEndpoint
+        } else {
+            endpoint = try await wirelessWDA.ensureRunning(
+                device: wirelessDevice,
+                configuration: configuration
+            )
+        }
         configuration.webDriverAgentURL = endpoint.controlURL.absoluteString
         configuration.preferInstalledWDA = false
         configuration.usePrebuiltWDA = false

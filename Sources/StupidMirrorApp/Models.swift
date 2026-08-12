@@ -145,7 +145,7 @@ struct DeviceSession: Identifiable {
     var device: DeviceIdentity
     let transport: DeviceTransport
     let captureDevice: AVCaptureDevice?
-    let wirelessDevice: WirelessDeviceMetadata?
+    var wirelessDevice: WirelessDeviceMetadata?
     let androidDevice: AndroidDeviceMetadata?
     let mirrorSession: MirrorCaptureSession
     let controlSession: AppiumControlSession

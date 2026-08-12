@@ -183,6 +183,49 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertEqual(device.endpointURLs(port: 9200).first?.absoluteString, "http://198.18.0.1:9200")
     }
 
+    @MainActor
+    func testWirelessSessionCanAcceptDynamicEndpointRefreshWithoutReplacingOwners() {
+        let original = WirelessDeviceMetadata(
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            hostname: "device.coredevice.local",
+            tunnelIPAddress: "fd00::1",
+            tunnelState: "connected"
+        )
+        let refreshed = WirelessDeviceMetadata(
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            hostname: "device.coredevice.local",
+            tunnelIPAddress: "fd00::2",
+            tunnelState: "connected"
+        )
+        let identity = DeviceIdentity(
+            id: "device",
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            connectionState: .connected,
+            trustState: .trusted
+        )
+        var session = DeviceSession(device: identity, wirelessDevice: original)
+        let mirrorOwner = session.mirrorSession
+        let controlOwner = session.controlSession
+        let wdaOwner = session.wirelessWDA
+
+        XCTAssertTrue(DeviceGalleryStore.canReuseWirelessSession(session, for: refreshed))
+        session.wirelessDevice = refreshed
+
+        XCTAssertTrue(session.mirrorSession === mirrorOwner)
+        XCTAssertTrue(session.controlSession === controlOwner)
+        XCTAssertTrue(session.wirelessWDA === wdaOwner)
+        XCTAssertEqual(session.wirelessDevice?.tunnelIPAddress, "fd00::2")
+    }
+
     func testWirelessWDAKeepsAppleCoreDeviceHostnameForControlDiscovery() {
         XCTAssertEqual(
             WirelessWDAService.lanHostname(from: "Test-iPhone.coredevice.local"),

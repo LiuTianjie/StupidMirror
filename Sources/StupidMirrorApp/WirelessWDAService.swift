@@ -81,6 +81,11 @@ final class WirelessWDAService: @unchecked Sendable {
 
     private let lock = NSLock()
     private var remoteProcess: RemoteProcess?
+    private var cachedEndpoint: WirelessWDAEndpoint?
+
+    var activeEndpoint: WirelessWDAEndpoint? {
+        lock.withLock { cachedEndpoint }
+    }
 
     deinit { stop() }
 
@@ -159,6 +164,7 @@ final class WirelessWDAService: @unchecked Sendable {
         }
         await progress(.checkingExistingAgent)
         if let endpoint = await Self.firstReadyEndpoint(baseURLs) {
+            remember(endpoint)
             await progress(.connectingVideo)
             return endpoint
         }
@@ -168,6 +174,7 @@ final class WirelessWDAService: @unchecked Sendable {
             try Self.wakeDevice(udid: device.udid)
         }.value
         if let endpoint = await Self.firstReadyEndpoint(baseURLs) {
+            remember(endpoint)
             await progress(.connectingVideo)
             return endpoint
         }
@@ -185,6 +192,7 @@ final class WirelessWDAService: @unchecked Sendable {
             lock.withLock { remoteProcess = installedProcess }
             await progress(.waitingForAgent)
             if let endpoint = await Self.waitUntilReady(baseURLs, timeout: .seconds(15)) {
+                remember(endpoint)
                 await progress(.connectingVideo)
                 return endpoint
             }
@@ -217,6 +225,7 @@ final class WirelessWDAService: @unchecked Sendable {
         await progress(.waitingForAgent)
 
         if let endpoint = await Self.waitUntilReady(baseURLs, timeout: .seconds(20)) {
+            remember(endpoint)
             await progress(.connectingVideo)
             return endpoint
         }
@@ -226,12 +235,17 @@ final class WirelessWDAService: @unchecked Sendable {
     func stop() {
         let running = lock.withLock { () -> RemoteProcess? in
             defer { remoteProcess = nil }
+            cachedEndpoint = nil
             return remoteProcess
         }
         guard let running else { return }
         DispatchQueue.global(qos: .utility).async {
             try? Self.terminate(running)
         }
+    }
+
+    private func remember(_ endpoint: WirelessWDAEndpoint) {
+        lock.withLock { cachedEndpoint = endpoint }
     }
 
     static func lanHostname(from coreDeviceHostname: String) -> String {
