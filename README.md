@@ -7,6 +7,10 @@ reuses an Xcode-signed WebDriverAgent build: VideoToolbox encodes its
 full-resolution screen frames as H.264 on the iPhone, SRT transports complete
 access units over the LAN, and the Mac decodes them with VideoToolbox.
 
+[Product website](https://liutianjie.github.io/StupidMirror/) ·
+[Download StupidMirror v0.2.11](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.11/StupidMirror-v0.2.11-macos.zip) ·
+[Commercial licensing](COMMERCIAL-LICENSE.md)
+
 > This project is experimental. It depends on private-feeling system behavior:
 > macOS exposes the iPhone screen as an AVFoundation capture source, which means
 > the app needs Camera permission even though it is not trying to use a webcam.
@@ -285,4 +289,11 @@ input. See [PRIVACY.md](PRIVACY.md) for details.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+StupidMirror is source-available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE). Personal study, research,
+experimentation, hobby projects, and other noncommercial uses are permitted
+under those terms. Commercial use requires separate written authorization from
+the project owner; see [Commercial licensing](COMMERCIAL-LICENSE.md).
+
+This is not an MIT or OSI-approved open-source license. Third-party components
+remain subject to their own licenses as described in [NOTICE](NOTICE).

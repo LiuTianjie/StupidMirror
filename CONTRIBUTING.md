@@ -50,6 +50,13 @@ make release-local BUMP=patch
 
 See [RELEASING.md](RELEASING.md) for notarization setup and release options.
 
+## Contribution License
+
+By submitting a contribution, you agree that it may be distributed under the
+[PolyForm Noncommercial License 1.0.0](LICENSE) and included in commercial
+licenses offered by the StupidMirror project owner. Do not submit code you do
+not have the right to license on both of those terms.
+
 ## Device and Permission Notes
 
 The app needs Camera permission because USB iPhone screen sources are exposed

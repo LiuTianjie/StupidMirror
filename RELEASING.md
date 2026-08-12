@@ -3,12 +3,10 @@
 StupidMirror releases are built locally on macOS. GitHub Actions only runs CI;
 it does not hold signing certificates or Apple credentials.
 
-The source repository may remain private. That does not prevent GitHub Actions
-from running CI, but every signed distribution build is still created,
-notarized, and uploaded from the release Mac. A Release in a private repository
-is downloadable only by GitHub users who have read access. If customer downloads
-must be public later, publish the notarized zip to a separate binary-only public
-repository or download host; do not make the source repository public.
+The source repository is published under the PolyForm Noncommercial License.
+Every signed distribution build is created, notarized, and uploaded from the
+release Mac. Personal and other noncommercial use is licensed by `LICENSE`;
+commercial distribution or use requires a separate written commercial license.
 
 ## One-Time Setup
 

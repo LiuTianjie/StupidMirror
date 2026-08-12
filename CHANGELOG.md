@@ -8,6 +8,7 @@
 - Add verified native `clear_text` and `replace_text` actions for the active iOS input without invoking selection menus or guessing delete coordinates.
 - Add non-destructive clickable-element and selected-element overlays so every visible target can be reviewed on the Mac before an action is sent.
 - Publish a responsive GitHub Pages product site with direct access to the notarized macOS release.
+- Replace the MIT license with PolyForm Noncommercial 1.0.0 so personal and noncommercial use remains free while commercial use requires separate written authorization.
 
 ## 0.2.9 - 2026-08-11
 
