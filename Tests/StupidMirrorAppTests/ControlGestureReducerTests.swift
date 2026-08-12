@@ -3,6 +3,25 @@ import CoreGraphics
 import XCTest
 
 final class ControlGestureReducerTests: XCTestCase {
+    func testInteractiveControlBufferStaysBoundedAndCoalescesLaggingGestures() {
+        var buffer = ControlActionBuffer()
+        for index in 0..<20 {
+            buffer.append(.typeText(String(index)))
+        }
+        XCTAssertEqual(buffer.count, 4)
+
+        buffer.removeAll()
+        buffer.append(.tap(CGPoint(x: 1, y: 1)))
+        buffer.append(.tap(CGPoint(x: 2, y: 2)))
+        XCTAssertEqual(buffer.count, 1)
+
+        buffer.append(.typeText("keep"))
+        buffer.append(.swipe(.zero, CGPoint(x: 10, y: 10), durationMS: 120))
+        buffer.append(.swipe(.zero, CGPoint(x: 20, y: 20), durationMS: 120))
+        XCTAssertEqual(buffer.count, 3)
+        XCTAssertEqual(buffer.actions.filter(\.isSwipe).count, 1)
+    }
+
     func testDraggingEmitsOneCoherentSwipeOnMouseUp() {
         var reducer = ControlGestureReducer()
 

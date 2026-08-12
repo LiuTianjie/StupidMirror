@@ -20,6 +20,67 @@ enum StupidMirrorMCPToolCatalog {
         tool("disconnect_control", "Delete the iPhone control session.", deviceProperties, idempotent: true),
         tool("screenshot", "Capture the current iPhone screen as a native PNG. Control must be ready.", deviceProperties, readOnly: true),
         tool("get_ui_tree", "Read the current iPhone accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
+        tool(
+            "observe_screen",
+            "Observe the latest live frame, hierarchical accessibility elements, and optional local Apple Vision OCR. No extra WDA screenshot or model API is used.",
+            deviceProperties.merging([
+                "include_image": boolean("Include the latest live mirror frame as PNG.", defaultValue: true),
+                "include_accessibility": boolean("Include parsed hierarchical accessibility elements when control is connected.", defaultValue: true),
+                "include_ocr": boolean("Run local Apple Vision OCR on the latest frame.", defaultValue: false),
+                "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
+                "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
+            ]) { _, new in new },
+            readOnly: true
+        ),
+        tool(
+            "find_element",
+            "Find visible elements by text. Accessibility is checked first; local Apple Vision OCR is an on-demand fallback.",
+            deviceProperties.merging([
+                "query": string("Text to locate across type, name, label, and value."),
+                "include_ocr": boolean("Use local OCR when accessibility has no match.", defaultValue: true),
+                "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
+                "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
+            ]) { _, new in new },
+            required: ["query"],
+            readOnly: true
+        ),
+        tool(
+            "tap_element",
+            "Tap an observed element. Accessibility elements use a fresh native WDA element click first; OCR elements use their normalized frame.",
+            deviceProperties.merging([
+                "element_id": string("Stable element id from the most recent observation."),
+                "observation_id": string("Optional observation UUID. Pass it to reject stale element ids.")
+            ]) { _, new in new },
+            required: ["element_id"],
+            destructive: true
+        ),
+        tool(
+            "wait_for",
+            "Wait until matching visible accessibility or local OCR text is present or absent.",
+            deviceProperties.merging([
+                "query": string("Text to match on the current screen."),
+                "state": enumeration("Expected state.", values: ["present", "absent"]),
+                "timeout_seconds": number("Wait timeout.", minimum: 0.5, maximum: 60, defaultValue: 10),
+                "include_ocr": boolean("Use local OCR when accessibility has no match.", defaultValue: true),
+                "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
+                "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
+            ]) { _, new in new },
+            required: ["query", "state"],
+            readOnly: true
+        ),
+        tool(
+            "assert_screen",
+            "Assert that matching visible accessibility or local OCR text is currently present or absent.",
+            deviceProperties.merging([
+                "query": string("Text to match on the current screen."),
+                "state": enumeration("Expected state.", values: ["present", "absent"]),
+                "include_ocr": boolean("Use local OCR when accessibility has no match.", defaultValue: true),
+                "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
+                "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
+            ]) { _, new in new },
+            required: ["query", "state"],
+            readOnly: true
+        ),
         pointTool("tap", "Tap at normalized screen coordinates."),
         pointTool("double_tap", "Double tap at normalized screen coordinates."),
         tool(
@@ -30,7 +91,8 @@ enum StupidMirrorMCPToolCatalog {
                 "y": coordinate("Normalized vertical coordinate."),
                 "duration_seconds": number("Hold duration from 0.5 to 10 seconds.", minimum: 0.5, maximum: 10, defaultValue: 1)
             ]) { _, new in new },
-            required: ["x", "y"]
+            required: ["x", "y"],
+            destructive: true
         ),
         tool(
             "swipe",
@@ -42,7 +104,8 @@ enum StupidMirrorMCPToolCatalog {
                 "end_y": coordinate("Normalized end y."),
                 "duration_ms": integer("Duration from 50 to 5000 milliseconds.", minimum: 50, maximum: 5_000, defaultValue: 300)
             ]) { _, new in new },
-            required: ["start_x", "start_y", "end_x", "end_y"]
+            required: ["start_x", "start_y", "end_x", "end_y"],
+            destructive: true
         ),
         tool(
             "scroll",
@@ -53,13 +116,15 @@ enum StupidMirrorMCPToolCatalog {
                 "center_x": coordinate("Gesture center x.", defaultValue: 0.5),
                 "center_y": coordinate("Gesture center y.", defaultValue: 0.5)
             ]) { _, new in new },
-            required: ["direction"]
+            required: ["direction"],
+            destructive: true
         ),
         tool(
             "type_text",
             "Type text into the currently focused iPhone field.",
             deviceProperties.merging(["text": string("Text to type, up to 10,000 UTF-8 bytes.")]) { _, new in new },
-            required: ["text"]
+            required: ["text"],
+            destructive: true
         ),
         tool(
             "press_button",
@@ -67,21 +132,24 @@ enum StupidMirrorMCPToolCatalog {
             deviceProperties.merging([
                 "button": enumeration("Button name.", values: ["home", "volume_up", "volume_down"])
             ]) { _, new in new },
-            required: ["button"]
+            required: ["button"],
+            destructive: true
         ),
-        tool("back", "Tap the conventional top-left iOS back location.", deviceProperties),
-        tool("app_switcher", "Open the iOS app switcher using a best-effort double Home action.", deviceProperties),
+        tool("back", "Tap the conventional top-left iOS back location.", deviceProperties, destructive: true),
+        tool("app_switcher", "Open the iOS app switcher using a best-effort double Home action.", deviceProperties, destructive: true),
         tool(
             "activate_app",
             "Launch or foreground an installed iPhone app by bundle identifier.",
             deviceProperties.merging(["bundle_id": string("iPhone app bundle identifier.")]) { _, new in new },
-            required: ["bundle_id"]
+            required: ["bundle_id"],
+            destructive: true
         ),
         tool(
             "terminate_app",
             "Terminate an installed iPhone app by bundle identifier.",
             deviceProperties.merging(["bundle_id": string("iPhone app bundle identifier.")]) { _, new in new },
-            required: ["bundle_id"]
+            required: ["bundle_id"],
+            destructive: true
         )
     ]
 
@@ -97,7 +165,8 @@ enum StupidMirrorMCPToolCatalog {
                 "x": coordinate("Normalized horizontal coordinate."),
                 "y": coordinate("Normalized vertical coordinate.")
             ]) { _, new in new },
-            required: ["x", "y"]
+            required: ["x", "y"],
+            destructive: true
         )
     }
 
@@ -107,7 +176,8 @@ enum StupidMirrorMCPToolCatalog {
         _ properties: [String: Value] = [:],
         required: [String] = [],
         readOnly: Bool = false,
-        idempotent: Bool = false
+        idempotent: Bool = false,
+        destructive: Bool = false
     ) -> Tool {
         var schema: [String: Value] = [
             "type": "object",
@@ -124,7 +194,7 @@ enum StupidMirrorMCPToolCatalog {
             inputSchema: .object(schema),
             annotations: .init(
                 readOnlyHint: readOnly,
-                destructiveHint: false,
+                destructiveHint: destructive,
                 idempotentHint: idempotent,
                 openWorldHint: false
             )
@@ -135,8 +205,10 @@ enum StupidMirrorMCPToolCatalog {
         ["type": "string", "description": .string(description)]
     }
 
-    private static func boolean(_ description: String) -> Value {
-        ["type": "boolean", "description": .string(description)]
+    private static func boolean(_ description: String, defaultValue: Bool? = nil) -> Value {
+        var value: [String: Value] = ["type": "boolean", "description": .string(description)]
+        if let defaultValue { value["default"] = .bool(defaultValue) }
+        return .object(value)
     }
 
     private static func coordinate(_ description: String, defaultValue: Double? = nil) -> Value {
@@ -174,11 +246,31 @@ enum StupidMirrorMCPToolCatalog {
         ]
     }
 
-    private static func enumeration(_ description: String, values: [String]) -> Value {
-        [
+    private static func enumeration(
+        _ description: String,
+        values: [String],
+        defaultValue: String? = nil
+    ) -> Value {
+        var value: [String: Value] = [
             "type": "string",
             "description": .string(description),
             "enum": .array(values.map(Value.string))
+        ]
+        if let defaultValue { value["default"] = .string(defaultValue) }
+        return .object(value)
+    }
+
+    private static func stringArray(
+        _ description: String,
+        defaultValues: [String],
+        maximumItems: Int
+    ) -> Value {
+        [
+            "type": "array",
+            "description": .string(description),
+            "items": .object(["type": "string"]),
+            "maxItems": .int(maximumItems),
+            "default": .array(defaultValues.map(Value.string))
         ]
     }
 }
@@ -237,6 +329,68 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     structuredContent: .object(["ok": true, "xml": .string(source)]),
                     isError: false
                 )
+            case "observe_screen":
+                let result = try await automation.observeScreen(
+                    deviceID: optionalString("device_id", args),
+                    includeImage: optionalBool("include_image", args) ?? true,
+                    includeAccessibility: optionalBool("include_accessibility", args) ?? true,
+                    includeOCR: optionalBool("include_ocr", args) ?? false,
+                    ocrMode: try ocrMode(args),
+                    ocrLanguages: try optionalStringArray("ocr_languages", args)
+                        ?? DeviceAutomationService.defaultOCRLanguages
+                )
+                let structured = try Value(result.observation)
+                var content: [Tool.Content] = [
+                    .text(String(decoding: try JSONEncoder.stupidMirrorMCP.encode(result.observation), as: UTF8.self))
+                ]
+                if let imageData = result.imageData {
+                    content.append(.image(
+                        data: imageData.base64EncodedString(),
+                        mimeType: "image/png",
+                        metadata: nil
+                    ))
+                }
+                return CallTool.Result(
+                    content: content,
+                    structuredContent: Optional.some(structured),
+                    isError: false
+                )
+            case "find_element":
+                return try success(try await automation.findElements(
+                    deviceID: optionalString("device_id", args),
+                    query: try requiredString("query", args),
+                    includeOCR: optionalBool("include_ocr", args) ?? true,
+                    ocrMode: try ocrMode(args),
+                    ocrLanguages: try optionalStringArray("ocr_languages", args)
+                        ?? DeviceAutomationService.defaultOCRLanguages
+                ))
+            case "tap_element":
+                return try success(try await automation.tapElement(
+                    deviceID: optionalString("device_id", args),
+                    observationID: try optionalUUID("observation_id", args),
+                    elementID: try requiredString("element_id", args)
+                ))
+            case "wait_for":
+                return try success(try await automation.waitForElement(
+                    deviceID: optionalString("device_id", args),
+                    query: try requiredString("query", args),
+                    state: try requiredString("state", args),
+                    timeoutSeconds: optionalDouble("timeout_seconds", args) ?? 10,
+                    includeOCR: optionalBool("include_ocr", args) ?? true,
+                    ocrMode: try ocrMode(args),
+                    ocrLanguages: try optionalStringArray("ocr_languages", args)
+                        ?? DeviceAutomationService.defaultOCRLanguages
+                ))
+            case "assert_screen":
+                return try success(try await automation.assertScreen(
+                    deviceID: optionalString("device_id", args),
+                    query: try requiredString("query", args),
+                    state: try requiredString("state", args),
+                    includeOCR: optionalBool("include_ocr", args) ?? true,
+                    ocrMode: try ocrMode(args),
+                    ocrLanguages: try optionalStringArray("ocr_languages", args)
+                        ?? DeviceAutomationService.defaultOCRLanguages
+                ))
             case "tap":
                 try await automation.tap(
                     deviceID: optionalString("device_id", args),
@@ -391,6 +545,39 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
     private func requiredBool(_ key: String, _ args: [String: Value]) throws -> Bool {
         guard let value = args[key]?.boolValue else {
             throw DeviceAutomationError.invalidArgument("Missing or invalid \(key).")
+        }
+        return value
+    }
+
+    private func optionalBool(_ key: String, _ args: [String: Value]) -> Bool? {
+        args[key]?.boolValue
+    }
+
+    private func optionalStringArray(_ key: String, _ args: [String: Value]) throws -> [String]? {
+        guard let rawValue = args[key] else { return nil }
+        guard let values = rawValue.arrayValue else {
+            throw DeviceAutomationError.invalidArgument("\(key) must be an array of strings.")
+        }
+        return try values.map { value in
+            guard let string = value.stringValue else {
+                throw DeviceAutomationError.invalidArgument("\(key) must contain only strings.")
+            }
+            return string
+        }
+    }
+
+    private func ocrMode(_ args: [String: Value]) throws -> ScreenOCRMode {
+        let rawValue = optionalString("ocr_mode", args) ?? ScreenOCRMode.fast.rawValue
+        guard let mode = ScreenOCRMode(rawValue: rawValue) else {
+            throw DeviceAutomationError.invalidArgument("ocr_mode must be fast or accurate.")
+        }
+        return mode
+    }
+
+    private func optionalUUID(_ key: String, _ args: [String: Value]) throws -> UUID? {
+        guard let raw = optionalString(key, args) else { return nil }
+        guard let value = UUID(uuidString: raw) else {
+            throw DeviceAutomationError.invalidArgument("\(key) must be a UUID.")
         }
         return value
     }

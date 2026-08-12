@@ -16,6 +16,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     @Published private(set) var latestWirelessFrame: NSImage?
     @Published private(set) var wirelessStartupDetail: String?
     @Published private(set) var wirelessStartupBeganAt: Date?
+    @Published private(set) var automationActions: [AutomationActionVisualization] = []
+    let latestFrameStore = MirrorFrameStore()
 
     private let sessionQueue = DispatchQueue(label: "stupidmirror.capture.session")
     private let sessionQueueKey = DispatchSpecificKey<UInt8>()
@@ -35,6 +37,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var wirelessStartedAt: Date?
     private var wirelessOnRunning: (@MainActor @Sendable () -> Void)?
     private var lastWirelessPreviewUpdate = Date.distantPast
+    private var automationActionClearTask: Task<Void, Never>?
 
     init(device: AVCaptureDevice) {
         self.device = device
@@ -52,6 +55,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     }
 
     deinit {
+        automationActionClearTask?.cancel()
         clearSampleBufferConsumers()
         if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
             tearDownOnSessionQueue()
@@ -112,6 +116,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     @MainActor
     func stop() {
         state = .stopped
+        latestFrameStore.clear()
+        clearAutomationAction()
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
@@ -175,6 +181,65 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             disposed = true
             tearDownOnSessionQueue()
         }
+    }
+
+    @MainActor
+    func showAutomationTarget(normalizedFrame: ScreenElementFrame?, label: String) {
+        showAutomationAction(AutomationActionVisualization(
+            kind: .target,
+            label: label,
+            normalizedTargetFrame: normalizedFrame
+        ))
+    }
+
+    @MainActor
+    func showAutomationPoint(
+        _ point: CGPoint,
+        kind: AutomationActionVisualKind = .tap,
+        label: String
+    ) {
+        showAutomationAction(AutomationActionVisualization(
+            kind: kind,
+            label: label,
+            normalizedPoint: point
+        ))
+    }
+
+    @MainActor
+    func showAutomationSwipe(from start: CGPoint, to end: CGPoint, label: String) {
+        showAutomationAction(AutomationActionVisualization(
+            kind: .swipe,
+            label: label,
+            normalizedStart: start,
+            normalizedEnd: end
+        ))
+    }
+
+    @MainActor
+    func showAutomationNotice(_ label: String) {
+        showAutomationAction(AutomationActionVisualization(kind: .notice, label: label))
+    }
+
+    @MainActor
+    private func showAutomationAction(_ action: AutomationActionVisualization) {
+        automationActionClearTask?.cancel()
+        automationActions.append(action)
+        if automationActions.count > 4 {
+            automationActions.removeFirst(automationActions.count - 4)
+        }
+        automationActionClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(1_650))
+            guard !Task.isCancelled, self?.automationActions.last?.id == action.id else { return }
+            self?.automationActions.removeAll(keepingCapacity: true)
+            self?.automationActionClearTask = nil
+        }
+    }
+
+    @MainActor
+    private func clearAutomationAction() {
+        automationActionClearTask?.cancel()
+        automationActionClearTask = nil
+        automationActions.removeAll(keepingCapacity: true)
     }
 
     /// Audio capture is opt-in so merely opening a mirror cannot implicitly
@@ -325,7 +390,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         _ sampleBuffer: CMSampleBuffer,
         generation: UInt64
     ) {
-
+        latestFrameStore.submit(sampleBuffer)
         sampleBufferConsumerLock.lock()
         let consumer = videoSampleBufferConsumer
         sampleBufferConsumerLock.unlock()
@@ -408,6 +473,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             consumer?(sampleBuffer)
             return
         }
+
+        latestFrameStore.submit(sampleBuffer)
 
         sampleBufferConsumerLock.lock()
         let consumer = videoSampleBufferConsumer

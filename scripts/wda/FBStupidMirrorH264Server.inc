@@ -11,8 +11,8 @@
 
 static const uint16_t SMH264DefaultPort = 9200;
 static const NSUInteger SMH264DefaultFPS = 45;
-static const NSUInteger SMH264DefaultSourceQuality = 90;
-static const NSUInteger SMH264DefaultBitrate = 16000000;
+static const NSUInteger SMH264DefaultSourceQuality = 80;
+static const NSUInteger SMH264DefaultBitrate = 8000000;
 static const NSTimeInterval SMH264FrameTimeout = 1.0;
 static const NSUInteger SMSRTMaximumMessageSize = 1316;
 static const NSUInteger SMSRTHeaderSize = 24;
@@ -66,7 +66,9 @@ static void SMH264CompressionOutputCallback(
   if ((self = [super init])) {
     _captureQueue = dispatch_queue_create(
       "com.stupidmirror.wda.h264.capture",
-      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)
+      // Keep the 45 fps target, but let XCTest control work preempt capture
+      // when both paths contend for device-side automation resources.
+      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0)
     );
     _srtAcceptQueue = dispatch_queue_create(
       "com.stupidmirror.wda.h264.srt-accept",

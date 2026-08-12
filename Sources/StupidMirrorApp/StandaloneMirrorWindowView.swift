@@ -162,6 +162,9 @@ struct StandaloneMirrorWindowView: View {
                 MirrorPreviewView(mirrorSession: mirrorSession, cornerRadius: 0)
                     .overlay(controlGestureLayer)
                     .overlay(keyboardForwardingLayer)
+                    .overlay {
+                        AutomationActionOverlayView(actions: mirrorSession.automationActions)
+                    }
 
                 if mirrorSession.state != .running || session.device.connectionState != .connected {
                     statusOverlay

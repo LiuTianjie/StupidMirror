@@ -173,6 +173,45 @@ make setup-appium
 make run-appium
 ```
 
+## AI Harness through MCP
+
+StupidMirror does not embed an AI model, require a model API key, or upload the
+iPhone screen to a model provider. Instead, its localhost MCP server exposes a
+device harness that external agents such as Codex or Claude can use with the
+user's existing account and privacy settings.
+
+The preferred agent loop is:
+
+1. `list_devices`, then `start_mirror` and `connect_control` as needed.
+2. `observe_screen` to receive the newest live mirror frame plus parsed
+   hierarchical accessibility elements. Set `include_ocr` when fused local
+   text recognition is useful. Neither path triggers another WDA screenshot.
+3. `find_element` checks Accessibility first and falls back to Apple Vision OCR
+   on the Mac only when needed. `tap_element` refreshes and clicks a native WDA
+   element when possible; normalized coordinates remain the visual fallback.
+4. `wait_for` and `assert_screen` for deterministic completion checks.
+
+`tap_element` accepts the observation UUID so an agent can reject stale element
+identifiers after the screen changes. Element actions and raw control tools are
+marked as potentially destructive in MCP metadata because their real-world
+effect depends on the visible iPhone UI.
+
+Accessibility elements include source, parent/child identifiers, depth, path,
+state, screen-point frame, and normalized frame. OCR elements use
+`source: "ocr"` and add a confidence score. OCR runs through
+`VNRecognizeTextRequest` locally with `fast` and `accurate` modes; Chinese and
+English are the defaults, and agents can pass other Vision language identifiers.
+Recognition is on-demand, single-flight, and briefly cached. It reads the
+newest retained frame without changing the wireless 45 FPS stream or entering
+the capture/encoding hot path.
+
+Actions invoked through the AI harness are visible in StupidMirror: semantic
+targets are boxed, taps are marked, swipes show their path and direction, and
+non-positional actions display a short `AI` notice. This overlay is rendered by
+the Mac UI only. It is not burned into the iPhone frame, sent to the device, or
+processed by the video encoder; direct manual mirror interactions are not
+labelled as AI actions.
+
 ## Probes
 
 Run probes from the repo root:

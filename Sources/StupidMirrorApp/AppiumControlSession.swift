@@ -124,7 +124,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     private var cleanupTask: Task<Void, Never>?
     private var actionPumpTask: Task<Void, Never>?
     private var warmDisconnectedAt: Date?
-    private var pendingActions: [ControlAction] = []
+    private var pendingActions = ControlActionBuffer()
     private var generation: UInt64 = 0
 
     init(device: DeviceIdentity) {
@@ -485,6 +485,16 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         enqueueAction(.swipe(startPoint, endPoint, durationMS: durationMS), sessionID: sessionID, serverURL: serverURL)
     }
 
+    func flick(_ direction: ControlFlickDirection, serverURL: String) {
+        guard let sessionID, let screenSize else { return }
+        let points = Self.flickPoints(direction: direction, size: screenSize)
+        enqueueAction(
+            .swipe(points.start, points.end, durationMS: 120),
+            sessionID: sessionID,
+            serverURL: serverURL
+        )
+    }
+
     func typeText(_ text: String, serverURL: String) {
         guard let sessionID, !text.isEmpty else { return }
         enqueueAction(.typeText(text), sessionID: sessionID, serverURL: serverURL)
@@ -618,6 +628,16 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         return try await context.client.pageSource(sessionID: context.sessionID)
     }
 
+    /// Resolves a fresh XCUIElement reference and asks WDA to click it. This is
+    /// more resilient to rotation and layout changes than replaying old pixels.
+    func clickSemanticElementAwaiting(_ element: ScreenElement, serverURL: String) async throws -> Bool {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.clickSemanticElement(
+            sessionID: context.sessionID,
+            element: element
+        )
+    }
+
     func activateApp(bundleID: String, serverURL: String) async throws {
         let context = try readyContext(serverURL: serverURL)
         try await context.client.activateApp(sessionID: context.sessionID, bundleID: bundleID)
@@ -644,17 +664,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     }
 
     private func enqueueAction(_ action: ControlAction, sessionID: String, serverURL: String) {
-        if action.isSwipe {
-            pendingActions.removeAll { $0.isSwipe }
-            pendingActions.append(action)
-        } else if case .tap = action, pendingActions.last?.isTap == true {
-            pendingActions[pendingActions.count - 1] = action
-        } else {
-            pendingActions.append(action)
-        }
-        if pendingActions.count > 4 {
-            pendingActions.removeFirst(pendingActions.count - 4)
-        }
+        pendingActions.append(action)
         pumpActions(sessionID: sessionID, serverURL: serverURL, generation: generation)
     }
 
@@ -667,7 +677,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 guard !Task.isCancelled else { break }
                 guard self.generation == taskGeneration, self.sessionID == sessionID else { break }
                 guard !self.pendingActions.isEmpty else { break }
-                let action = self.pendingActions.removeFirst()
+                guard let action = self.pendingActions.popFirst() else { break }
                 guard self.generation == taskGeneration, self.sessionID == sessionID else {
                     break
                 }
@@ -796,7 +806,7 @@ private struct ConnectionRequest: Hashable, Sendable {
     let configuration: AppiumControlConfiguration
 }
 
-private enum ControlAction {
+enum ControlAction {
     case tap(CGPoint)
     case swipe(CGPoint, CGPoint, durationMS: Int)
     case typeText(String)
@@ -817,6 +827,41 @@ private enum ControlAction {
         } else {
             false
         }
+    }
+}
+
+struct ControlActionBuffer {
+    private(set) var actions: [ControlAction] = []
+    let maximumCount: Int
+
+    init(maximumCount: Int = 4) {
+        self.maximumCount = max(1, maximumCount)
+    }
+
+    var count: Int { actions.count }
+    var isEmpty: Bool { actions.isEmpty }
+
+    mutating func append(_ action: ControlAction) {
+        if action.isSwipe {
+            actions.removeAll { $0.isSwipe }
+            actions.append(action)
+        } else if action.isTap, actions.last?.isTap == true {
+            actions[actions.count - 1] = action
+        } else {
+            actions.append(action)
+        }
+        if actions.count > maximumCount {
+            actions.removeFirst(actions.count - maximumCount)
+        }
+    }
+
+    mutating func popFirst() -> ControlAction? {
+        guard !actions.isEmpty else { return nil }
+        return actions.removeFirst()
+    }
+
+    mutating func removeAll() {
+        actions.removeAll(keepingCapacity: true)
     }
 }
 
@@ -998,6 +1043,71 @@ struct AppiumHTTPClient: Sendable {
         return source
     }
 
+    func clickSemanticElement(sessionID: String, element: ScreenElement) async throws -> Bool {
+        guard element.source == .accessibility else { return false }
+        for locator in AppiumSemanticElementResolver.locators(for: element) {
+            let references = try await findElementReferences(
+                sessionID: sessionID,
+                locator: locator
+            )
+            guard !references.isEmpty else { continue }
+
+            var candidates: [AppiumResolvedElement] = []
+            candidates.reserveCapacity(min(references.count, 12))
+            for reference in references.prefix(12) {
+                let rect = try? await elementRect(sessionID: sessionID, elementID: reference)
+                candidates.append(AppiumResolvedElement(id: reference, frame: rect))
+            }
+            guard let selected = AppiumSemanticElementResolver.bestMatch(
+                among: candidates,
+                observedFrame: element.frame
+            ) else { continue }
+            _ = try await jsonRequest(
+                method: "POST",
+                path: "/session/\(sessionID)/element/\(selected.id)/click",
+                payload: [:]
+            )
+            return true
+        }
+        return false
+    }
+
+    private func findElementReferences(
+        sessionID: String,
+        locator: AppiumSemanticLocator
+    ) async throws -> [String] {
+        let response = try await jsonRequest(
+            method: "POST",
+            path: "/session/\(sessionID)/elements",
+            payload: ["using": locator.using, "value": locator.value]
+        )
+        guard let values = response["value"] as? [[String: Any]] else { return [] }
+        return values.compactMap { value in
+            value[AppiumSemanticElementResolver.w3cElementKey] as? String
+                ?? value["ELEMENT"] as? String
+        }
+    }
+
+    private func elementRect(sessionID: String, elementID: String) async throws -> ScreenElementFrame {
+        let response = try await jsonRequest(
+            method: "GET",
+            path: "/session/\(sessionID)/element/\(elementID)/rect"
+        )
+        guard let value = response["value"] as? [String: Any],
+              let x = Self.number(value["x"]),
+              let y = Self.number(value["y"]),
+              let width = Self.number(value["width"]),
+              let height = Self.number(value["height"]),
+              width > 0, height > 0 else {
+            throw AppiumError.invalidResponse("Missing element rectangle.")
+        }
+        return ScreenElementFrame(x: x, y: y, width: width, height: height)
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        (value as? NSNumber)?.doubleValue
+    }
+
     func activateApp(sessionID: String, bundleID: String) async throws {
         try await executeMobile(
             sessionID: sessionID,
@@ -1075,6 +1185,91 @@ struct AppiumHTTPClient: Sendable {
             throw AppiumError.invalidResponse("Expected JSON object.")
         }
         return dictionary
+    }
+}
+
+struct AppiumSemanticLocator: Equatable, Sendable {
+    let using: String
+    let value: String
+}
+
+struct AppiumResolvedElement: Equatable, Sendable {
+    let id: String
+    let frame: ScreenElementFrame?
+}
+
+enum AppiumSemanticElementResolver {
+    static let w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
+
+    static func locators(for element: ScreenElement) -> [AppiumSemanticLocator] {
+        guard element.source == .accessibility else { return [] }
+        var locators: [AppiumSemanticLocator] = []
+        var predicates: [String] = []
+        if isElementType(element.type) {
+            predicates.append("type == '\(predicateLiteral(element.type))'")
+        }
+        if let name = usableValue(element.name) {
+            predicates.append("name == '\(predicateLiteral(name))'")
+        }
+        if let label = usableValue(element.label) {
+            predicates.append("label == '\(predicateLiteral(label))'")
+        }
+        if let value = usableValue(element.value) {
+            predicates.append("value == '\(predicateLiteral(value))'")
+        }
+        if !predicates.isEmpty {
+            locators.append(AppiumSemanticLocator(
+                using: "-ios predicate string",
+                value: predicates.joined(separator: " AND ")
+            ))
+        }
+        if let name = usableValue(element.name) {
+            locators.append(AppiumSemanticLocator(using: "accessibility id", value: name))
+        }
+        if element.name == nil, let label = usableValue(element.label) {
+            locators.append(AppiumSemanticLocator(using: "accessibility id", value: label))
+        }
+        return locators.reduce(into: []) { result, locator in
+            guard !result.contains(locator) else { return }
+            result.append(locator)
+        }
+    }
+
+    static func bestMatch(
+        among candidates: [AppiumResolvedElement],
+        observedFrame: ScreenElementFrame?
+    ) -> AppiumResolvedElement? {
+        guard !candidates.isEmpty else { return nil }
+        if candidates.count == 1 { return candidates[0] }
+        guard let observedFrame else { return nil }
+        return candidates.compactMap { candidate -> (AppiumResolvedElement, Double)? in
+            guard let frame = candidate.frame else { return nil }
+            let centerDistance = hypot(
+                frame.centerX - observedFrame.centerX,
+                frame.centerY - observedFrame.centerY
+            )
+            let sizeDistance = abs(frame.width - observedFrame.width)
+                + abs(frame.height - observedFrame.height)
+            return (candidate, centerDistance + sizeDistance * 0.2)
+        }.min { $0.1 < $1.1 }?.0
+    }
+
+    private static func usableValue(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty, value.count <= 500 else { return nil }
+        return value
+    }
+
+    private static func isElementType(_ value: String) -> Bool {
+        value.hasPrefix("XCUIElementType")
+            && value.dropFirst("XCUIElementType".count).allSatisfy { $0.isLetter || $0.isNumber }
+    }
+
+    private static func predicateLiteral(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+            .replacingOccurrences(of: "\u{0}", with: "")
     }
 }
 

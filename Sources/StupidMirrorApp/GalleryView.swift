@@ -1370,6 +1370,16 @@ struct MCPAutomationSettingsView: View {
                                         .fill(entry.succeeded ? Color.green : Color.red)
                                         .frame(width: 7, height: 7)
                                     Text(entry.tool).font(.system(.caption, design: .monospaced))
+                                    if let deviceID = entry.deviceID {
+                                        Text(deviceID.prefix(8))
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    if let errorCode = entry.errorCode {
+                                        Text(errorCode)
+                                            .font(.system(.caption2, design: .monospaced))
+                                            .foregroundStyle(Theme.Palette.danger)
+                                    }
                                     Spacer()
                                     Text("\(entry.durationMilliseconds) ms")
                                         .font(.caption)

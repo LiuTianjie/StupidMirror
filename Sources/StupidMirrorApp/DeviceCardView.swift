@@ -177,6 +177,9 @@ struct DeviceDetailView: View {
                 .frame(width: size.width, height: size.height)
                 .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                 .overlay(controlGestureLayer(aspectRatio: aspect))
+                .overlay {
+                    AutomationActionOverlayView(actions: mirrorSession.automationActions)
+                }
 
                 if controlSession.isConnecting {
                     Color.black.opacity(0.42)

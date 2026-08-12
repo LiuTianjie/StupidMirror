@@ -430,8 +430,8 @@ final class WirelessWDAService: @unchecked Sendable {
             "MJPEG_SERVER_PORT": "9100",
             "STUPIDMIRROR_H264_PORT": "9200",
             "STUPIDMIRROR_H264_FPS": "45",
-            "STUPIDMIRROR_H264_SOURCE_QUALITY": "90",
-            "STUPIDMIRROR_H264_BITRATE": "16000000"
+            "STUPIDMIRROR_H264_SOURCE_QUALITY": "80",
+            "STUPIDMIRROR_H264_BITRATE": "8000000"
         ]
         let environmentData = try JSONSerialization.data(withJSONObject: environment)
         guard let environmentJSON = String(data: environmentData, encoding: .utf8) else {

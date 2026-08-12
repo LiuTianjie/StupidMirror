@@ -20,6 +20,7 @@ struct MCPCallLogEntry: Identifiable, Equatable, Sendable {
     let id: UUID
     let date: Date
     let tool: String
+    let deviceID: String?
     let durationMilliseconds: Int
     let succeeded: Bool
     let errorCode: String?
@@ -34,12 +35,14 @@ private actor MCPServerEventSink {
 
     func recordCall(
         tool: String,
+        deviceID: String?,
         durationMilliseconds: Int,
         succeeded: Bool,
         errorCode: String?
     ) async {
         await manager?.recordCall(
             tool: tool,
+            deviceID: deviceID,
             durationMilliseconds: durationMilliseconds,
             succeeded: succeeded,
             errorCode: errorCode
@@ -294,11 +297,16 @@ final class MCPServerManager: ObservableObject {
                         let duration = startedAt.duration(to: .now)
                         let milliseconds = Int(duration.components.seconds * 1_000)
                             + Int(duration.components.attoseconds / 1_000_000_000_000_000)
+                        let errorCode = result.structuredContent?
+                            .objectValue?["error"]?
+                            .objectValue?["code"]?
+                            .stringValue
                         await eventSink.recordCall(
                             tool: request.name,
+                            deviceID: request.arguments?["device_id"]?.stringValue,
                             durationMilliseconds: max(0, milliseconds),
                             succeeded: result.isError != true,
-                            errorCode: result.isError == true ? "tool_error" : nil
+                            errorCode: result.isError == true ? (errorCode ?? "tool_error") : nil
                         )
                         return result
                     }
@@ -384,6 +392,7 @@ final class MCPServerManager: ObservableObject {
 
     fileprivate func recordCall(
         tool: String,
+        deviceID: String?,
         durationMilliseconds: Int,
         succeeded: Bool,
         errorCode: String?
@@ -393,6 +402,7 @@ final class MCPServerManager: ObservableObject {
                 id: UUID(),
                 date: Date(),
                 tool: tool,
+                deviceID: deviceID,
                 durationMilliseconds: durationMilliseconds,
                 succeeded: succeeded,
                 errorCode: errorCode
@@ -403,6 +413,6 @@ final class MCPServerManager: ObservableObject {
     }
 
     nonisolated private static let instructions = """
-    Automate iPhones through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror one device at a time; control tools require activation. Call connect_control before control tools. Use screenshot or get_ui_tree to inspect state, then use normalized coordinates from 0 to 1. After every action, take another screenshot to verify the result.
+    Automate iPhones through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror one device at a time; control tools require activation. Start the mirror for a live frame and connect control for native accessibility and actions. Prefer observe_screen, find_element, tap_element, wait_for, and assert_screen. Accessibility elements retain hierarchy and tap_element resolves a fresh native WDA element before coordinate fallback. find_element, wait_for, and assert_screen use local Apple Vision OCR only when accessibility has no match; use observe_screen include_ocr=true when you need fused results. OCR is local, requires a live mirror frame, and fast mode should be preferred unless small or ambiguous text needs accurate mode. AI actions are visibly highlighted on the Mac mirror. Use normalized coordinate actions only when no semantic element is available, then observe or assert after actions that need verification.
     """
 }

@@ -8,6 +8,7 @@ final class MCPServerTests: XCTestCase {
             "list_devices", "refresh_devices", "get_device_status", "get_diagnostics",
             "start_mirror", "stop_mirror", "set_mirror_floating",
             "connect_control", "disconnect_control", "screenshot", "get_ui_tree",
+            "observe_screen", "find_element", "tap_element", "wait_for", "assert_screen",
             "tap", "double_tap", "long_press", "swipe", "scroll", "type_text",
             "press_button", "back", "app_switcher", "activate_app", "terminate_app"
         ])
@@ -18,9 +19,39 @@ final class MCPServerTests: XCTestCase {
             let schema = tool.inputSchema.objectValue
             XCTAssertEqual(schema?["type"]?.stringValue, "object", tool.name)
             XCTAssertEqual(schema?["additionalProperties"]?.boolValue, false, tool.name)
-            XCTAssertEqual(tool.annotations.destructiveHint, false, tool.name)
             XCTAssertEqual(tool.annotations.openWorldHint, false, tool.name)
         }
+        let destructive = Set([
+            "tap_element", "tap", "double_tap", "long_press", "swipe", "scroll",
+            "type_text", "press_button", "back", "app_switcher", "activate_app", "terminate_app"
+        ])
+        for tool in StupidMirrorMCPToolCatalog.tools {
+            XCTAssertEqual(tool.annotations.destructiveHint, destructive.contains(tool.name), tool.name)
+        }
+    }
+
+    func testSemanticObservationSchemasExposeSafeDefaultsAndBounds() throws {
+        let observe = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "observe_screen" })
+        let observeProperties = try XCTUnwrap(observe.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertEqual(observeProperties["include_image"]?.objectValue?["default"]?.boolValue, true)
+        XCTAssertEqual(observeProperties["include_accessibility"]?.objectValue?["default"]?.boolValue, true)
+        XCTAssertEqual(observeProperties["include_ocr"]?.objectValue?["default"]?.boolValue, false)
+        XCTAssertEqual(observeProperties["ocr_mode"]?.objectValue?["default"]?.stringValue, "fast")
+        XCTAssertEqual(
+            observeProperties["ocr_languages"]?.objectValue?["default"]?.arrayValue?.compactMap(\.stringValue),
+            ["zh-Hans", "en-US"]
+        )
+        XCTAssertEqual(observeProperties["ocr_languages"]?.objectValue?["maxItems"]?.intValue, 8)
+        XCTAssertEqual(observe.annotations.readOnlyHint, true)
+
+        let find = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "find_element" })
+        let findProperties = try XCTUnwrap(find.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertEqual(findProperties["include_ocr"]?.objectValue?["default"]?.boolValue, true)
+
+        let wait = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "wait_for" })
+        let waitProperties = try XCTUnwrap(wait.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertEqual(waitProperties["timeout_seconds"]?.objectValue?["maximum"]?.doubleValue, 60)
+        XCTAssertEqual(wait.annotations.readOnlyHint, true)
     }
 
     func testCoordinateAndDurationSchemasExposeHardBounds() throws {

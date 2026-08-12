@@ -1405,71 +1405,60 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func tapControl(for session: DeviceSession, normalizedX: Double, normalizedY: Double) {
-        performControlAction {
-            try await self.automationService.tap(
-                deviceID: session.id, x: normalizedX, y: normalizedY
-            )
-        }
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.tapNormalized(
+            x: normalizedX,
+            y: normalizedY,
+            serverURL: appiumServerURL
+        )
     }
 
     func swipeControl(for session: DeviceSession, from start: CGPoint, to end: CGPoint, durationMS: Int) {
-        performControlAction {
-            try await self.automationService.swipe(
-                deviceID: session.id,
-                startX: start.x,
-                startY: start.y,
-                endX: end.x,
-                endY: end.y,
-                durationMS: durationMS
-            )
-        }
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.swipeNormalized(
+            from: start,
+            to: end,
+            durationMS: durationMS,
+            serverURL: appiumServerURL
+        )
     }
 
     func flickControl(for session: DeviceSession, direction: ControlFlickDirection) {
-        performControlAction {
-            try await self.automationService.flick(deviceID: session.id, direction: direction)
-        }
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.flick(direction, serverURL: appiumServerURL)
     }
 
     func typeControlText(_ text: String, for session: DeviceSession) {
-        performControlAction {
-            try await self.automationService.typeText(deviceID: session.id, text: text)
-        }
+        guard prepareQueuedControlAction(for: session), !text.isEmpty else { return }
+        session.controlSession.typeText(text, serverURL: appiumServerURL)
     }
 
     func pressHome(for session: DeviceSession) {
-        performControlAction {
-            try await self.automationService.pressButton(deviceID: session.id, name: "home")
-        }
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.pressHome(serverURL: appiumServerURL)
     }
 
     func openAppSwitcher(for session: DeviceSession) {
-        performControlAction {
-            try await self.automationService.appSwitcher(deviceID: session.id)
-        }
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.openAppSwitcher(serverURL: appiumServerURL)
     }
 
     func pressBack(for session: DeviceSession) {
-        performControlAction {
-            try await self.automationService.back(deviceID: session.id)
-        }
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.pressBack(serverURL: appiumServerURL)
     }
 
-    private func performControlAction(_ action: @escaping @MainActor () async throws -> Void) {
+    private func prepareQueuedControlAction(for session: DeviceSession) -> Bool {
         guard canUseControl else {
             statusMessage = t("status.activationControlRequired")
             showActivation(for: [])
-            return
+            return false
         }
-        Task { @MainActor [weak self] in
-            do {
-                try await action()
-            } catch is CancellationError {
-                return
-            } catch {
-                self?.statusMessage = error.localizedDescription
-            }
+        guard session.controlSession.isReady else {
+            statusMessage = t("control.state.unavailable")
+            return false
         }
+        return true
     }
 
     private func canStartControl(for session: DeviceSession) -> Bool {

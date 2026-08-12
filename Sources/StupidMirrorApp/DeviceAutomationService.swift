@@ -12,6 +12,7 @@ enum DeviceAutomationError: LocalizedError, Sendable {
     case mirrorFailed(String)
     case invalidArgument(String)
     case timedOut(String)
+    case assertionFailed(String)
 
     var code: String {
         switch self {
@@ -26,6 +27,7 @@ enum DeviceAutomationError: LocalizedError, Sendable {
         case .mirrorFailed: "mirror_failed"
         case .invalidArgument: "invalid_argument"
         case .timedOut: "timed_out"
+        case .assertionFailed: "assertion_failed"
         }
     }
 
@@ -43,7 +45,8 @@ enum DeviceAutomationError: LocalizedError, Sendable {
             "The local Appium service could not start."
         case .controlNotReady:
             "iPhone control is not ready. Call connect_control first."
-        case let .controlFailed(message), let .mirrorFailed(message), let .timedOut(message):
+        case let .controlFailed(message), let .mirrorFailed(message), let .timedOut(message),
+             let .assertionFailed(message):
             message
         case .activationRequired:
             "Activation is required for iPhone control or for using more than one device at the same time."
@@ -134,6 +137,8 @@ actor DeviceCommandLock {
 final class DeviceAutomationService: @unchecked Sendable {
     private unowned let store: DeviceGalleryStore
     private let commandLock = DeviceCommandLock()
+    private let screenTextRecognizer = VisionScreenTextRecognizer()
+    private var latestObservations: [String: ScreenObservation] = [:]
 
     init(store: DeviceGalleryStore) {
         self.store = store
@@ -156,6 +161,330 @@ final class DeviceAutomationService: @unchecked Sendable {
         AutomationDiagnosticSnapshot(
             items: Dictionary(uniqueKeysWithValues: store.diagnostics.map { ($0.name, $0.value) }),
             devices: listDevices()
+        )
+    }
+
+    func observeScreen(
+        deviceID: String?,
+        includeImage: Bool,
+        includeAccessibility: Bool,
+        includeOCR: Bool,
+        ocrMode: ScreenOCRMode,
+        ocrLanguages: [String]
+    ) async throws -> ScreenObservationResult {
+        let session = try selectSession(deviceID: deviceID)
+        let normalizedOCRLanguages = includeOCR
+            ? try Self.normalizedOCRLanguages(ocrLanguages)
+            : []
+        let frameTask = includeImage || includeOCR
+            ? Task.detached(priority: .utility) {
+                session.mirrorSession.latestFrameStore.snapshot(includePNG: includeImage)
+            }
+            : nil
+
+        var accessibilityElements: [ScreenElement] = []
+        var accessibilityAvailable = false
+        var accessibilityError: String?
+        if includeAccessibility, session.controlSession.isReady {
+            do {
+                let xml = try await withDeviceLock(session.id) {
+                    try await session.controlSession.pageSource(serverURL: self.store.appiumServerURL)
+                }
+                let screenSize = session.controlSession.screenSize
+                accessibilityElements = await Task.detached(priority: .utility) {
+                    ScreenElementParser.parse(xml, screenSize: screenSize)
+                }.value
+                accessibilityAvailable = true
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                accessibilityError = error.localizedDescription
+            }
+        } else if includeAccessibility {
+            accessibilityError = DeviceAutomationError.controlNotReady.localizedDescription
+        }
+        let frame = await frameTask?.value
+
+        var ocrElements: [ScreenElement] = []
+        var ocrAvailable = false
+        var ocrError: String?
+        if includeOCR {
+            if let frame {
+                do {
+                    try Task.checkCancellation()
+                    let recognized = try await screenTextRecognizer.recognize(
+                        deviceID: session.id,
+                        snapshot: frame,
+                        mode: ocrMode,
+                        languages: normalizedOCRLanguages
+                    )
+                    ocrElements = ScreenOCRElementFactory.makeElements(
+                        from: recognized,
+                        screenSize: session.controlSession.screenSize,
+                        imageWidth: frame.width,
+                        imageHeight: frame.height
+                    )
+                    ocrAvailable = true
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    ocrError = error.localizedDescription
+                }
+            } else {
+                ocrError = "No live mirror frame is available. Call start_mirror first."
+            }
+        }
+        let elements = ScreenElementFusion.merge(
+            accessibility: accessibilityElements,
+            ocr: ocrElements
+        )
+        let observation = ScreenObservation(
+            id: UUID(),
+            deviceID: session.id,
+            capturedAt: Date(),
+            mirrorState: Self.mirrorStateValue(session.mirrorSession.state),
+            controlState: Self.controlStateValue(session.controlSession.state),
+            imageAvailable: frame?.pngData != nil,
+            imageWidth: frame?.width,
+            imageHeight: frame?.height,
+            accessibilityAvailable: accessibilityAvailable,
+            accessibilityError: accessibilityError,
+            ocrAvailable: ocrAvailable,
+            ocrError: ocrError,
+            ocrMode: includeOCR ? ocrMode : nil,
+            ocrLanguages: normalizedOCRLanguages,
+            elements: elements
+        )
+        let result = ScreenObservationResult(
+            observation: observation,
+            imageData: frame?.pngData
+        )
+        // Cache semantic metadata only. The full PNG is returned to the caller
+        // but must not remain retained in the long-lived automation service.
+        latestObservations[session.id] = observation
+        return result
+    }
+
+    func findElements(
+        deviceID: String?,
+        query: String,
+        includeOCR: Bool,
+        ocrMode: ScreenOCRMode,
+        ocrLanguages: [String]
+    ) async throws -> ScreenElementSearchResult {
+        let normalized = try Self.normalizedQuery(query)
+        let accessibilityResult = try await observeScreen(
+            deviceID: deviceID,
+            includeImage: false,
+            includeAccessibility: true,
+            includeOCR: false,
+            ocrMode: ocrMode,
+            ocrLanguages: ocrLanguages
+        )
+        let accessibilityMatches = accessibilityResult.observation.elements.filter {
+            $0.source == .accessibility && $0.visible && $0.searchableText.contains(normalized)
+        }
+        if !accessibilityMatches.isEmpty {
+            return ScreenElementSearchResult(
+                observationID: accessibilityResult.observation.id,
+                query: query,
+                sourcesChecked: [.accessibility],
+                matches: accessibilityMatches
+            )
+        }
+        if !includeOCR {
+            guard accessibilityResult.observation.accessibilityAvailable else {
+                throw DeviceAutomationError.controlFailed(
+                    accessibilityResult.observation.accessibilityError
+                        ?? DeviceAutomationError.controlNotReady.localizedDescription
+                )
+            }
+            return ScreenElementSearchResult(
+                observationID: accessibilityResult.observation.id,
+                query: query,
+                sourcesChecked: [.accessibility],
+                matches: []
+            )
+        }
+
+        let ocrResult = try await observeScreen(
+            deviceID: deviceID,
+            includeImage: false,
+            includeAccessibility: false,
+            includeOCR: true,
+            ocrMode: ocrMode,
+            ocrLanguages: ocrLanguages
+        )
+        guard ocrResult.observation.ocrAvailable else {
+            throw DeviceAutomationError.controlFailed(
+                ocrResult.observation.ocrError ?? "Local OCR is unavailable."
+            )
+        }
+        let ocrMatches = ocrResult.observation.elements.filter {
+            $0.source == .ocr && $0.visible && $0.searchableText.contains(normalized)
+        }
+        return ScreenElementSearchResult(
+            observationID: ocrResult.observation.id,
+            query: query,
+            sourcesChecked: accessibilityResult.observation.accessibilityAvailable
+                ? [.accessibility, .ocr]
+                : [.ocr],
+            matches: ocrMatches
+        )
+    }
+
+    func tapElement(
+        deviceID: String?,
+        observationID: UUID?,
+        elementID: String
+    ) async throws -> ScreenElementTapResult {
+        let session = try readyControlSession(deviceID: deviceID)
+        guard let cached = latestObservations[session.id] else {
+            throw DeviceAutomationError.invalidArgument(
+                "No screen observation is available. Call observe_screen or find_element first."
+            )
+        }
+        if let observationID, cached.id != observationID {
+            throw DeviceAutomationError.invalidArgument(
+                "The observation is stale. Observe the screen again before tapping."
+            )
+        }
+        guard let element = cached.elements.first(where: { $0.id == elementID }),
+              element.visible, element.enabled else {
+            throw DeviceAutomationError.invalidArgument(
+                "The element is missing, hidden, or disabled."
+            )
+        }
+        session.mirrorSession.showAutomationTarget(
+            normalizedFrame: element.normalizedFrame,
+            label: element.source == .accessibility ? "AI · Element" : "AI · OCR"
+        )
+        await Task.yield()
+
+        if element.source == .accessibility {
+            let clicked = try await withDeviceLock(session.id) {
+                try await session.controlSession.clickSemanticElementAwaiting(
+                    element,
+                    serverURL: self.store.appiumServerURL
+                )
+            }
+            if clicked {
+                return ScreenElementTapResult(
+                    observationID: cached.id,
+                    elementID: element.id,
+                    source: element.source,
+                    strategy: "wda_element"
+                )
+            }
+        }
+
+        guard let size = session.controlSession.screenSize, size.width > 0, size.height > 0 else {
+            throw DeviceAutomationError.controlNotReady
+        }
+        let normalizedFrame = element.normalizedFrame
+            ?? element.frame?.normalized(width: size.width, height: size.height)
+        guard let normalizedFrame else {
+            throw DeviceAutomationError.invalidArgument(
+                "The element could not be resolved by WDA and has no tappable frame."
+            )
+        }
+        let x = min(max(normalizedFrame.centerX, 0), 1)
+        let y = min(max(normalizedFrame.centerY, 0), 1)
+        try await withDeviceLock(session.id) {
+            try await session.controlSession.tapNormalizedAwaiting(
+                x: x,
+                y: y,
+                serverURL: self.store.appiumServerURL
+            )
+        }
+        return ScreenElementTapResult(
+            observationID: cached.id,
+            elementID: element.id,
+            source: element.source,
+            strategy: "coordinate_fallback"
+        )
+    }
+
+    func waitForElement(
+        deviceID: String?,
+        query: String,
+        state: String,
+        timeoutSeconds: Double,
+        includeOCR: Bool,
+        ocrMode: ScreenOCRMode,
+        ocrLanguages: [String]
+    ) async throws -> ScreenConditionResult {
+        _ = try Self.normalizedQuery(query)
+        guard state == "present" || state == "absent" else {
+            throw DeviceAutomationError.invalidArgument("state must be present or absent.")
+        }
+        guard (0.5...60).contains(timeoutSeconds) else {
+            throw DeviceAutomationError.invalidArgument("timeout_seconds must be between 0.5 and 60.")
+        }
+        let deadline = ContinuousClock.now + .milliseconds(Int(timeoutSeconds * 1_000))
+        while true {
+            try Task.checkCancellation()
+            let result = try await findElements(
+                deviceID: deviceID,
+                query: query,
+                includeOCR: includeOCR,
+                ocrMode: ocrMode,
+                ocrLanguages: ocrLanguages
+            )
+            let count = result.matches.count
+            let satisfied = state == "present" ? count > 0 : count == 0
+            if satisfied {
+                return ScreenConditionResult(
+                    observationID: result.observationID,
+                    query: query,
+                    state: state,
+                    satisfied: true,
+                    matchCount: count,
+                    sourcesChecked: result.sourcesChecked
+                )
+            }
+            guard .now < deadline else {
+                throw DeviceAutomationError.timedOut(
+                    "Screen condition was not met within \(timeoutSeconds) seconds: \(state) '\(query)'."
+                )
+            }
+            try await Task.sleep(for: .milliseconds(400))
+        }
+    }
+
+    func assertScreen(
+        deviceID: String?,
+        query: String,
+        state: String,
+        includeOCR: Bool,
+        ocrMode: ScreenOCRMode,
+        ocrLanguages: [String]
+    ) async throws -> ScreenConditionResult {
+        _ = try Self.normalizedQuery(query)
+        guard state == "present" || state == "absent" else {
+            throw DeviceAutomationError.invalidArgument("state must be present or absent.")
+        }
+        let result = try await findElements(
+            deviceID: deviceID,
+            query: query,
+            includeOCR: includeOCR,
+            ocrMode: ocrMode,
+            ocrLanguages: ocrLanguages
+        )
+        let count = result.matches.count
+        let satisfied = state == "present" ? count > 0 : count == 0
+        guard satisfied else {
+            throw DeviceAutomationError.assertionFailed(
+                "Expected screen element to be \(state): '\(query)'. Found \(count) matches."
+            )
+        }
+        return ScreenConditionResult(
+            observationID: result.observationID,
+            query: query,
+            state: state,
+            satisfied: true,
+            matchCount: count,
+            sourcesChecked: result.sourcesChecked
         )
     }
 
@@ -216,6 +545,11 @@ final class DeviceAutomationService: @unchecked Sendable {
     func tap(deviceID: String?, x: Double, y: Double) async throws {
         try Self.validatePoint(x: x, y: y)
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationPoint(
+            CGPoint(x: x, y: y),
+            label: "AI · Tap"
+        )
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.tapNormalizedAwaiting(
                 x: x, y: y, serverURL: self.store.appiumServerURL
@@ -226,6 +560,12 @@ final class DeviceAutomationService: @unchecked Sendable {
     func doubleTap(deviceID: String?, x: Double, y: Double) async throws {
         try Self.validatePoint(x: x, y: y)
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationPoint(
+            CGPoint(x: x, y: y),
+            kind: .doubleTap,
+            label: "AI · Double Tap"
+        )
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.doubleTapNormalizedAwaiting(
                 x: x, y: y, serverURL: self.store.appiumServerURL
@@ -239,6 +579,12 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("duration_seconds must be between 0.5 and 10.")
         }
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationPoint(
+            CGPoint(x: x, y: y),
+            kind: .longPress,
+            label: "AI · Long Press"
+        )
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.longPressNormalizedAwaiting(
                 x: x,
@@ -263,6 +609,12 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("duration_ms must be between 50 and 5000.")
         }
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationSwipe(
+            from: CGPoint(x: startX, y: startY),
+            to: CGPoint(x: endX, y: endY),
+            label: "AI · Swipe"
+        )
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.swipeNormalizedAwaiting(
                 from: CGPoint(x: startX, y: startY),
@@ -275,6 +627,8 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     func flick(deviceID: String?, direction: ControlFlickDirection) async throws {
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · Flick")
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.flickAwaiting(
                 direction: direction,
@@ -325,6 +679,8 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("text is limited to 10,000 UTF-8 bytes.")
         }
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · Type \(text.count) chars")
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.typeTextAwaiting(text, serverURL: self.store.appiumServerURL)
         }
@@ -342,6 +698,8 @@ final class DeviceAutomationService: @unchecked Sendable {
             )
         }
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · \(name.replacingOccurrences(of: "_", with: " ").capitalized)")
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.pressButtonAwaiting(
                 appiumName, serverURL: self.store.appiumServerURL
@@ -351,6 +709,11 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     func back(deviceID: String?) async throws {
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationPoint(
+            CGPoint(x: 0.09, y: 0.075),
+            label: "AI · Back"
+        )
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.pressBackAwaiting(serverURL: self.store.appiumServerURL)
         }
@@ -358,6 +721,8 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     func appSwitcher(deviceID: String?) async throws {
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · App Switcher")
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.openAppSwitcherAwaiting(serverURL: self.store.appiumServerURL)
         }
@@ -366,6 +731,8 @@ final class DeviceAutomationService: @unchecked Sendable {
     func activateApp(deviceID: String?, bundleID: String) async throws {
         try Self.validateBundleID(bundleID)
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · Open App")
+        await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.activateApp(
                 bundleID: bundleID, serverURL: self.store.appiumServerURL
@@ -376,6 +743,8 @@ final class DeviceAutomationService: @unchecked Sendable {
     func terminateApp(deviceID: String?, bundleID: String) async throws -> Bool {
         try Self.validateBundleID(bundleID)
         let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · Terminate App")
+        await Task.yield()
         return try await withDeviceLock(session.id) {
             try await session.controlSession.terminateApp(
                 bundleID: bundleID, serverURL: self.store.appiumServerURL
@@ -397,6 +766,56 @@ final class DeviceAutomationService: @unchecked Sendable {
               value.contains("."),
               value.unicodeScalars.allSatisfy(allowed.contains) else {
             throw DeviceAutomationError.invalidArgument("bundle_id is invalid.")
+        }
+    }
+
+    nonisolated private static func normalizedQuery(_ query: String) throws -> String {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !value.isEmpty, value.count <= 500 else {
+            throw DeviceAutomationError.invalidArgument("query must contain 1 to 500 characters.")
+        }
+        return value
+    }
+
+    nonisolated static var defaultOCRLanguages: [String] {
+        ["zh-Hans", "en-US"]
+    }
+
+    nonisolated private static func normalizedOCRLanguages(_ languages: [String]) throws -> [String] {
+        let requested = languages.isEmpty ? defaultOCRLanguages : languages
+        guard requested.count <= 8 else {
+            throw DeviceAutomationError.invalidArgument("ocr_languages accepts at most 8 language identifiers.")
+        }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        var result: [String] = []
+        for rawValue in requested {
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard (2...35).contains(value.count),
+                  value.unicodeScalars.allSatisfy(allowed.contains) else {
+                throw DeviceAutomationError.invalidArgument(
+                    "OCR language identifiers must look like zh-Hans or en-US."
+                )
+            }
+            if !result.contains(value) { result.append(value) }
+        }
+        return result
+    }
+
+    nonisolated private static func mirrorStateValue(_ state: MirrorState) -> String {
+        switch state {
+        case .stopped: "stopped"
+        case .starting: "starting"
+        case .running: "running"
+        case .failed: "failed"
+        }
+    }
+
+    nonisolated private static func controlStateValue(_ state: ControlState) -> String {
+        switch state {
+        case .unavailable: "disconnected"
+        case .connecting: "connecting"
+        case .ready: "ready"
+        case .failed: "failed"
         }
     }
 
