@@ -217,8 +217,8 @@ The preferred agent loop is:
 2. `observe_screen` reads the newest live frame without fetching Accessibility
    by default. Set `include_ocr` for local text recognition. Request
    `include_accessibility` only for explicit deep hierarchy inspection.
-3. `tap_text` takes up to 16 candidate labels and checks the latest 45 FPS
-   mirror frame with local Vision OCR first. If pixels do not expose a label,
+3. `tap_text` takes up to 16 candidate labels and checks the latest live mirror
+   frame with local Vision OCR first. If pixels do not expose a label,
    it parses one WDA UI Tree for every candidate together and clicks the fresh
    observed frame. `find_any_element` provides the same lookup without clicking.
 4. A missing label therefore costs one OCR pass plus one hierarchy snapshot,
@@ -255,7 +255,7 @@ state, screen-point frame, and normalized frame. OCR elements use
 `VNRecognizeTextRequest` locally with `fast` and `accurate` modes; Chinese and
 English are the defaults, and agents can pass other Vision language identifiers.
 Recognition is on-demand, single-flight, and briefly cached. It reads the
-newest retained frame without changing the wireless 45 FPS stream or entering
+newest retained frame without changing the live wireless stream or entering
 the capture/encoding hot path.
 
 Actions invoked through the AI harness are visible in StupidMirror: semantic

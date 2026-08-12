@@ -21,6 +21,12 @@
     <link rel="alternate" hreflang="en" href="https://liutianjie.github.io/StupidMirror/" />
     <link rel="alternate" hreflang="zh-CN" href="https://liutianjie.github.io/StupidMirror/zh/" />
     <link rel="alternate" hreflang="x-default" href="https://liutianjie.github.io/StupidMirror/" />
+    <script>
+      if (new URLSearchParams(window.location.search).get("lang") === "zh") {
+        document.documentElement.classList.add("locale-pending");
+        window.setTimeout(() => document.documentElement.classList.remove("locale-pending"), 1200);
+      }
+    </script>
     <link rel="icon" href="assets/favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -58,7 +64,7 @@
           <a href="#automation">AI harness</a>
           <a href="#scenes">Use cases</a>
           <a href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">GitHub</a>
-          <a href="zh/" data-lang-switch>中文</a>
+          <a href="?lang=zh" data-lang-switch>中文</a>
         </div>
 
         <a
@@ -260,7 +266,7 @@
             </figure>
 
             <div class="wireless-specs reveal">
-              <div class="spec"><strong>45</strong><span>FPS target</span></div>
+              <div class="spec"><strong>LAN</strong><span>Same-network mirror</span></div>
               <div class="spec"><strong>SRT</strong><span>Complete access units</span></div>
               <div class="spec"><strong>H.264</strong><span>VideoToolbox codec</span></div>
               <p>

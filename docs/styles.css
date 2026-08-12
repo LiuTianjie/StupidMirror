@@ -31,6 +31,10 @@ html {
   background: var(--ink);
 }
 
+html.locale-pending body {
+  visibility: hidden;
+}
+
 body {
   margin: 0;
   min-width: 320px;

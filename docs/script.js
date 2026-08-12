@@ -45,7 +45,7 @@ const chineseText = new Map([
   ["Keep going wirelessly.", "之后无线继续。"],
   ["The built-in guide checks the device, your Apple development account, and the screen agent. After one USB setup, disconnect the cable and keep a full-resolution H.264 mirror over your LAN.", "内置向导会检查设备、Apple 开发账号与画面代理。完成一次准备后，断开 USB，仍可通过局域网获得全分辨率 H.264 镜像。"],
   ["Prepare once over USB", "首次通过 USB 准备一次"],
-  ["FPS target", "FPS 目标帧率"],
+  ["Same-network mirror", "同网发现与镜像"],
   ["Complete access units", "完整访问单元传输"],
   ["VideoToolbox codec", "VideoToolbox 编解码"],
   ["Mirroring and control stay separate. Viewing a screen never installs or starts the control path behind your back.", "镜像与控制保持独立：只想查看画面时，不会擅自安装或启动控制流程。"],
@@ -171,6 +171,7 @@ const applyChineseLocale = () => {
 
 const requestedLocale = new URLSearchParams(window.location.search).get("lang");
 if (requestedLocale === "zh") applyChineseLocale();
+document.documentElement.classList.remove("locale-pending");
 
 document.querySelectorAll("[data-year]").forEach((node) => {
   node.textContent = new Date().getFullYear();

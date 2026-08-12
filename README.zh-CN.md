@@ -89,8 +89,8 @@ open dist/StupidMirror.app
 1. 调用 `list_devices`，按需执行 `start_mirror` 与 `connect_control`。
 2. 使用 `observe_screen` 获取最新帧；日常导航优先启用本地 OCR，只有明确需要
    深层结构时才请求 Accessibility。
-3. 使用 `tap_text` 一次提交最多 16 个候选文案。StupidMirror 先在 45 FPS
-   最新镜像帧上做一次本地 OCR；像素中没有目标时，再为全部候选共享一次 WDA
+3. 使用 `tap_text` 一次提交最多 16 个候选文案。StupidMirror 先在最新实时
+   镜像帧上做一次本地 OCR；像素中没有目标时，再为全部候选共享一次 WDA
    UI Tree 快照。
 4. 使用 `tap_element` 时携带 observation UUID，可拒绝已经过期的元素 ID。
 5. 文本输入优先使用 `replace_text` 或 `clear_text`，它们直接操作当前原生输入
