@@ -92,6 +92,42 @@ enum AutomationScrollDirection: String, CaseIterable, Sendable {
     case up, down, left, right
 }
 
+struct AutomationTextEditResult: Codable, Equatable, Sendable {
+    let action: String
+    let strategy: String
+    let value: String?
+    let verified: Bool
+}
+
+struct ScreenHighlightItem: Codable, Equatable, Sendable {
+    let number: Int
+    let elementID: String
+    let type: String
+    let label: String
+    let normalizedFrame: ScreenElementFrame
+
+    enum CodingKeys: String, CodingKey {
+        case number
+        case elementID = "element_id"
+        case type, label
+        case normalizedFrame = "normalized_frame"
+    }
+}
+
+struct ScreenHighlightResult: Codable, Equatable, Sendable {
+    let observationID: UUID
+    let highlightedCount: Int
+    let durationSeconds: Double
+    let items: [ScreenHighlightItem]
+
+    enum CodingKeys: String, CodingKey {
+        case observationID = "observation_id"
+        case highlightedCount = "highlighted_count"
+        case durationSeconds = "duration_seconds"
+        case items
+    }
+}
+
 actor DeviceCommandLock {
     private struct Waiter {
         let id: UUID
@@ -135,10 +171,21 @@ actor DeviceCommandLock {
 
 @MainActor
 final class DeviceAutomationService: @unchecked Sendable {
+    private struct NativeElementReferenceCache {
+        let observationID: UUID
+        let referencesByElementID: [String: String]
+    }
+
+    private struct PreparedQuery {
+        let raw: String
+        let normalized: String
+    }
+
     private unowned let store: DeviceGalleryStore
     private let commandLock = DeviceCommandLock()
     private let screenTextRecognizer = VisionScreenTextRecognizer()
     private var latestObservations: [String: ScreenObservation] = [:]
+    private var latestNativeElementReferences: [String: NativeElementReferenceCache] = [:]
 
     init(store: DeviceGalleryStore) {
         self.store = store
@@ -262,6 +309,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         // Cache semantic metadata only. The full PNG is returned to the caller
         // but must not remain retained in the long-lived automation service.
         latestObservations[session.id] = observation
+        latestNativeElementReferences[session.id] = nil
         return result
     }
 
@@ -272,64 +320,126 @@ final class DeviceAutomationService: @unchecked Sendable {
         ocrMode: ScreenOCRMode,
         ocrLanguages: [String]
     ) async throws -> ScreenElementSearchResult {
-        let normalized = try Self.normalizedQuery(query)
-        let accessibilityResult = try await observeScreen(
+        let batch = try await findAnyElements(
             deviceID: deviceID,
+            queries: [query],
+            includeOCR: includeOCR,
+            ocrMode: ocrMode,
+            ocrLanguages: ocrLanguages
+        )
+        return ScreenElementSearchResult(
+            observationID: batch.observationID,
+            query: query,
+            sourcesChecked: batch.sourcesChecked,
+            matches: batch.matches
+        )
+    }
+
+    /// Resolves multiple alternative labels as one state inspection. The live
+    /// mirror is cheap to OCR, so use it first when requested. If pixels do not
+    /// expose the label (for example an icon-only SpringBoard item), fetch and
+    /// parse the WDA hierarchy once for every candidate instead of paying one
+    /// negative native predicate lookup per synonym.
+    func findAnyElements(
+        deviceID: String?,
+        queries: [String],
+        includeOCR: Bool,
+        ocrMode: ScreenOCRMode,
+        ocrLanguages: [String]
+    ) async throws -> ScreenElementBatchSearchResult {
+        let preparedQueries = try Self.preparedQueries(queries)
+        let session = try readyControlSession(deviceID: deviceID)
+
+        if includeOCR {
+            let ocrResult = try await observeScreen(
+                deviceID: session.id,
+                includeImage: false,
+                includeAccessibility: false,
+                includeOCR: true,
+                ocrMode: ocrMode,
+                ocrLanguages: ocrLanguages
+            )
+            guard ocrResult.observation.ocrAvailable else {
+                throw DeviceAutomationError.controlFailed(
+                    ocrResult.observation.ocrError ?? "Local OCR is unavailable."
+                )
+            }
+            if let match = Self.firstMatch(
+                in: ocrResult.observation.elements,
+                candidates: preparedQueries,
+                source: .ocr
+            ) {
+                return ScreenElementBatchSearchResult(
+                    observationID: ocrResult.observation.id,
+                    queries: preparedQueries.map(\.raw),
+                    matchedQuery: match.query.raw,
+                    sourcesChecked: [.ocr],
+                    matches: match.elements
+                )
+            }
+        }
+
+        let hierarchyResult = try await observeScreen(
+            deviceID: session.id,
             includeImage: false,
             includeAccessibility: true,
             includeOCR: false,
             ocrMode: ocrMode,
-            ocrLanguages: ocrLanguages
+            ocrLanguages: []
         )
-        let accessibilityMatches = accessibilityResult.observation.elements.filter {
-            $0.source == .accessibility && $0.visible && $0.searchableText.contains(normalized)
-        }
-        if !accessibilityMatches.isEmpty {
-            return ScreenElementSearchResult(
-                observationID: accessibilityResult.observation.id,
-                query: query,
-                sourcesChecked: [.accessibility],
-                matches: accessibilityMatches
+        if let match = Self.firstMatch(
+            in: hierarchyResult.observation.elements,
+            candidates: preparedQueries,
+            source: .accessibility
+        ) {
+            return ScreenElementBatchSearchResult(
+                observationID: hierarchyResult.observation.id,
+                queries: preparedQueries.map(\.raw),
+                matchedQuery: match.query.raw,
+                sourcesChecked: includeOCR ? [.ocr, .accessibility] : [.accessibility],
+                matches: match.elements
             )
         }
-        if !includeOCR {
-            guard accessibilityResult.observation.accessibilityAvailable else {
-                throw DeviceAutomationError.controlFailed(
-                    accessibilityResult.observation.accessibilityError
-                        ?? DeviceAutomationError.controlNotReady.localizedDescription
-                )
-            }
-            return ScreenElementSearchResult(
-                observationID: accessibilityResult.observation.id,
-                query: query,
-                sourcesChecked: [.accessibility],
-                matches: []
-            )
-        }
+        return ScreenElementBatchSearchResult(
+            observationID: hierarchyResult.observation.id,
+            queries: preparedQueries.map(\.raw),
+            matchedQuery: nil,
+            sourcesChecked: includeOCR ? [.ocr, .accessibility] : [.accessibility],
+            matches: []
+        )
+    }
 
-        let ocrResult = try await observeScreen(
+    func tapText(
+        deviceID: String?,
+        queries: [String],
+        includeOCR: Bool,
+        ocrMode: ScreenOCRMode,
+        ocrLanguages: [String]
+    ) async throws -> ScreenTextTapResult {
+        let result = try await findAnyElements(
             deviceID: deviceID,
-            includeImage: false,
-            includeAccessibility: false,
-            includeOCR: true,
+            queries: queries,
+            includeOCR: includeOCR,
             ocrMode: ocrMode,
             ocrLanguages: ocrLanguages
         )
-        guard ocrResult.observation.ocrAvailable else {
-            throw DeviceAutomationError.controlFailed(
-                ocrResult.observation.ocrError ?? "Local OCR is unavailable."
+        guard let matchedQuery = result.matchedQuery,
+              let match = result.matches.first else {
+            throw DeviceAutomationError.invalidArgument(
+                "No visible element matched any requested text."
             )
         }
-        let ocrMatches = ocrResult.observation.elements.filter {
-            $0.source == .ocr && $0.visible && $0.searchableText.contains(normalized)
-        }
-        return ScreenElementSearchResult(
-            observationID: ocrResult.observation.id,
-            query: query,
-            sourcesChecked: accessibilityResult.observation.accessibilityAvailable
-                ? [.accessibility, .ocr]
-                : [.ocr],
-            matches: ocrMatches
+        let tap = try await tapElement(
+            deviceID: deviceID,
+            observationID: result.observationID,
+            elementID: match.id
+        )
+        return ScreenTextTapResult(
+            matchedQuery: matchedQuery,
+            observationID: tap.observationID,
+            elementID: tap.elementID,
+            source: tap.source,
+            strategy: tap.strategy
         )
     }
 
@@ -362,19 +472,49 @@ final class DeviceAutomationService: @unchecked Sendable {
         await Task.yield()
 
         if element.source == .accessibility {
-            let clicked = try await withDeviceLock(session.id) {
-                try await session.controlSession.clickSemanticElementAwaiting(
-                    element,
-                    serverURL: self.store.appiumServerURL
-                )
+            if let nativeCache = latestNativeElementReferences[session.id],
+               nativeCache.observationID == cached.id,
+               let reference = nativeCache.referencesByElementID[element.id] {
+                do {
+                    try await withDeviceLock(session.id) {
+                        try await session.controlSession.clickElementReferenceAwaiting(
+                            reference,
+                            serverURL: self.store.appiumServerURL
+                        )
+                    }
+                    return ScreenElementTapResult(
+                        observationID: cached.id,
+                        elementID: element.id,
+                        source: element.source,
+                        strategy: "wda_element"
+                    )
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // The reference can become stale after an app transition.
+                    // Re-resolve the semantic metadata below before falling
+                    // back to the observed frame.
+                }
             }
-            if clicked {
-                return ScreenElementTapResult(
-                    observationID: cached.id,
-                    elementID: element.id,
-                    source: element.source,
-                    strategy: "wda_element"
-                )
+            // A parsed hierarchy has no WDA element reference. Its frame is
+            // already fresh and actionable, whereas resolving the same label
+            // again can cost several seconds on SpringBoard. Only re-resolve
+            // elements that have no usable geometry.
+            if element.normalizedFrame == nil, element.frame == nil {
+                let clicked = try await withDeviceLock(session.id) {
+                    try await session.controlSession.clickSemanticElementAwaiting(
+                        element,
+                        serverURL: self.store.appiumServerURL
+                    )
+                }
+                if clicked {
+                    return ScreenElementTapResult(
+                        observationID: cached.id,
+                        elementID: element.id,
+                        source: element.source,
+                        strategy: "wda_element"
+                    )
+                }
             }
         }
 
@@ -403,6 +543,135 @@ final class DeviceAutomationService: @unchecked Sendable {
             source: element.source,
             strategy: "coordinate_fallback"
         )
+    }
+
+    func highlightElements(
+        deviceID: String?,
+        observationID: UUID?,
+        elementIDs: [String],
+        durationSeconds: Double
+    ) throws -> ScreenHighlightResult {
+        let session = try readyControlSession(deviceID: deviceID)
+        let durationMilliseconds = try Self.highlightDurationMilliseconds(durationSeconds)
+        guard !elementIDs.isEmpty else {
+            throw DeviceAutomationError.invalidArgument("element_ids must not be empty.")
+        }
+        guard let cached = latestObservations[session.id] else {
+            throw DeviceAutomationError.invalidArgument(
+                "No screen observation is available. Call observe_screen or find_element first."
+            )
+        }
+        if let observationID, cached.id != observationID {
+            throw DeviceAutomationError.invalidArgument(
+                "The observation is stale. Observe the screen again before highlighting."
+            )
+        }
+        let items = try Self.highlightItems(
+            elements: cached.elements,
+            requestedIDs: elementIDs
+        )
+        session.mirrorSession.showAutomationHighlights(
+            items.map { ($0.normalizedFrame, "\($0.number)") },
+            durationMilliseconds: durationMilliseconds
+        )
+        return ScreenHighlightResult(
+            observationID: cached.id,
+            highlightedCount: items.count,
+            durationSeconds: durationSeconds,
+            items: items
+        )
+    }
+
+    func highlightClickableElements(
+        deviceID: String?,
+        durationSeconds: Double
+    ) async throws -> ScreenHighlightResult {
+        let durationMilliseconds = try Self.highlightDurationMilliseconds(durationSeconds)
+        let session = try readyControlSession(deviceID: deviceID)
+        let observationResult = try await observeScreen(
+            deviceID: session.id,
+            includeImage: false,
+            includeAccessibility: true,
+            includeOCR: false,
+            ocrMode: .fast,
+            ocrLanguages: []
+        )
+        let clickable = observationResult.observation.elements
+            .filter(\.isGuideClickable)
+            .sorted { lhs, rhs in
+                guard let left = lhs.normalizedFrame, let right = rhs.normalizedFrame else {
+                    return lhs.id < rhs.id
+                }
+                if abs(left.y - right.y) > 0.001 { return left.y < right.y }
+                if abs(left.x - right.x) > 0.001 { return left.x < right.x }
+                return lhs.id < rhs.id
+            }
+        let items = try Self.highlightItems(
+            elements: clickable,
+            requestedIDs: clickable.map(\.id)
+        )
+        session.mirrorSession.showAutomationHighlights(
+            items.map { ($0.normalizedFrame, "\($0.number)") },
+            durationMilliseconds: durationMilliseconds
+        )
+        return ScreenHighlightResult(
+            observationID: observationResult.observation.id,
+            highlightedCount: items.count,
+            durationSeconds: durationSeconds,
+            items: items
+        )
+    }
+
+    func clearHighlights(deviceID: String?) throws {
+        let session = try selectSession(deviceID: deviceID)
+        session.mirrorSession.clearAutomationHighlights()
+    }
+
+    nonisolated private static func highlightDurationMilliseconds(_ seconds: Double) throws -> Int {
+        guard (1...60).contains(seconds) else {
+            throw DeviceAutomationError.invalidArgument("duration_seconds must be between 1 and 60.")
+        }
+        return Int((seconds * 1_000).rounded())
+    }
+
+    nonisolated static func highlightItems(
+        elements: [ScreenElement],
+        requestedIDs: [String]
+    ) throws -> [ScreenHighlightItem] {
+        let byID = elements.reduce(into: [String: ScreenElement]()) { result, element in
+            result[element.id] = element
+        }
+        var seenIDs: Set<String> = []
+        var seenFrames: Set<String> = []
+        var selected: [(ScreenElement, ScreenElementFrame)] = []
+        for id in requestedIDs where seenIDs.insert(id).inserted {
+            guard let element = byID[id], element.visible, element.enabled,
+                  let frame = element.normalizedFrame,
+                  frame.width > 0, frame.height > 0 else { continue }
+            // Native trees can expose both a tappable container and a child
+            // with the same geometry. Keep one guide mark for that target.
+            let frameKey = [frame.x, frame.y, frame.width, frame.height]
+                .map { String(format: "%.4f", $0) }
+                .joined(separator: ":")
+            guard seenFrames.insert(frameKey).inserted else { continue }
+            selected.append((element, frame))
+        }
+        guard !selected.isEmpty else {
+            throw DeviceAutomationError.invalidArgument("No visible enabled elements with geometry were found.")
+        }
+        return selected.enumerated().map { offset, entry in
+            let element = entry.0
+            let label = [element.label, element.name, element.value]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first(where: { !$0.isEmpty }) ?? element.type
+            return ScreenHighlightItem(
+                number: offset + 1,
+                elementID: element.id,
+                type: element.type,
+                label: label,
+                normalizedFrame: entry.1
+            )
+        }
     }
 
     func waitForElement(
@@ -686,6 +955,49 @@ final class DeviceAutomationService: @unchecked Sendable {
         }
     }
 
+    func clearText(deviceID: String?) async throws -> AutomationTextEditResult {
+        let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · Clear text")
+        await Task.yield()
+        let result = try await withDeviceLock(session.id) {
+            try await session.controlSession.clearTextAwaiting(
+                serverURL: self.store.appiumServerURL
+            )
+        }
+        return AutomationTextEditResult(
+            action: "clear_text",
+            strategy: result.strategy,
+            value: result.value,
+            verified: result.verified
+        )
+    }
+
+    func replaceText(deviceID: String?, text: String) async throws -> AutomationTextEditResult {
+        guard !text.isEmpty else {
+            throw DeviceAutomationError.invalidArgument(
+                "text must not be empty. Use clear_text to empty the active field."
+            )
+        }
+        guard text.utf8.count <= 10_000 else {
+            throw DeviceAutomationError.invalidArgument("text is limited to 10,000 UTF-8 bytes.")
+        }
+        let session = try readyControlSession(deviceID: deviceID)
+        session.mirrorSession.showAutomationNotice("AI · Replace with \(text.count) chars")
+        await Task.yield()
+        let result = try await withDeviceLock(session.id) {
+            try await session.controlSession.replaceTextAwaiting(
+                text,
+                serverURL: self.store.appiumServerURL
+            )
+        }
+        return AutomationTextEditResult(
+            action: "replace_text",
+            strategy: result.strategy,
+            value: result.value,
+            verified: result.verified
+        )
+    }
+
     func pressButton(deviceID: String?, name: String) async throws {
         let appiumName: String
         switch name {
@@ -752,6 +1064,37 @@ final class DeviceAutomationService: @unchecked Sendable {
         }
     }
 
+    private func cacheFastAccessibilityObservation(
+        session: DeviceSession,
+        nativeMatches: [AppiumNativeElementMatch]
+    ) -> ScreenObservation {
+        let observation = ScreenObservation(
+            id: UUID(),
+            deviceID: session.id,
+            capturedAt: Date(),
+            mirrorState: Self.mirrorStateValue(session.mirrorSession.state),
+            controlState: Self.controlStateValue(session.controlSession.state),
+            imageAvailable: false,
+            imageWidth: nil,
+            imageHeight: nil,
+            accessibilityAvailable: true,
+            accessibilityError: nil,
+            ocrAvailable: false,
+            ocrError: nil,
+            ocrMode: nil,
+            ocrLanguages: [],
+            elements: nativeMatches.map(\.element)
+        )
+        latestObservations[session.id] = observation
+        latestNativeElementReferences[session.id] = NativeElementReferenceCache(
+            observationID: observation.id,
+            referencesByElementID: Dictionary(
+                uniqueKeysWithValues: nativeMatches.map { ($0.element.id, $0.reference) }
+            )
+        )
+        return observation
+    }
+
     nonisolated static func validatePoint(x: Double, y: Double) throws {
         guard x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y) else {
             throw DeviceAutomationError.invalidArgument("Coordinates must be finite values from 0 to 1.")
@@ -775,6 +1118,43 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("query must contain 1 to 500 characters.")
         }
         return value
+    }
+
+    nonisolated private static func preparedQueries(_ queries: [String]) throws -> [PreparedQuery] {
+        guard (1...16).contains(queries.count) else {
+            throw DeviceAutomationError.invalidArgument("queries must contain 1 to 16 values.")
+        }
+        var seen: Set<String> = []
+        var result: [PreparedQuery] = []
+        for query in queries {
+            let raw = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = try normalizedQuery(raw)
+            guard seen.insert(normalized).inserted else { continue }
+            result.append(PreparedQuery(raw: raw, normalized: normalized))
+        }
+        guard !result.isEmpty else {
+            throw DeviceAutomationError.invalidArgument("queries must contain a nonempty value.")
+        }
+        return result
+    }
+
+    nonisolated private static func firstMatch(
+        in elements: [ScreenElement],
+        candidates: [PreparedQuery],
+        source: ScreenElementSource
+    ) -> (query: PreparedQuery, elements: [ScreenElement])? {
+        for candidate in candidates {
+            let matches = elements.filter {
+                $0.source == source
+                    && $0.visible
+                    && $0.enabled
+                    && $0.searchableText.contains(candidate.normalized)
+            }
+            if !matches.isEmpty {
+                return (candidate, matches)
+            }
+        }
+        return nil
     }
 
     nonisolated static var defaultOCRLanguages: [String] {

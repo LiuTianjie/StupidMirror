@@ -217,6 +217,37 @@ struct ScreenElement: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+extension ScreenElement {
+    var isGuideClickable: Bool {
+        guard source == .accessibility,
+              visible,
+              enabled,
+              normalizedFrame != nil,
+              normalizedFrame?.width ?? 0 > 0,
+              normalizedFrame?.height ?? 0 > 0 else { return false }
+        if hittable == false { return false }
+        return Self.guideClickableTypes.contains(type)
+            || (hittable == true && accessible != false)
+            || Self.guideClickableTraits.contains { searchableText.contains($0) }
+    }
+
+    private static let guideClickableTypes: Set<String> = [
+        "XCUIElementTypeButton",
+        "XCUIElementTypeCell",
+        "XCUIElementTypeLink",
+        "XCUIElementTypeTextField",
+        "XCUIElementTypeSecureTextField",
+        "XCUIElementTypeSearchField",
+        "XCUIElementTypeTextView",
+        "XCUIElementTypeSwitch",
+        "XCUIElementTypeSlider",
+        "XCUIElementTypeStepper",
+        "XCUIElementTypeMenuItem"
+    ]
+
+    private static let guideClickableTraits = ["按钮", "button", "link", "链接"]
+}
+
 struct ScreenObservation: Codable, Equatable, Sendable {
     let id: UUID
     let deviceID: String
@@ -247,7 +278,23 @@ struct ScreenElementSearchResult: Codable, Equatable, Sendable {
     let matches: [ScreenElement]
 }
 
+struct ScreenElementBatchSearchResult: Codable, Equatable, Sendable {
+    let observationID: UUID
+    let queries: [String]
+    let matchedQuery: String?
+    let sourcesChecked: [ScreenElementSource]
+    let matches: [ScreenElement]
+}
+
 struct ScreenElementTapResult: Codable, Equatable, Sendable {
+    let observationID: UUID
+    let elementID: String
+    let source: ScreenElementSource
+    let strategy: String
+}
+
+struct ScreenTextTapResult: Codable, Equatable, Sendable {
+    let matchedQuery: String
     let observationID: UUID
     let elementID: String
     let source: ScreenElementSource

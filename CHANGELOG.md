@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.11 - 2026-08-12
+
+- Make routine Agent navigation read the live mirror first, batch multiple text candidates into one OCR and Accessibility lookup, and avoid repeated slow negative WDA queries.
+- Add verified native `clear_text` and `replace_text` actions for the active iOS input without invoking selection menus or guessing delete coordinates.
+- Add non-destructive clickable-element and selected-element overlays so every visible target can be reviewed on the Mac before an action is sent.
+- Publish a responsive GitHub Pages product site with direct access to the notarized macOS release.
+
 ## 0.2.9 - 2026-08-11
 
 - Replace the wireless video fallback stack with a complete-access-unit H.264 transport over pinned SRT libraries, including stricter frame reassembly and VideoToolbox decoding.

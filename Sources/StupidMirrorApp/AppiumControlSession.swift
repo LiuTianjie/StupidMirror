@@ -598,6 +598,16 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         try await context.client.typeText(sessionID: context.sessionID, text: text)
     }
 
+    func clearTextAwaiting(serverURL: String) async throws -> AppiumTextEditResult {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.clearActiveText(sessionID: context.sessionID)
+    }
+
+    func replaceTextAwaiting(_ text: String, serverURL: String) async throws -> AppiumTextEditResult {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.replaceActiveText(sessionID: context.sessionID, text: text)
+    }
+
     func pressButtonAwaiting(_ name: String, serverURL: String) async throws {
         let context = try readyContext(serverURL: serverURL)
         try await context.client.pressButton(sessionID: context.sessionID, name: name)
@@ -626,6 +636,31 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     func pageSource(serverURL: String) async throws -> String {
         let context = try readyContext(serverURL: serverURL)
         return try await context.client.pageSource(sessionID: context.sessionID)
+    }
+
+    /// Uses WDA's native predicate lookup without serializing the complete
+    /// accessibility hierarchy. Routine agent navigation should prefer this
+    /// path; `/source` remains available for explicit deep-tree inspection.
+    func findSemanticTextElementsAwaiting(
+        query: String,
+        maximumMatches: Int = 12,
+        serverURL: String
+    ) async throws -> [AppiumNativeElementMatch] {
+        let context = try readyContext(serverURL: serverURL)
+        return try await context.client.findSemanticTextElements(
+            sessionID: context.sessionID,
+            query: query,
+            screenSize: context.size,
+            maximumMatches: maximumMatches
+        )
+    }
+
+    func clickElementReferenceAwaiting(_ reference: String, serverURL: String) async throws {
+        let context = try readyContext(serverURL: serverURL)
+        try await context.client.clickElementReference(
+            sessionID: context.sessionID,
+            elementID: reference
+        )
     }
 
     /// Resolves a fresh XCUIElement reference and asks WDA to click it. This is
@@ -866,10 +901,19 @@ struct ControlActionBuffer {
 }
 
 struct AppiumHTTPClient: Sendable {
-    let baseURL: URL
+    typealias DataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
-    init(baseURL: String) {
+    let baseURL: URL
+    private let dataLoader: DataLoader
+
+    init(
+        baseURL: String,
+        dataLoader: @escaping DataLoader = { request in
+            try await URLSession.shared.data(for: request)
+        }
+    ) {
         self.baseURL = URL(string: Self.normalizedBaseURLString(baseURL))!
+        self.dataLoader = dataLoader
     }
 
     static func normalizedBaseURLString(_ value: String) -> String {
@@ -980,6 +1024,114 @@ struct AppiumHTTPClient: Sendable {
         )
     }
 
+    func clearActiveText(sessionID: String) async throws -> AppiumTextEditResult {
+        let elementID = try await activeElementReference(sessionID: sessionID)
+        try await clearElement(sessionID: sessionID, elementID: elementID)
+        let value = try await elementAttribute(
+            sessionID: sessionID,
+            elementID: elementID,
+            name: "value"
+        )
+        var verifiedValue = value
+        if value?.isEmpty == false {
+            let placeholder = try? await elementAttribute(
+                sessionID: sessionID,
+                elementID: elementID,
+                name: "placeholderValue"
+            )
+            guard value == placeholder else {
+                throw AppiumError.invalidResponse("The active field still contains text after clear.")
+            }
+            // XCUITest exposes a text field's placeholder as its value after
+            // clearing. Report the semantic content, which is empty.
+            verifiedValue = ""
+        }
+        return AppiumTextEditResult(
+            strategy: "wda_active_element_clear",
+            value: verifiedValue,
+            verified: true
+        )
+    }
+
+    func replaceActiveText(sessionID: String, text: String) async throws -> AppiumTextEditResult {
+        let elementID = try await activeElementReference(sessionID: sessionID)
+        try await clearElement(sessionID: sessionID, elementID: elementID)
+        _ = try await jsonRequest(
+            method: "POST",
+            path: "/session/\(sessionID)/element/\(elementID)/value",
+            payload: [
+                "text": text,
+                "value": text.map { String($0) }
+            ]
+        )
+        let value = try await elementAttribute(
+            sessionID: sessionID,
+            elementID: elementID,
+            name: "value"
+        )
+        guard value == text else {
+            throw AppiumError.invalidResponse(
+                "The active field value did not match the requested replacement."
+            )
+        }
+        return AppiumTextEditResult(
+            strategy: "wda_active_element_clear_and_set",
+            value: value,
+            verified: true
+        )
+    }
+
+    private func activeElementReference(sessionID: String) async throws -> String {
+        do {
+            let response = try await jsonRequest(
+                method: "GET",
+                path: "/session/\(sessionID)/element/active"
+            )
+            if let value = response["value"] as? [String: Any],
+               let reference = Self.elementReference(value) {
+                return reference
+            }
+        } catch AppiumError.httpStatus(404, _) {
+            // XCUITest Driver forwards /element/active to WDA, but some iOS
+            // system fields return 404 even while visibly focused. Resolve the
+            // focused editable control directly without serializing /source.
+        }
+        let focusedInput = AppiumSemanticLocator(
+            using: "-ios predicate string",
+            value: "focused == 1 AND (type == 'XCUIElementTypeTextField' OR type == 'XCUIElementTypeSecureTextField' OR type == 'XCUIElementTypeSearchField' OR type == 'XCUIElementTypeTextView')"
+        )
+        if let value = try await findFirstElementValue(
+            sessionID: sessionID,
+            locator: focusedInput
+        ), let reference = Self.elementReference(value) {
+            return reference
+        }
+        throw AppiumError.invalidResponse(
+            "No focused input element. Focus a text field before editing text."
+        )
+    }
+
+    private func clearElement(sessionID: String, elementID: String) async throws {
+        _ = try await jsonRequest(
+            method: "POST",
+            path: "/session/\(sessionID)/element/\(elementID)/clear",
+            payload: [:]
+        )
+    }
+
+    private func elementAttribute(
+        sessionID: String,
+        elementID: String,
+        name: String
+    ) async throws -> String? {
+        let response = try await jsonRequest(
+            method: "GET",
+            path: "/session/\(sessionID)/element/\(elementID)/attribute/\(name)"
+        )
+        if response["value"] is NSNull { return nil }
+        return response["value"] as? String
+    }
+
     func pressButton(sessionID: String, name: String) async throws {
         _ = try await jsonRequest(
             method: "POST",
@@ -1043,6 +1195,56 @@ struct AppiumHTTPClient: Sendable {
         return source
     }
 
+    func findSemanticTextElements(
+        sessionID: String,
+        query: String,
+        screenSize: DeviceScreenSize,
+        maximumMatches: Int = 12
+    ) async throws -> [AppiumNativeElementMatch] {
+        let locator = AppiumSemanticElementResolver.textContainsLocator(query: query)
+        guard maximumMatches > 0,
+              let value = try await findFirstElementValue(
+                  sessionID: sessionID,
+                  locator: locator
+              ),
+              let reference = Self.elementReference(value) else { return [] }
+        let frame = Self.frame(value["rect"])
+        let normalizedFrame = frame?.normalized(width: screenSize.width, height: screenSize.height)
+        let publicID = String(
+            format: "native-%016llx-00",
+            StableDeviceHash.fnv1a64(reference)
+        )
+        let element = ScreenElement(
+            id: publicID,
+            type: value["type"] as? String ?? "NativeTextMatch",
+            name: value["name"] as? String ?? query,
+            label: value["label"] as? String ?? query,
+            value: value["text"] as? String,
+            enabled: value["enabled"] as? Bool ?? true,
+            visible: value["displayed"] as? Bool ?? true,
+            accessible: true,
+            selected: value["selected"] as? Bool,
+            index: 0,
+            frame: frame,
+            frameSpace: frame == nil ? nil : .screenPoints,
+            normalizedFrame: normalizedFrame,
+            path: "native/0"
+        )
+        return [AppiumNativeElementMatch(
+            reference: reference,
+            query: query,
+            element: element
+        )]
+    }
+
+    func clickElementReference(sessionID: String, elementID: String) async throws {
+        _ = try await jsonRequest(
+            method: "POST",
+            path: "/session/\(sessionID)/element/\(elementID)/click",
+            payload: [:]
+        )
+    }
+
     func clickSemanticElement(sessionID: String, element: ScreenElement) async throws -> Bool {
         guard element.source == .accessibility else { return false }
         for locator in AppiumSemanticElementResolver.locators(for: element) {
@@ -1083,9 +1285,39 @@ struct AppiumHTTPClient: Sendable {
         )
         guard let values = response["value"] as? [[String: Any]] else { return [] }
         return values.compactMap { value in
-            value[AppiumSemanticElementResolver.w3cElementKey] as? String
-                ?? value["ELEMENT"] as? String
+            Self.elementReference(value)
         }
+    }
+
+    private func findFirstElementValue(
+        sessionID: String,
+        locator: AppiumSemanticLocator
+    ) async throws -> [String: Any]? {
+        do {
+            let response = try await jsonRequest(
+                method: "POST",
+                path: "/session/\(sessionID)/element",
+                payload: ["using": locator.using, "value": locator.value]
+            )
+            return response["value"] as? [String: Any]
+        } catch AppiumError.httpStatus(404, _) {
+            return nil
+        }
+    }
+
+    private static func elementReference(_ value: [String: Any]) -> String? {
+        value[AppiumSemanticElementResolver.w3cElementKey] as? String
+            ?? value["ELEMENT"] as? String
+    }
+
+    private static func frame(_ value: Any?) -> ScreenElementFrame? {
+        guard let value = value as? [String: Any],
+              let x = number(value["x"]),
+              let y = number(value["y"]),
+              let width = number(value["width"]),
+              let height = number(value["height"]),
+              width > 0, height > 0 else { return nil }
+        return ScreenElementFrame(x: x, y: y, width: width, height: height)
     }
 
     private func elementRect(sessionID: String, elementID: String) async throws -> ScreenElementFrame {
@@ -1174,7 +1406,7 @@ struct AppiumHTTPClient: Sendable {
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await dataLoader(request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw AppiumError.httpStatus(http.statusCode, body)
@@ -1188,6 +1420,12 @@ struct AppiumHTTPClient: Sendable {
     }
 }
 
+struct AppiumTextEditResult: Equatable, Sendable {
+    let strategy: String
+    let value: String?
+    let verified: Bool
+}
+
 struct AppiumSemanticLocator: Equatable, Sendable {
     let using: String
     let value: String
@@ -1198,8 +1436,22 @@ struct AppiumResolvedElement: Equatable, Sendable {
     let frame: ScreenElementFrame?
 }
 
+struct AppiumNativeElementMatch: Equatable, Sendable {
+    let reference: String
+    let query: String
+    let element: ScreenElement
+}
+
 enum AppiumSemanticElementResolver {
     static let w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
+
+    static func textContainsLocator(query: String) -> AppiumSemanticLocator {
+        let literal = predicateLiteral(query)
+        return AppiumSemanticLocator(
+            using: "-ios predicate string",
+            value: "visible == 1 AND (name CONTAINS[c] '\(literal)' OR label CONTAINS[c] '\(literal)' OR value CONTAINS[c] '\(literal)')"
+        )
+    }
 
     static func locators(for element: ScreenElement) -> [AppiumSemanticLocator] {
         guard element.source == .accessibility else { return [] }
@@ -1310,7 +1562,14 @@ enum AppiumControlSettings {
             "animationCoolOffTimeout": 0.0,
             // Retain a small allowance for source queries without the default
             // ten-second quiescence wait.
-            "waitForIdleTimeout": 0.0
+            "waitForIdleTimeout": 0.0,
+            // A semantic lookup usually needs one actionable element. WDA's
+            // first-match path avoids walking every duplicate descendant.
+            "useFirstMatch": true,
+            // Return the element geometry with the lookup so the harness can
+            // highlight and click it without one extra /rect request.
+            "shouldUseCompactResponses": false,
+            "elementResponseAttributes": "type,name,label,text,rect,enabled,displayed,selected"
         ]
     ] }
 }

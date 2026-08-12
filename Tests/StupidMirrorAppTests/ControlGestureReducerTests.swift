@@ -366,6 +366,11 @@ final class ControlGestureReducerTests: XCTestCase {
 
         XCTAssertEqual(settings["animationCoolOffTimeout"] as? Double, 0)
         XCTAssertEqual(settings["waitForIdleTimeout"] as? Double, 0)
+        XCTAssertEqual(settings["useFirstMatch"] as? Bool, true)
+        XCTAssertEqual(settings["shouldUseCompactResponses"] as? Bool, false)
+        XCTAssertTrue(
+            (settings["elementResponseAttributes"] as? String)?.contains("rect") == true
+        )
     }
 
     func testNativeFlickUsesAFullScreenW3CTrajectory() {

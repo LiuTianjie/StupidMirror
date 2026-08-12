@@ -183,18 +183,40 @@ user's existing account and privacy settings.
 The preferred agent loop is:
 
 1. `list_devices`, then `start_mirror` and `connect_control` as needed.
-2. `observe_screen` to receive the newest live mirror frame plus parsed
-   hierarchical accessibility elements. Set `include_ocr` when fused local
-   text recognition is useful. Neither path triggers another WDA screenshot.
-3. `find_element` checks Accessibility first and falls back to Apple Vision OCR
-   on the Mac only when needed. `tap_element` refreshes and clicks a native WDA
-   element when possible; normalized coordinates remain the visual fallback.
-4. `wait_for` and `assert_screen` for deterministic completion checks.
+2. `observe_screen` reads the newest live frame without fetching Accessibility
+   by default. Set `include_ocr` for local text recognition. Request
+   `include_accessibility` only for explicit deep hierarchy inspection.
+3. `tap_text` takes up to 16 candidate labels and checks the latest 45 FPS
+   mirror frame with local Vision OCR first. If pixels do not expose a label,
+   it parses one WDA UI Tree for every candidate together and clicks the fresh
+   observed frame. `find_any_element` provides the same lookup without clicking.
+4. A missing label therefore costs one OCR pass plus one hierarchy snapshot,
+   rather than one slow negative WDA predicate lookup per synonym. Existing
+   native element references still use direct WDA element clicks.
+5. When neither OCR nor Accessibility describes an icon, canvas, or custom
+   control, request `observe_screen` with `include_image: true` and let the AI
+   inspect the screenshot before using one targeted normalized coordinate.
 
 `tap_element` accepts the observation UUID so an agent can reject stale element
 identifiers after the screen changes. Element actions and raw control tools are
 marked as potentially destructive in MCP metadata because their real-world
 effect depends on the visible iPhone UI.
+
+Avoid Accessibility or UI-tree queries between focusing a text field and
+`type_text`: XCUITest snapshotting can disturb the app's input state. The fast
+native lookup and batch tools are designed to keep that control loop short.
+Use `replace_text` to atomically clear and replace the active field, or
+`clear_text` to empty it. Both operate on WDA's active native element and verify
+the resulting value, so agents do not need to invoke the iOS selection menu or
+guess delete-key coordinates.
+
+For user-guided operation, `highlight_clickable_elements` reads native
+Accessibility semantics and numbers every visible enabled clickable target on
+the Mac mirror. `highlight_elements` highlights any selected element IDs from
+the latest observation, and `clear_highlights` removes the overlay early. These
+tools never send a tap or other input event to the iPhone. Highlight counts are
+not capped; identical native target geometry is only drawn once to avoid
+duplicate container/child markers.
 
 Accessibility elements include source, parent/child identifiers, depth, path,
 state, screen-point frame, and normalized frame. OCR elements use

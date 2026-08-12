@@ -193,6 +193,36 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     }
 
     @MainActor
+    func showAutomationHighlights(
+        _ targets: [(frame: ScreenElementFrame, label: String)],
+        durationMilliseconds: Int
+    ) {
+        automationActionClearTask?.cancel()
+        automationActions = targets.map {
+            AutomationActionVisualization(
+                kind: .highlight,
+                label: $0.label,
+                normalizedTargetFrame: $0.frame
+            )
+        }
+        guard !automationActions.isEmpty else {
+            automationActionClearTask = nil
+            return
+        }
+        automationActionClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(durationMilliseconds))
+            guard !Task.isCancelled else { return }
+            self?.automationActions.removeAll(keepingCapacity: true)
+            self?.automationActionClearTask = nil
+        }
+    }
+
+    @MainActor
+    func clearAutomationHighlights() {
+        clearAutomationAction()
+    }
+
+    @MainActor
     func showAutomationPoint(
         _ point: CGPoint,
         kind: AutomationActionVisualKind = .tap,

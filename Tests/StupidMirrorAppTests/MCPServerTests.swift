@@ -8,8 +8,10 @@ final class MCPServerTests: XCTestCase {
             "list_devices", "refresh_devices", "get_device_status", "get_diagnostics",
             "start_mirror", "stop_mirror", "set_mirror_floating",
             "connect_control", "disconnect_control", "screenshot", "get_ui_tree",
-            "observe_screen", "find_element", "tap_element", "wait_for", "assert_screen",
-            "tap", "double_tap", "long_press", "swipe", "scroll", "type_text",
+            "observe_screen", "find_element", "find_any_element", "tap_text",
+            "tap_element", "highlight_elements", "highlight_clickable_elements", "clear_highlights",
+            "wait_for", "assert_screen",
+            "tap", "double_tap", "long_press", "swipe", "scroll", "type_text", "clear_text", "replace_text",
             "press_button", "back", "app_switcher", "activate_app", "terminate_app"
         ])
 
@@ -22,8 +24,8 @@ final class MCPServerTests: XCTestCase {
             XCTAssertEqual(tool.annotations.openWorldHint, false, tool.name)
         }
         let destructive = Set([
-            "tap_element", "tap", "double_tap", "long_press", "swipe", "scroll",
-            "type_text", "press_button", "back", "app_switcher", "activate_app", "terminate_app"
+            "tap_text", "tap_element", "tap", "double_tap", "long_press", "swipe", "scroll",
+            "type_text", "clear_text", "replace_text", "press_button", "back", "app_switcher", "activate_app", "terminate_app"
         ])
         for tool in StupidMirrorMCPToolCatalog.tools {
             XCTAssertEqual(tool.annotations.destructiveHint, destructive.contains(tool.name), tool.name)
@@ -34,7 +36,7 @@ final class MCPServerTests: XCTestCase {
         let observe = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "observe_screen" })
         let observeProperties = try XCTUnwrap(observe.inputSchema.objectValue?["properties"]?.objectValue)
         XCTAssertEqual(observeProperties["include_image"]?.objectValue?["default"]?.boolValue, true)
-        XCTAssertEqual(observeProperties["include_accessibility"]?.objectValue?["default"]?.boolValue, true)
+        XCTAssertEqual(observeProperties["include_accessibility"]?.objectValue?["default"]?.boolValue, false)
         XCTAssertEqual(observeProperties["include_ocr"]?.objectValue?["default"]?.boolValue, false)
         XCTAssertEqual(observeProperties["ocr_mode"]?.objectValue?["default"]?.stringValue, "fast")
         XCTAssertEqual(
@@ -47,6 +49,43 @@ final class MCPServerTests: XCTestCase {
         let find = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "find_element" })
         let findProperties = try XCTUnwrap(find.inputSchema.objectValue?["properties"]?.objectValue)
         XCTAssertEqual(findProperties["include_ocr"]?.objectValue?["default"]?.boolValue, true)
+
+        let findAny = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "find_any_element" })
+        let findAnyProperties = try XCTUnwrap(findAny.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertEqual(findAnyProperties["queries"]?.objectValue?["minItems"]?.intValue, 1)
+        XCTAssertEqual(findAnyProperties["queries"]?.objectValue?["maxItems"]?.intValue, 16)
+        XCTAssertEqual(findAny.annotations.readOnlyHint, true)
+
+        let tapText = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "tap_text" })
+        let tapTextProperties = try XCTUnwrap(tapText.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertEqual(tapTextProperties["queries"]?.objectValue?["maxItems"]?.intValue, 16)
+        XCTAssertEqual(tapText.annotations.destructiveHint, true)
+
+        let clearText = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "clear_text" })
+        XCTAssertNil(clearText.inputSchema.objectValue?["required"])
+        XCTAssertEqual(clearText.annotations.destructiveHint, true)
+
+        let replaceText = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "replace_text" })
+        XCTAssertEqual(
+            replaceText.inputSchema.objectValue?["required"]?.arrayValue?.compactMap(\.stringValue),
+            ["text"]
+        )
+        XCTAssertEqual(replaceText.annotations.destructiveHint, true)
+
+        let highlightElements = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "highlight_elements" })
+        let highlightProperties = try XCTUnwrap(highlightElements.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertEqual(highlightProperties["element_ids"]?.objectValue?["minItems"]?.intValue, 1)
+        XCTAssertNil(highlightProperties["element_ids"]?.objectValue?["maxItems"])
+        XCTAssertEqual(highlightProperties["duration_seconds"]?.objectValue?["default"]?.doubleValue, 8)
+        XCTAssertEqual(highlightProperties["duration_seconds"]?.objectValue?["maximum"]?.doubleValue, 60)
+        XCTAssertEqual(highlightElements.annotations.destructiveHint, false)
+        XCTAssertEqual(highlightElements.annotations.idempotentHint, true)
+
+        let highlightClickable = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "highlight_clickable_elements" })
+        let clickableProperties = try XCTUnwrap(highlightClickable.inputSchema.objectValue?["properties"]?.objectValue)
+        XCTAssertNil(clickableProperties["maximum_elements"])
+        XCTAssertEqual(highlightClickable.annotations.destructiveHint, false)
+        XCTAssertEqual(highlightClickable.annotations.idempotentHint, true)
 
         let wait = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "wait_for" })
         let waitProperties = try XCTUnwrap(wait.inputSchema.objectValue?["properties"]?.objectValue)

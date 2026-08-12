@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 
 enum AutomationActionVisualKind: String, Equatable, Sendable {
+    case highlight
     case target
     case tap
     case doubleTap
@@ -50,11 +51,11 @@ struct AutomationActionOverlayView: View {
                 AutomationActionMark(
                     action: action,
                     size: proxy.size,
-                    showsLabel: action.id == actions.last?.id
+                    showsLabel: action.kind == .highlight || action.id == actions.last?.id
                 )
                     .id(action.id)
                     .transition(.opacity)
-                    .opacity(action.id == actions.last?.id ? 1 : 0.38)
+                    .opacity(action.kind == .highlight || action.id == actions.last?.id ? 1 : 0.38)
             }
         }
         .allowsHitTesting(false)
@@ -79,7 +80,7 @@ private struct AutomationActionMark: View {
             }
             if let normalizedPoint = action.normalizedPoint {
                 tapMarker(at: point(normalizedPoint))
-            } else if let frame = action.normalizedTargetFrame {
+            } else if action.kind != .highlight, let frame = action.normalizedTargetFrame {
                 tapMarker(at: point(CGPoint(x: frame.centerX, y: frame.centerY)))
             }
             if showsLabel {

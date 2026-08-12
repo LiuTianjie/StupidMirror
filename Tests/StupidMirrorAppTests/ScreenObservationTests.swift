@@ -177,6 +177,12 @@ final class ScreenObservationTests: XCTestCase {
         XCTAssertTrue(locators.first?.value.contains("save\\'now") == true)
         XCTAssertEqual(locators.last, AppiumSemanticLocator(using: "accessibility id", value: "save'now"))
 
+        let textLocator = AppiumSemanticElementResolver.textContainsLocator(query: "瑞幸'咖啡")
+        XCTAssertEqual(textLocator.using, "-ios predicate string")
+        XCTAssertTrue(textLocator.value.contains("visible == 1"))
+        XCTAssertTrue(textLocator.value.contains("瑞幸\\'咖啡"))
+        XCTAssertTrue(textLocator.value.contains("CONTAINS[c]"))
+
         let selected = AppiumSemanticElementResolver.bestMatch(
             among: [
                 AppiumResolvedElement(id: "far", frame: ScreenElementFrame(x: 20, y: 400, width: 80, height: 40)),
@@ -199,6 +205,76 @@ final class ScreenObservationTests: XCTestCase {
             ScreenElementFrame(x: 0, y: 0.9, width: 0.3, height: 0.1)
         )
         XCTAssertEqual(action.normalizedPoint, CGPoint(x: 1, y: 0))
+    }
+
+    func testGuideClickableUsesNativeSemanticsAndCustomHittableControls() {
+        let frame = ScreenElementFrame(x: 0.1, y: 0.2, width: 0.2, height: 0.08)
+        XCTAssertTrue(makeElement(id: "button", type: "XCUIElementTypeButton", frame: frame).isGuideClickable)
+        XCTAssertTrue(makeElement(
+            id: "custom",
+            type: "XCUIElementTypeOther",
+            frame: frame,
+            accessible: true,
+            hittable: true
+        ).isGuideClickable)
+        XCTAssertFalse(makeElement(id: "text", type: "XCUIElementTypeStaticText", frame: frame).isGuideClickable)
+        XCTAssertFalse(makeElement(
+            id: "blocked",
+            type: "XCUIElementTypeButton",
+            frame: frame,
+            hittable: false
+        ).isGuideClickable)
+    }
+
+    func testHighlightItemsHasNoElementCountLimitAndDeduplicatesGeometry() throws {
+        let elements = (0..<40).map { index in
+            makeElement(
+                id: "item-\(index)",
+                type: "XCUIElementTypeButton",
+                frame: ScreenElementFrame(
+                    x: Double(index % 5) * 0.18,
+                    y: Double(index / 5) * 0.1,
+                    width: 0.15,
+                    height: 0.08
+                )
+            )
+        }
+        let duplicate = makeElement(
+            id: "duplicate",
+            type: "XCUIElementTypeButton",
+            frame: try XCTUnwrap(elements.first?.normalizedFrame)
+        )
+        let items = try DeviceAutomationService.highlightItems(
+            elements: elements + [duplicate],
+            requestedIDs: elements.map(\.id) + [duplicate.id]
+        )
+
+        XCTAssertEqual(items.count, 40)
+        XCTAssertEqual(items.map(\.number), Array(1...40))
+        XCTAssertEqual(items.last?.elementID, "item-39")
+    }
+
+    private func makeElement(
+        id: String,
+        type: String,
+        frame: ScreenElementFrame,
+        accessible: Bool? = nil,
+        hittable: Bool? = nil
+    ) -> ScreenElement {
+        ScreenElement(
+            id: id,
+            type: type,
+            name: id,
+            label: id,
+            value: nil,
+            enabled: true,
+            visible: true,
+            accessible: accessible,
+            hittable: hittable,
+            frame: frame.scaled(width: 390, height: 844),
+            frameSpace: .screenPoints,
+            normalizedFrame: frame
+        )
     }
 
     private func assertFrame(

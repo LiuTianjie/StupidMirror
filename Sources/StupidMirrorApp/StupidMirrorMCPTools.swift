@@ -22,10 +22,10 @@ enum StupidMirrorMCPToolCatalog {
         tool("get_ui_tree", "Read the current iPhone accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
         tool(
             "observe_screen",
-            "Observe the latest live frame, hierarchical accessibility elements, and optional local Apple Vision OCR. No extra WDA screenshot or model API is used.",
+            "Observe the latest live frame and optional local Apple Vision OCR. Full hierarchical accessibility is opt-in because WDA /source can be slow and may disturb text focus.",
             deviceProperties.merging([
                 "include_image": boolean("Include the latest live mirror frame as PNG.", defaultValue: true),
-                "include_accessibility": boolean("Include parsed hierarchical accessibility elements when control is connected.", defaultValue: true),
+                "include_accessibility": boolean("Explicitly fetch and parse the full WDA hierarchy. Keep false for routine navigation.", defaultValue: false),
                 "include_ocr": boolean("Run local Apple Vision OCR on the latest frame.", defaultValue: false),
                 "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
                 "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
@@ -34,7 +34,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "find_element",
-            "Find visible elements by text. Accessibility is checked first; local Apple Vision OCR is an on-demand fallback.",
+            "Find visible text with local mirror OCR first, then at most one WDA hierarchy snapshot for labels pixels do not expose.",
             deviceProperties.merging([
                 "query": string("Text to locate across type, name, label, and value."),
                 "include_ocr": boolean("Use local OCR when accessibility has no match.", defaultValue: true),
@@ -45,6 +45,30 @@ enum StupidMirrorMCPToolCatalog {
             readOnly: true
         ),
         tool(
+            "find_any_element",
+            "Find the first visible match among alternative texts in one MCP call. Uses one local OCR pass first, then at most one shared WDA hierarchy snapshot.",
+            deviceProperties.merging([
+                "queries": stringList("Alternative texts in priority order.", minimumItems: 1, maximumItems: 16),
+                "include_ocr": boolean("Inspect the live mirror with local OCR before the shared accessibility fallback.", defaultValue: true),
+                "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
+                "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
+            ]) { _, new in new },
+            required: ["queries"],
+            readOnly: true
+        ),
+        tool(
+            "tap_text",
+            "Find and tap the first visible match among alternative texts in one MCP call. Uses local OCR first, one shared WDA hierarchy fallback, then the fresh observed frame.",
+            deviceProperties.merging([
+                "queries": stringList("Alternative texts in priority order.", minimumItems: 1, maximumItems: 16),
+                "include_ocr": boolean("Inspect the live mirror with local OCR before the shared accessibility fallback.", defaultValue: true),
+                "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
+                "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
+            ]) { _, new in new },
+            required: ["queries"],
+            destructive: true
+        ),
+        tool(
             "tap_element",
             "Tap an observed element. Accessibility elements use a fresh native WDA element click first; OCR elements use their normalized frame.",
             deviceProperties.merging([
@@ -53,6 +77,31 @@ enum StupidMirrorMCPToolCatalog {
             ]) { _, new in new },
             required: ["element_id"],
             destructive: true
+        ),
+        tool(
+            "highlight_elements",
+            "Highlight observed elements on the Mac mirror without tapping or changing the iPhone. Every requested visible element is highlighted and numbered; there is no element-count limit.",
+            deviceProperties.merging([
+                "element_ids": unlimitedStringList("Element ids from the latest observation."),
+                "observation_id": string("Optional observation UUID. Pass it to reject stale element ids."),
+                "duration_seconds": number("How long highlights remain visible.", minimum: 1, maximum: 60, defaultValue: 8)
+            ]) { _, new in new },
+            required: ["element_ids"],
+            idempotent: true
+        ),
+        tool(
+            "highlight_clickable_elements",
+            "Read the current accessibility hierarchy and highlight every visible enabled clickable element on the Mac mirror without tapping or changing the iPhone. Returns the complete numbered element list with no count limit.",
+            deviceProperties.merging([
+                "duration_seconds": number("How long highlights remain visible.", minimum: 1, maximum: 60, defaultValue: 8)
+            ]) { _, new in new },
+            idempotent: true
+        ),
+        tool(
+            "clear_highlights",
+            "Remove all AI guide highlights from the Mac mirror without changing the iPhone.",
+            deviceProperties,
+            idempotent: true
         ),
         tool(
             "wait_for",
@@ -123,6 +172,19 @@ enum StupidMirrorMCPToolCatalog {
             "type_text",
             "Type text into the currently focused iPhone field.",
             deviceProperties.merging(["text": string("Text to type, up to 10,000 UTF-8 bytes.")]) { _, new in new },
+            required: ["text"],
+            destructive: true
+        ),
+        tool(
+            "clear_text",
+            "Clear the currently focused iPhone field through its native WDA element, then verify the value is empty. No selection menu or coordinate guessing is used.",
+            deviceProperties,
+            destructive: true
+        ),
+        tool(
+            "replace_text",
+            "Atomically clear and replace the currently focused iPhone field through its native WDA element, then verify the exact value. Use this instead of manually selecting all and deleting.",
+            deviceProperties.merging(["text": string("Replacement text, up to 10,000 UTF-8 bytes.")]) { _, new in new },
             required: ["text"],
             destructive: true
         ),
@@ -273,6 +335,29 @@ enum StupidMirrorMCPToolCatalog {
             "default": .array(defaultValues.map(Value.string))
         ]
     }
+
+    private static func stringList(
+        _ description: String,
+        minimumItems: Int,
+        maximumItems: Int
+    ) -> Value {
+        [
+            "type": "array",
+            "description": .string(description),
+            "items": .object(["type": "string"]),
+            "minItems": .int(minimumItems),
+            "maxItems": .int(maximumItems)
+        ]
+    }
+
+    private static func unlimitedStringList(_ description: String) -> Value {
+        [
+            "type": "array",
+            "description": .string(description),
+            "items": .object(["type": "string"]),
+            "minItems": 1
+        ]
+    }
 }
 
 @MainActor
@@ -333,7 +418,7 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 let result = try await automation.observeScreen(
                     deviceID: optionalString("device_id", args),
                     includeImage: optionalBool("include_image", args) ?? true,
-                    includeAccessibility: optionalBool("include_accessibility", args) ?? true,
+                    includeAccessibility: optionalBool("include_accessibility", args) ?? false,
                     includeOCR: optionalBool("include_ocr", args) ?? false,
                     ocrMode: try ocrMode(args),
                     ocrLanguages: try optionalStringArray("ocr_languages", args)
@@ -359,6 +444,24 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 return try success(try await automation.findElements(
                     deviceID: optionalString("device_id", args),
                     query: try requiredString("query", args),
+                    includeOCR: optionalBool("include_ocr", args) ?? true,
+                    ocrMode: try ocrMode(args),
+                    ocrLanguages: try optionalStringArray("ocr_languages", args)
+                        ?? DeviceAutomationService.defaultOCRLanguages
+                ))
+            case "find_any_element":
+                return try success(try await automation.findAnyElements(
+                    deviceID: optionalString("device_id", args),
+                    queries: try optionalStringArray("queries", args) ?? [],
+                    includeOCR: optionalBool("include_ocr", args) ?? true,
+                    ocrMode: try ocrMode(args),
+                    ocrLanguages: try optionalStringArray("ocr_languages", args)
+                        ?? DeviceAutomationService.defaultOCRLanguages
+                ))
+            case "tap_text":
+                return try success(try await automation.tapText(
+                    deviceID: optionalString("device_id", args),
+                    queries: try optionalStringArray("queries", args) ?? [],
                     includeOCR: optionalBool("include_ocr", args) ?? true,
                     ocrMode: try ocrMode(args),
                     ocrLanguages: try optionalStringArray("ocr_languages", args)
@@ -442,6 +545,30 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     text: try requiredString("text", args)
                 )
                 return actionSuccess("type_text")
+            case "clear_text":
+                return try success(try await automation.clearText(
+                    deviceID: optionalString("device_id", args)
+                ))
+            case "replace_text":
+                return try success(try await automation.replaceText(
+                    deviceID: optionalString("device_id", args),
+                    text: try requiredString("text", args)
+                ))
+            case "highlight_elements":
+                return try success(try automation.highlightElements(
+                    deviceID: optionalString("device_id", args),
+                    observationID: try optionalUUID("observation_id", args),
+                    elementIDs: try optionalStringArray("element_ids", args) ?? [],
+                    durationSeconds: optionalDouble("duration_seconds", args) ?? 8
+                ))
+            case "highlight_clickable_elements":
+                return try success(try await automation.highlightClickableElements(
+                    deviceID: optionalString("device_id", args),
+                    durationSeconds: optionalDouble("duration_seconds", args) ?? 8
+                ))
+            case "clear_highlights":
+                try automation.clearHighlights(deviceID: optionalString("device_id", args))
+                return actionSuccess("clear_highlights")
             case "press_button":
                 try await automation.pressButton(
                     deviceID: optionalString("device_id", args),
