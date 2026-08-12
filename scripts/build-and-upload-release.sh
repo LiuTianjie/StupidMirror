@@ -10,7 +10,10 @@ official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1
 official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
 official_appium_version="3.5.2"
 official_xcuitest_driver_version="12.3.0"
+official_uiautomator2_driver_version="8.2.2"
 official_remote_xpc_version="5.13.2"
+official_scrcpy_server_version="4.1"
+official_scrcpy_server_sha256="deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae"
 tag="${1:-${TAG:-}}"
 version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
@@ -160,6 +163,7 @@ assert_release_app() {
   local signed_node_entitlements="${tmp_dir}/signed-node-entitlements.plist"
   local bundled_node="${app}/Contents/Resources/Appium/bin/node"
   local bundled_runtime="${app}/Contents/Resources/Appium"
+  local bundled_android_runtime="${app}/Contents/Resources/Android"
   local nested_binary
   local nested_team_id
   local nested_count=0
@@ -257,6 +261,11 @@ assert_release_app() {
     echo "Bundled XCUITest driver version mismatch: expected ${official_xcuitest_driver_version}, got ${value:-<empty>}." >&2
     exit 1
   fi
+  value="$("$bundled_node" -p "require(process.argv[1]).version" "${bundled_runtime}/home/node_modules/appium-uiautomator2-driver/package.json")"
+  if [ "$value" != "$official_uiautomator2_driver_version" ]; then
+    echo "Bundled UiAutomator2 driver version mismatch: expected ${official_uiautomator2_driver_version}, got ${value:-<empty>}." >&2
+    exit 1
+  fi
   value="$("$bundled_node" -p "require(process.argv[1]).version" "${bundled_runtime}/home/node_modules/appium-ios-remotexpc/package.json")"
   if [ "$value" != "$official_remote_xpc_version" ]; then
     echo "Bundled RemoteXPC version mismatch: expected ${official_remote_xpc_version}, got ${value:-<empty>}." >&2
@@ -267,6 +276,26 @@ assert_release_app() {
     APPIUM_HOME="${bundled_runtime}/home" "$bundled_node" --input-type=module -e \
       'await import("appium-ios-remotexpc")'
   )
+
+  if [ ! -s "${bundled_android_runtime}/scrcpy-server" ]; then
+    echo "Release does not contain the bundled Android scrcpy server." >&2
+    exit 1
+  fi
+  value="$(tr -d '[:space:]' < "${bundled_android_runtime}/scrcpy-server.version" 2>/dev/null || true)"
+  if [ "$value" != "$official_scrcpy_server_version" ]; then
+    echo "Bundled scrcpy server version mismatch: expected ${official_scrcpy_server_version}, got ${value:-<empty>}." >&2
+    exit 1
+  fi
+  value="$(shasum -a 256 "${bundled_android_runtime}/scrcpy-server" | awk '{print $1}')"
+  if [ "$value" != "$official_scrcpy_server_sha256" ]; then
+    echo "Bundled scrcpy server checksum mismatch: expected ${official_scrcpy_server_sha256}, got ${value:-<empty>}." >&2
+    exit 1
+  fi
+  value="$(tr -d '[:space:]' < "${bundled_android_runtime}/scrcpy-server.sha256" 2>/dev/null || true)"
+  if [ "$value" != "$official_scrcpy_server_sha256" ]; then
+    echo "Bundled scrcpy checksum stamp mismatch." >&2
+    exit 1
+  fi
 
   if ! codesign -d --entitlements :- "$bundled_node" > "$signed_node_entitlements" 2>/dev/null; then
     echo "Could not read bundled Node entitlements." >&2

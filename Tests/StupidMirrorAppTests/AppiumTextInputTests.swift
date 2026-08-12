@@ -66,6 +66,29 @@ final class AppiumTextInputTests: XCTestCase {
         XCTAssertEqual(requests.last?.path, "/session/session-placeholder/element/element-1/attribute/placeholderValue")
     }
 
+    func testAndroidClearTextRejectsAValueThatWasNotCleared() async throws {
+        let stub = AppiumTextHTTPStub(attributeValue: "old value")
+        let client = AppiumHTTPClient(
+            baseURL: "http://127.0.0.1:4723",
+            platform: .android
+        ) { request in
+            try await stub.response(for: request)
+        }
+
+        do {
+            _ = try await client.clearActiveText(sessionID: "android-session")
+            XCTFail("Expected Android clear verification to fail")
+        } catch let AppiumError.invalidResponse(message) {
+            XCTAssertTrue(message.contains("still contains text"))
+        }
+
+        let requests = await stub.requests
+        XCTAssertEqual(
+            requests.last?.path,
+            "/session/android-session/element/element-1/attribute/text"
+        )
+    }
+
     func testReplaceTextRejectsUnverifiedValue() async throws {
         let stub = AppiumTextHTTPStub(attributeValue: "旧值")
         let client = AppiumHTTPClient(baseURL: "http://127.0.0.1:4723") { request in
@@ -142,7 +165,7 @@ private actor AppiumTextHTTPStub {
         } else if path.hasSuffix("/element") {
             value = [AppiumSemanticElementResolver.w3cElementKey: "element-1"]
             statusCode = 200
-        } else if path.hasSuffix("/attribute/value") {
+        } else if path.hasSuffix("/attribute/value") || path.hasSuffix("/attribute/text") {
             value = attributeValue
             statusCode = 200
         } else if path.hasSuffix("/attribute/placeholderValue") {

@@ -125,16 +125,20 @@ struct GalleryView: View {
     @ViewBuilder
     private var detail: some View {
         if store.permissionStatus != .authorized
-            && !store.connectedSessions.contains(where: { $0.transport == .wireless }) {
+            && !store.connectedSessions.contains(where: {
+                $0.platform == .android || $0.transport == .wireless
+            }) {
             PermissionView()
         } else {
             VStack(spacing: 0) {
-                if store.permissionStatus != .authorized {
+                if store.permissionStatus != .authorized && store.hasConnectedIOSDevice {
                     CameraPermissionBanner()
                     Divider()
                 }
 
-                if store.microphonePermissionStatus != .authorized && store.audioPlaybackEnabled {
+                if store.microphonePermissionStatus != .authorized
+                    && store.audioPlaybackEnabled
+                    && store.hasConnectedIOSDevice {
                     MicrophonePermissionBanner()
                     Divider()
                 }
@@ -1157,7 +1161,7 @@ struct SettingsView: View {
                                 set: { enabled in
                                     if enabled {
                                         Task {
-                                            await store.requestMicrophonePermission()
+                                            await store.enableAudioPlayback()
                                         }
                                     } else {
                                         store.audioPlaybackEnabled = false

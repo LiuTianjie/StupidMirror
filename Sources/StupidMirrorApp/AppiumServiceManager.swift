@@ -357,6 +357,7 @@ final class AppiumServiceManager: ObservableObject {
         launched.arguments = launch.arguments
         launched.environment = ProcessInfo.processInfo.environment
             .merging(launch.environment) { _, new in new }
+            .merging(Self.androidToolEnvironment()) { _, new in new }
             .merging([
             "STUPIDMIRROR_SKIP_WDA_ICON_EMBED": "1",
             // Ask the XCUITest driver to use Apple's public devicectl CLI for
@@ -576,26 +577,61 @@ final class AppiumServiceManager: ObservableObject {
     }
 
     private nonisolated static func bundledAppiumRuntime() -> BundledAppiumRuntime? {
-        guard let root = Bundle.main.resourceURL?.appendingPathComponent("Appium", isDirectory: true) else {
-            return nil
+        var roots: [URL] = []
+        if let bundled = Bundle.main.resourceURL?
+            .appendingPathComponent("Appium", isDirectory: true) {
+            roots.append(bundled)
         }
-        let node = root.appendingPathComponent("bin/node")
-        let main = root.appendingPathComponent("node_modules/appium/build/lib/main.js")
-        let sourceHome = root.appendingPathComponent("home", isDirectory: true)
-        let stamp = root.appendingPathComponent(".stupidmirror-runtime")
-        guard FileManager.default.isExecutableFile(atPath: node.path),
-              FileManager.default.fileExists(atPath: main.path),
-              FileManager.default.fileExists(atPath: sourceHome.path),
-              FileManager.default.fileExists(atPath: stamp.path) else {
-            return nil
-        }
-        return BundledAppiumRuntime(
-            rootPath: root.path,
-            nodePath: node.path,
-            mainPath: main.path,
-            sourceHomePath: sourceHome.path,
-            stampPath: stamp.path
+        roots.append(
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+                .appendingPathComponent(".build/appium-runtime", isDirectory: true)
         )
+        for root in roots {
+            let node = root.appendingPathComponent("bin/node")
+            let main = root.appendingPathComponent("node_modules/appium/build/lib/main.js")
+            let sourceHome = root.appendingPathComponent("home", isDirectory: true)
+            let stamp = root.appendingPathComponent(".stupidmirror-runtime")
+            guard FileManager.default.isExecutableFile(atPath: node.path),
+                  FileManager.default.fileExists(atPath: main.path),
+                  FileManager.default.fileExists(atPath: sourceHome.path),
+                  FileManager.default.fileExists(atPath: stamp.path) else {
+                continue
+            }
+            return BundledAppiumRuntime(
+                rootPath: root.path,
+                nodePath: node.path,
+                mainPath: main.path,
+                sourceHomePath: sourceHome.path,
+                stampPath: stamp.path
+            )
+        }
+        return nil
+    }
+
+    private nonisolated static func androidToolEnvironment() -> [String: String] {
+        var result: [String: String] = [:]
+        let fileManager = FileManager.default
+        if let adbPath = AndroidRuntime.adbExecutablePath() {
+            let sdkRoot = URL(fileURLWithPath: adbPath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent().path
+            if fileManager.fileExists(atPath: sdkRoot) {
+                result["ANDROID_HOME"] = sdkRoot
+                result["ANDROID_SDK_ROOT"] = sdkRoot
+            }
+        }
+        if ProcessInfo.processInfo.environment["JAVA_HOME"] == nil {
+            let javaHomes = [
+                "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+                "/Applications/Android Studio Preview.app/Contents/jbr/Contents/Home"
+            ]
+            if let javaHome = javaHomes.first(where: {
+                fileManager.isExecutableFile(atPath: "\($0)/bin/java")
+            }) {
+                result["JAVA_HOME"] = javaHome
+            }
+        }
+        return result
     }
 
     private nonisolated static func prepareBundledAppiumLaunch(
@@ -1044,6 +1080,7 @@ final class AppiumServiceManager: ObservableObject {
         }
 
         let candidates = [
+            "\(FileManager.default.currentDirectoryPath)/.build/appium-runtime/bin/\(name)",
             "/opt/homebrew/bin/\(name)",
             "/usr/local/bin/\(name)",
             "/usr/bin/\(name)",

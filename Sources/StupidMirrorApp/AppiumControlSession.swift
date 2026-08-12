@@ -1,6 +1,7 @@
 import Foundation
 
 struct AppiumControlConfiguration: Hashable, Sendable {
+    var platform: DevicePlatform = .iOS
     var xcodeOrgID: String = ""
     var xcodeSigningID: String = "Apple Development"
     var wdaBundleID: String = ""
@@ -11,6 +12,10 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var derivedDataPath: String = ""
     var wdaLocalPort: Int = 8100
     var mjpegServerPort: Int = 9100
+    var uiautomator2SystemPort: Int = 8200
+    var adbExecTimeoutMS: Int = 60_000
+    var uiautomator2ServerInstallTimeoutMS: Int = 90_000
+    var uiautomator2ServerLaunchTimeoutMS: Int = 60_000
     var wdaStartupRetries: Int = 1
     var wdaStartupRetryIntervalMS: Int = 0
     var wdaLaunchTimeoutMS: Int = 90_000
@@ -69,6 +74,11 @@ struct AppiumControlConfiguration: Hashable, Sendable {
         let hash = StableDeviceHash.fnv1a64(normalizedUDID)
         let slot = Int(hash % 20_000)
         var result = self
+        if platform == .android {
+            result.uiautomator2SystemPort = 8_200 + (slot % 1_000)
+            result.mjpegServerPort = 12_000 + slot
+            return result
+        }
         if directDeviceHost.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             result.wdaLocalPort = 10_000 + slot
             result.mjpegServerPort = 30_000 + slot
@@ -139,11 +149,44 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         }
     }
 
+    var platform: DevicePlatform { device.platform }
+
     var isConnecting: Bool {
         if case .connecting = state {
             true
         } else {
             false
+        }
+    }
+
+    /// A cached `ready` state can outlive the Appium session when the server or
+    /// device-side runner restarts. Automation reconnects probe the lightweight
+    /// window endpoint before trusting that cache, then clear stale state so a
+    /// fresh session can be created immediately.
+    func verifyReadySession(serverURL: String) async -> Bool {
+        guard let sessionID, isReady else { return false }
+        let client = AppiumHTTPClient(
+            baseURL: sessionServerURL ?? serverURL,
+            platform: device.platform
+        )
+        do {
+            screenSize = try await client.windowSize(sessionID: sessionID)
+            return true
+        } catch {
+            generation &+= 1
+            actionPumpTask?.cancel()
+            actionPumpTask = nil
+            pendingActions.removeAll()
+            self.sessionID = nil
+            sessionServerURL = nil
+            screenSize = nil
+            warmDisconnectedAt = nil
+            connectionPhase = nil
+            connectionStartedAt = nil
+            let message = AppiumError.controlFailureMessage(for: error)
+            state = .failed(message)
+            statusMessage = message
+            return false
         }
     }
 
@@ -262,7 +305,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
             guard let self, self.generation == taskGeneration else { return }
             var createdSessionID: String?
-            let client = AppiumHTTPClient(baseURL: request.serverURL)
+            let client = AppiumHTTPClient(baseURL: request.serverURL, platform: self.device.platform)
             do {
                 self.setProgress(
                     "Checking local Appium service...",
@@ -345,6 +388,19 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         configuration: AppiumControlConfiguration,
         generation: UInt64
     ) async throws -> String {
+        if configuration.platform == .android {
+            setProgress(
+                "Starting Android UiAutomator2 control agent...",
+                phase: .installingAgent,
+                generation: generation
+            )
+            return try await startSession(
+                client: client,
+                udid: udid,
+                bundleID: bundleID,
+                configuration: configuration
+            )
+        }
         if configuration.preferInstalledWDA {
             do {
                 let installedConfiguration = configuration.preinstalledProbeConfiguration
@@ -511,7 +567,12 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     }
 
     func pressBack(serverURL: String) {
-        guard let sessionID, let screenSize else { return }
+        guard let sessionID else { return }
+        if device.platform == .android {
+            enqueueAction(.pressButton("back"), sessionID: sessionID, serverURL: serverURL)
+            return
+        }
+        guard let screenSize else { return }
         let point = CGPoint(x: screenSize.width * 0.09, y: screenSize.height * 0.075)
         enqueueAction(.tap(point), sessionID: sessionID, serverURL: serverURL)
     }
@@ -615,6 +676,10 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
     func pressBackAwaiting(serverURL: String) async throws {
         let context = try readyContext(serverURL: serverURL)
+        if device.platform == .android {
+            try await context.client.pressButton(sessionID: context.sessionID, name: "back")
+            return
+        }
         try await context.client.tap(
             sessionID: context.sessionID,
             point: CGPoint(x: context.size.width * 0.09, y: context.size.height * 0.075)
@@ -623,6 +688,10 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
     func openAppSwitcherAwaiting(serverURL: String) async throws {
         let context = try readyContext(serverURL: serverURL)
+        if device.platform == .android {
+            try await context.client.pressButton(sessionID: context.sessionID, name: "appSwitcher")
+            return
+        }
         try await context.client.pressButton(sessionID: context.sessionID, name: "home")
         try await Task.sleep(for: .milliseconds(180))
         try await context.client.pressButton(sessionID: context.sessionID, name: "home")
@@ -692,7 +761,10 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             throw AppiumError.controlNotReady
         }
         return (
-            AppiumHTTPClient(baseURL: sessionServerURL ?? serverURL),
+            AppiumHTTPClient(
+                baseURL: sessionServerURL ?? serverURL,
+                platform: device.platform
+            ),
             sessionID,
             screenSize
         )
@@ -707,7 +779,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         guard actionPumpTask == nil else { return }
         actionPumpTask = Task { [weak self] in
             guard let self else { return }
-            let client = AppiumHTTPClient(baseURL: serverURL)
+            let client = AppiumHTTPClient(baseURL: serverURL, platform: self.device.platform)
             while true {
                 guard !Task.isCancelled else { break }
                 guard self.generation == taskGeneration, self.sessionID == sessionID else { break }
@@ -736,9 +808,13 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                             self.statusMessage = "Pressed \(name.capitalized)"
                         }
                     case .appSwitcher:
-                        try await client.pressButton(sessionID: sessionID, name: "home")
-                        try await Task.sleep(nanoseconds: 180_000_000)
-                        try await client.pressButton(sessionID: sessionID, name: "home")
+                        if self.device.platform == .android {
+                            try await client.pressButton(sessionID: sessionID, name: "appSwitcher")
+                        } else {
+                            try await client.pressButton(sessionID: sessionID, name: "home")
+                            try await Task.sleep(nanoseconds: 180_000_000)
+                            try await client.pressButton(sessionID: sessionID, name: "home")
+                        }
                         if self.generation == taskGeneration, self.sessionID == sessionID {
                             self.statusMessage = "Sent best-effort App Switcher gesture"
                         }
@@ -904,15 +980,18 @@ struct AppiumHTTPClient: Sendable {
     typealias DataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     let baseURL: URL
+    let platform: DevicePlatform
     private let dataLoader: DataLoader
 
     init(
         baseURL: String,
+        platform: DevicePlatform = .iOS,
         dataLoader: @escaping DataLoader = { request in
             try await URLSession.shared.data(for: request)
         }
     ) {
         self.baseURL = URL(string: Self.normalizedBaseURLString(baseURL))!
+        self.platform = platform
         self.dataLoader = dataLoader
     }
 
@@ -986,11 +1065,19 @@ struct AppiumHTTPClient: Sendable {
         _ = try await jsonRequest(
             method: "POST",
             path: "/session/\(sessionID)/appium/settings",
-            payload: AppiumControlSettings.lowLatencyPayload()
+            payload: AppiumControlSettings.lowLatencyPayload(platform: platform)
         )
     }
 
     func tap(sessionID: String, point: CGPoint) async throws {
+        if platform == .android {
+            _ = try await jsonRequest(
+                method: "POST",
+                path: "/session/\(sessionID)/actions",
+                payload: AppiumPointerAction.tapPayload(at: point)
+            )
+            return
+        }
         try await executeMobile(
             sessionID: sessionID,
             script: "mobile: tap",
@@ -1027,13 +1114,17 @@ struct AppiumHTTPClient: Sendable {
     func clearActiveText(sessionID: String) async throws -> AppiumTextEditResult {
         let elementID = try await activeElementReference(sessionID: sessionID)
         try await clearElement(sessionID: sessionID, elementID: elementID)
+        let valueAttribute = platform == .android ? "text" : "value"
         let value = try await elementAttribute(
             sessionID: sessionID,
             elementID: elementID,
-            name: "value"
+            name: valueAttribute
         )
         var verifiedValue = value
-        if value?.isEmpty == false {
+        if platform == .android, value?.isEmpty == false {
+            throw AppiumError.invalidResponse("The active field still contains text after clear.")
+        }
+        if platform == .iOS, value?.isEmpty == false {
             let placeholder = try? await elementAttribute(
                 sessionID: sessionID,
                 elementID: elementID,
@@ -1047,7 +1138,9 @@ struct AppiumHTTPClient: Sendable {
             verifiedValue = ""
         }
         return AppiumTextEditResult(
-            strategy: "wda_active_element_clear",
+            strategy: platform == .android
+                ? "uiautomator2_active_element_clear"
+                : "wda_active_element_clear",
             value: verifiedValue,
             verified: true
         )
@@ -1067,7 +1160,7 @@ struct AppiumHTTPClient: Sendable {
         let value = try await elementAttribute(
             sessionID: sessionID,
             elementID: elementID,
-            name: "value"
+            name: platform == .android ? "text" : "value"
         )
         guard value == text else {
             throw AppiumError.invalidResponse(
@@ -1075,7 +1168,9 @@ struct AppiumHTTPClient: Sendable {
             )
         }
         return AppiumTextEditResult(
-            strategy: "wda_active_element_clear_and_set",
+            strategy: platform == .android
+                ? "uiautomator2_active_element_clear_and_set"
+                : "wda_active_element_clear_and_set",
             value: value,
             verified: true
         )
@@ -1096,10 +1191,18 @@ struct AppiumHTTPClient: Sendable {
             // system fields return 404 even while visibly focused. Resolve the
             // focused editable control directly without serializing /source.
         }
-        let focusedInput = AppiumSemanticLocator(
-            using: "-ios predicate string",
-            value: "focused == 1 AND (type == 'XCUIElementTypeTextField' OR type == 'XCUIElementTypeSecureTextField' OR type == 'XCUIElementTypeSearchField' OR type == 'XCUIElementTypeTextView')"
-        )
+        let focusedInput: AppiumSemanticLocator
+        if platform == .android {
+            focusedInput = AppiumSemanticLocator(
+                using: "-android uiautomator",
+                value: "new UiSelector().focused(true).classNameMatches(\"android\\.widget\\.(EditText|AutoCompleteTextView)\")"
+            )
+        } else {
+            focusedInput = AppiumSemanticLocator(
+                using: "-ios predicate string",
+                value: "focused == 1 AND (type == 'XCUIElementTypeTextField' OR type == 'XCUIElementTypeSecureTextField' OR type == 'XCUIElementTypeSearchField' OR type == 'XCUIElementTypeTextView')"
+            )
+        }
         if let value = try await findFirstElementValue(
             sessionID: sessionID,
             locator: focusedInput
@@ -1133,6 +1236,24 @@ struct AppiumHTTPClient: Sendable {
     }
 
     func pressButton(sessionID: String, name: String) async throws {
+        if platform == .android {
+            let keycode: Int
+            switch name.lowercased() {
+            case "home": keycode = 3
+            case "back": keycode = 4
+            case "volumeup", "volume_up": keycode = 24
+            case "volumedown", "volume_down": keycode = 25
+            case "appswitcher", "app_switcher", "recent", "recents": keycode = 187
+            default:
+                throw AppiumError.invalidResponse("Unsupported Android system button: \(name)")
+            }
+            try await executeMobile(
+                sessionID: sessionID,
+                script: "mobile: pressKey",
+                arguments: ["keycode": keycode]
+            )
+            return
+        }
         _ = try await jsonRequest(
             method: "POST",
             path: "/session/\(sessionID)/execute/sync",
@@ -1146,6 +1267,14 @@ struct AppiumHTTPClient: Sendable {
     }
 
     func doubleTap(sessionID: String, point: CGPoint) async throws {
+        if platform == .android {
+            _ = try await jsonRequest(
+                method: "POST",
+                path: "/session/\(sessionID)/actions",
+                payload: AppiumPointerAction.doubleTapPayload(at: point)
+            )
+            return
+        }
         try await executeMobile(
             sessionID: sessionID,
             script: "mobile: doubleTap",
@@ -1161,6 +1290,17 @@ struct AppiumHTTPClient: Sendable {
         point: CGPoint,
         durationSeconds: Double
     ) async throws {
+        if platform == .android {
+            _ = try await jsonRequest(
+                method: "POST",
+                path: "/session/\(sessionID)/actions",
+                payload: AppiumPointerAction.longPressPayload(
+                    at: point,
+                    durationSeconds: durationSeconds
+                )
+            )
+            return
+        }
         try await executeMobile(
             sessionID: sessionID,
             script: "mobile: touchAndHold",
@@ -1201,7 +1341,10 @@ struct AppiumHTTPClient: Sendable {
         screenSize: DeviceScreenSize,
         maximumMatches: Int = 12
     ) async throws -> [AppiumNativeElementMatch] {
-        let locator = AppiumSemanticElementResolver.textContainsLocator(query: query)
+        let locator = AppiumSemanticElementResolver.textContainsLocator(
+            query: query,
+            platform: platform
+        )
         guard maximumMatches > 0,
               let value = try await findFirstElementValue(
                   sessionID: sessionID,
@@ -1247,7 +1390,7 @@ struct AppiumHTTPClient: Sendable {
 
     func clickSemanticElement(sessionID: String, element: ScreenElement) async throws -> Bool {
         guard element.source == .accessibility else { return false }
-        for locator in AppiumSemanticElementResolver.locators(for: element) {
+        for locator in AppiumSemanticElementResolver.locators(for: element, platform: platform) {
             let references = try await findElementReferences(
                 sessionID: sessionID,
                 locator: locator
@@ -1344,7 +1487,7 @@ struct AppiumHTTPClient: Sendable {
         try await executeMobile(
             sessionID: sessionID,
             script: "mobile: activateApp",
-            arguments: ["bundleId": bundleID]
+            arguments: [platform == .android ? "appId" : "bundleId": bundleID]
         )
     }
 
@@ -1354,7 +1497,7 @@ struct AppiumHTTPClient: Sendable {
             path: "/session/\(sessionID)/execute/sync",
             payload: [
                 "script": "mobile: terminateApp",
-                "args": [["bundleId": bundleID]]
+                "args": [[platform == .android ? "appId" : "bundleId": bundleID]]
             ]
         )
         return response["value"] as? Bool ?? true
@@ -1445,7 +1588,17 @@ struct AppiumNativeElementMatch: Equatable, Sendable {
 enum AppiumSemanticElementResolver {
     static let w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
 
-    static func textContainsLocator(query: String) -> AppiumSemanticLocator {
+    static func textContainsLocator(
+        query: String,
+        platform: DevicePlatform = .iOS
+    ) -> AppiumSemanticLocator {
+        if platform == .android {
+            let literal = xpathLiteral(query)
+            return AppiumSemanticLocator(
+                using: "xpath",
+                value: "//*[contains(@text, \(literal)) or contains(@content-desc, \(literal)) or contains(@resource-id, \(literal))]"
+            )
+        }
         let literal = predicateLiteral(query)
         return AppiumSemanticLocator(
             using: "-ios predicate string",
@@ -1453,8 +1606,33 @@ enum AppiumSemanticElementResolver {
         )
     }
 
-    static func locators(for element: ScreenElement) -> [AppiumSemanticLocator] {
+    static func locators(
+        for element: ScreenElement,
+        platform: DevicePlatform = .iOS
+    ) -> [AppiumSemanticLocator] {
         guard element.source == .accessibility else { return [] }
+        if platform == .android {
+            var androidLocators: [AppiumSemanticLocator] = []
+            if let name = usableValue(element.name), name.contains(":id/") {
+                androidLocators.append(AppiumSemanticLocator(using: "id", value: name))
+            }
+            if let label = usableValue(element.label) {
+                androidLocators.append(AppiumSemanticLocator(using: "accessibility id", value: label))
+            }
+            if let value = usableValue(element.value) {
+                androidLocators.append(AppiumSemanticLocator(
+                    using: "-android uiautomator",
+                    value: "new UiSelector().text(\(javaStringLiteral(value)))"
+                ))
+            }
+            if let name = usableValue(element.name), !name.contains(":id/") {
+                androidLocators.append(AppiumSemanticLocator(using: "accessibility id", value: name))
+            }
+            return androidLocators.reduce(into: []) { result, locator in
+                guard !result.contains(locator) else { return }
+                result.append(locator)
+            }
+        }
         var locators: [AppiumSemanticLocator] = []
         var predicates: [String] = []
         if isElementType(element.type) {
@@ -1523,9 +1701,59 @@ enum AppiumSemanticElementResolver {
             .replacingOccurrences(of: "'", with: "\\'")
             .replacingOccurrences(of: "\u{0}", with: "")
     }
+
+    private static func javaStringLiteral(_ value: String) -> String {
+        "\"" + value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\u{0}", with: "") + "\""
+    }
+
+    private static func xpathLiteral(_ value: String) -> String {
+        let cleaned = value.replacingOccurrences(of: "\u{0}", with: "")
+        if !cleaned.contains("'") { return "'\(cleaned)'" }
+        if !cleaned.contains("\"") { return "\"\(cleaned)\"" }
+        let parts = cleaned.split(separator: "'", omittingEmptySubsequences: false)
+        return "concat(" + parts.enumerated().flatMap { index, part -> [String] in
+            var result = ["'\(part)'"]
+            if index < parts.count - 1 { result.append("\"'\"") }
+            return result
+        }.joined(separator: ",") + ")"
+    }
 }
 
 enum AppiumPointerAction {
+    static func tapPayload(at point: CGPoint) -> [String: Any] {
+        pointerPayload(actions: [
+            pointerMove(to: point),
+            ["type": "pointerDown", "button": 0],
+            ["type": "pointerUp", "button": 0]
+        ])
+    }
+
+    static func doubleTapPayload(at point: CGPoint) -> [String: Any] {
+        pointerPayload(actions: [
+            pointerMove(to: point),
+            ["type": "pointerDown", "button": 0],
+            ["type": "pointerUp", "button": 0],
+            ["type": "pause", "duration": 80],
+            ["type": "pointerDown", "button": 0],
+            ["type": "pointerUp", "button": 0]
+        ])
+    }
+
+    static func longPressPayload(at point: CGPoint, durationSeconds: Double) -> [String: Any] {
+        let duration = min(max(Int((durationSeconds * 1_000).rounded()), 100), 10_000)
+        return pointerPayload(actions: [
+            pointerMove(to: point),
+            ["type": "pointerDown", "button": 0],
+            ["type": "pause", "duration": duration],
+            ["type": "pointerUp", "button": 0]
+        ])
+    }
+
     static func dragPayload(from start: CGPoint, to end: CGPoint, durationMS: Int) -> [String: Any] {
         let duration = min(max(durationMS, 50), 5_000)
         return [
@@ -1552,11 +1780,38 @@ enum AppiumPointerAction {
     private static func rounded(_ value: CGFloat) -> Int {
         Int(value.rounded())
     }
+
+    private static func pointerMove(to point: CGPoint) -> [String: Any] {
+        [
+            "type": "pointerMove", "duration": 0,
+            "origin": "viewport", "x": rounded(point.x), "y": rounded(point.y)
+        ]
+    }
+
+    private static func pointerPayload(actions: [[String: Any]]) -> [String: Any] {
+        [
+            "actions": [[
+                "type": "pointer",
+                "id": "stupidmirror-finger",
+                "parameters": ["pointerType": "touch"],
+                "actions": actions
+            ]]
+        ]
+    }
 }
 
 enum AppiumControlSettings {
-    static func lowLatencyPayload() -> [String: Any] { [
-        "settings": [
+    static func lowLatencyPayload(platform: DevicePlatform = .iOS) -> [String: Any] {
+        if platform == .android {
+            return [
+                "settings": [
+                    "waitForIdleTimeout": 0,
+                    "waitForSelectorTimeout": 2_000,
+                    "actionAcknowledgmentTimeout": 500
+                ]
+            ]
+        }
+        return ["settings": [
             // WDA defaults to waiting up to two seconds for animations after
             // every event. The live stream is the visual confirmation.
             "animationCoolOffTimeout": 0.0,
@@ -1570,8 +1825,8 @@ enum AppiumControlSettings {
             // highlight and click it without one extra /rect request.
             "shouldUseCompactResponses": false,
             "elementResponseAttributes": "type,name,label,text,rect,enabled,displayed,selected"
-        ]
-    ] }
+        ]]
+    }
 }
 
 enum AppiumSessionCapabilities {
@@ -1580,6 +1835,31 @@ enum AppiumSessionCapabilities {
         bundleID: String,
         configuration: AppiumControlConfiguration = AppiumControlConfiguration()
     ) -> [String: Any] {
+        if configuration.platform == .android {
+            var capabilities: [String: Any] = [
+                "platformName": "Android",
+                "appium:automationName": "UiAutomator2",
+                "appium:udid": udid,
+                "appium:noReset": true,
+                "appium:newCommandTimeout": configuration.newCommandTimeoutSeconds,
+                "appium:systemPort": configuration.uiautomator2SystemPort,
+                "appium:mjpegServerPort": configuration.mjpegServerPort,
+                "appium:adbExecTimeout": configuration.adbExecTimeoutMS,
+                "appium:uiautomator2ServerInstallTimeout": configuration.uiautomator2ServerInstallTimeoutMS,
+                "appium:uiautomator2ServerLaunchTimeout": configuration.uiautomator2ServerLaunchTimeoutMS
+            ]
+            let platformVersion = configuration.platformVersion
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !platformVersion.isEmpty {
+                capabilities["appium:platformVersion"] = platformVersion
+            }
+            let appPackage = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !appPackage.isEmpty {
+                capabilities["appium:appPackage"] = appPackage
+                capabilities["appium:dontStopAppOnReset"] = true
+            }
+            return capabilities
+        }
         var capabilities: [String: Any] = [
             "platformName": "iOS",
             "appium:automationName": "XCUITest",
@@ -1732,7 +2012,7 @@ enum AppiumError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .controlNotReady:
-            "iPhone control is not connected. Call connect_control first."
+            "Device control is not connected. Call connect_control first."
         case .missingSessionID:
             "Appium did not return a session id."
         case let .invalidResponse(message):

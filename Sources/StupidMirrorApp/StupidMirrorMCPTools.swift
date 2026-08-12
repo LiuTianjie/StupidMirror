@@ -3,12 +3,12 @@ import MCP
 
 enum StupidMirrorMCPToolCatalog {
     static let tools: [Tool] = [
-        tool("list_devices", "List connected and reconnecting iPhones with mirror and control state.", readOnly: true),
-        tool("refresh_devices", "Refresh iPhone discovery and return the updated device list."),
-        tool("get_device_status", "Get detailed state for one iPhone.", deviceProperties, readOnly: true),
-        tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, WDA, and device diagnostics.", readOnly: true),
-        tool("start_mirror", "Open and start the iPhone mirror. Unactivated installations can mirror one device at a time.", deviceProperties),
-        tool("stop_mirror", "Stop and close the iPhone mirror.", deviceProperties, idempotent: true),
+        tool("list_devices", "List connected and reconnecting iOS and Android devices with mirror and control state.", readOnly: true),
+        tool("refresh_devices", "Refresh iOS and Android discovery and return the updated device list."),
+        tool("get_device_status", "Get detailed state for one mobile device.", deviceProperties, readOnly: true),
+        tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, control-agent, and device diagnostics.", readOnly: true),
+        tool("start_mirror", "Open and start the device mirror. Unactivated installations can mirror one device at a time.", deviceProperties),
+        tool("stop_mirror", "Stop and close the device mirror.", deviceProperties, idempotent: true),
         tool(
             "set_mirror_floating",
             "Set whether the mirror window stays above normal windows.",
@@ -16,16 +16,16 @@ enum StupidMirrorMCPToolCatalog {
             required: ["floating"],
             idempotent: true
         ),
-        tool("connect_control", "Activated feature: start or reuse Appium and WDA, then wait until iPhone control is ready.", deviceProperties),
-        tool("disconnect_control", "Delete the iPhone control session.", deviceProperties, idempotent: true),
-        tool("screenshot", "Capture the current iPhone screen as a native PNG. Control must be ready.", deviceProperties, readOnly: true),
-        tool("get_ui_tree", "Read the current iPhone accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
+        tool("connect_control", "Start or reuse Appium with WDA on iOS or UiAutomator2 on Android, then wait until control is ready.", deviceProperties),
+        tool("disconnect_control", "Disconnect the device control session while keeping its agent warm for quick reuse.", deviceProperties, idempotent: true),
+        tool("screenshot", "Capture the current device screen as a native PNG. Control must be ready.", deviceProperties, readOnly: true),
+        tool("get_ui_tree", "Read the current device accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
         tool(
             "observe_screen",
-            "Observe the latest live frame and optional local Apple Vision OCR. Full hierarchical accessibility is opt-in because WDA /source can be slow and may disturb text focus.",
+            "Observe the latest live frame and optional local Apple Vision OCR. Full hierarchical accessibility is opt-in because native /source can be slow and may disturb text focus.",
             deviceProperties.merging([
                 "include_image": boolean("Include the latest live mirror frame as PNG.", defaultValue: true),
-                "include_accessibility": boolean("Explicitly fetch and parse the full WDA hierarchy. Keep false for routine navigation.", defaultValue: false),
+                "include_accessibility": boolean("Explicitly fetch and parse the full native accessibility hierarchy. Keep false for routine navigation.", defaultValue: false),
                 "include_ocr": boolean("Run local Apple Vision OCR on the latest frame.", defaultValue: false),
                 "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
                 "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
@@ -34,7 +34,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "find_element",
-            "Find visible text with local mirror OCR first, then at most one WDA hierarchy snapshot for labels pixels do not expose.",
+            "Find visible text with local mirror OCR first, then at most one native hierarchy snapshot for labels pixels do not expose.",
             deviceProperties.merging([
                 "query": string("Text to locate across type, name, label, and value."),
                 "include_ocr": boolean("Use local OCR when accessibility has no match.", defaultValue: true),
@@ -46,7 +46,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "find_any_element",
-            "Find the first visible match among alternative texts in one MCP call. Uses one local OCR pass first, then at most one shared WDA hierarchy snapshot.",
+            "Find the first visible match among alternative texts in one MCP call. Uses one local OCR pass first, then at most one shared native hierarchy snapshot.",
             deviceProperties.merging([
                 "queries": stringList("Alternative texts in priority order.", minimumItems: 1, maximumItems: 16),
                 "include_ocr": boolean("Inspect the live mirror with local OCR before the shared accessibility fallback.", defaultValue: true),
@@ -58,7 +58,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "tap_text",
-            "Find and tap the first visible match among alternative texts in one MCP call. Uses local OCR first, one shared WDA hierarchy fallback, then the fresh observed frame.",
+            "Find and tap the first visible match among alternative texts in one MCP call. Uses local OCR first, one shared native hierarchy fallback, then the fresh observed frame.",
             deviceProperties.merging([
                 "queries": stringList("Alternative texts in priority order.", minimumItems: 1, maximumItems: 16),
                 "include_ocr": boolean("Inspect the live mirror with local OCR before the shared accessibility fallback.", defaultValue: true),
@@ -70,7 +70,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "tap_element",
-            "Tap an observed element. Accessibility elements use a fresh native WDA element click first; OCR elements use their normalized frame.",
+            "Tap an observed element. Accessibility elements use a fresh native element click first; OCR elements use their normalized frame.",
             deviceProperties.merging([
                 "element_id": string("Stable element id from the most recent observation."),
                 "observation_id": string("Optional observation UUID. Pass it to reject stale element ids.")
@@ -80,7 +80,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "highlight_elements",
-            "Highlight observed elements on the Mac mirror without tapping or changing the iPhone. Every requested visible element is highlighted and numbered; there is no element-count limit.",
+            "Highlight observed elements on the Mac mirror without tapping or changing the device. Every requested visible element is highlighted and numbered; there is no element-count limit.",
             deviceProperties.merging([
                 "element_ids": unlimitedStringList("Element ids from the latest observation."),
                 "observation_id": string("Optional observation UUID. Pass it to reject stale element ids."),
@@ -91,7 +91,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "highlight_clickable_elements",
-            "Read the current accessibility hierarchy and highlight every visible enabled clickable element on the Mac mirror without tapping or changing the iPhone. Returns the complete numbered element list with no count limit.",
+            "Read the current accessibility hierarchy and highlight every visible enabled clickable element on the Mac mirror without tapping or changing the device. Returns the complete numbered element list with no count limit.",
             deviceProperties.merging([
                 "duration_seconds": number("How long highlights remain visible.", minimum: 1, maximum: 60, defaultValue: 8)
             ]) { _, new in new },
@@ -99,7 +99,7 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "clear_highlights",
-            "Remove all AI guide highlights from the Mac mirror without changing the iPhone.",
+            "Remove all AI guide highlights from the Mac mirror without changing the device.",
             deviceProperties,
             idempotent: true
         ),
@@ -170,53 +170,53 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "type_text",
-            "Type text into the currently focused iPhone field.",
+            "Type text into the currently focused device field.",
             deviceProperties.merging(["text": string("Text to type, up to 10,000 UTF-8 bytes.")]) { _, new in new },
             required: ["text"],
             destructive: true
         ),
         tool(
             "clear_text",
-            "Clear the currently focused iPhone field through its native WDA element, then verify the value is empty. No selection menu or coordinate guessing is used.",
+            "Clear the currently focused field through its native accessibility element, then verify the value is empty. No selection menu or coordinate guessing is used.",
             deviceProperties,
             destructive: true
         ),
         tool(
             "replace_text",
-            "Atomically clear and replace the currently focused iPhone field through its native WDA element, then verify the exact value. Use this instead of manually selecting all and deleting.",
+            "Atomically clear and replace the currently focused field through its native accessibility element, then verify the exact value. Use this instead of manually selecting all and deleting.",
             deviceProperties.merging(["text": string("Replacement text, up to 10,000 UTF-8 bytes.")]) { _, new in new },
             required: ["text"],
             destructive: true
         ),
         tool(
             "press_button",
-            "Press an iPhone hardware-style button.",
+            "Press a hardware-style device button.",
             deviceProperties.merging([
                 "button": enumeration("Button name.", values: ["home", "volume_up", "volume_down"])
             ]) { _, new in new },
             required: ["button"],
             destructive: true
         ),
-        tool("back", "Tap the conventional top-left iOS back location.", deviceProperties, destructive: true),
-        tool("app_switcher", "Open the iOS app switcher using a best-effort double Home action.", deviceProperties, destructive: true),
+        tool("back", "Go back using Android Back or the conventional top-left iOS back location.", deviceProperties, destructive: true),
+        tool("app_switcher", "Open the native app switcher.", deviceProperties, destructive: true),
         tool(
             "activate_app",
-            "Launch or foreground an installed iPhone app by bundle identifier.",
-            deviceProperties.merging(["bundle_id": string("iPhone app bundle identifier.")]) { _, new in new },
+            "Launch or foreground an installed app by iOS bundle identifier or Android package name.",
+            deviceProperties.merging(["bundle_id": string("iOS bundle identifier or Android package name.")]) { _, new in new },
             required: ["bundle_id"],
             destructive: true
         ),
         tool(
             "terminate_app",
-            "Terminate an installed iPhone app by bundle identifier.",
-            deviceProperties.merging(["bundle_id": string("iPhone app bundle identifier.")]) { _, new in new },
+            "Terminate an installed app by iOS bundle identifier or Android package name.",
+            deviceProperties.merging(["bundle_id": string("iOS bundle identifier or Android package name.")]) { _, new in new },
             required: ["bundle_id"],
             destructive: true
         )
     ]
 
     private static let deviceProperties: [String: Value] = [
-        "device_id": string("Optional StupidMirror device_id or iPhone UDID. Omit only when one iPhone is connected.")
+        "device_id": string("Optional StupidMirror device_id, iOS UDID, or Android ADB serial. Omit only when one device is connected.")
     ]
 
     private static func pointTool(_ name: String, _ description: String) -> Tool {

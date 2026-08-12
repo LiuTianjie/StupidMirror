@@ -17,6 +17,7 @@ entitlements="${ENTITLEMENTS:-StupidMirror.entitlements}"
 node_entitlements="${NODE_ENTITLEMENTS:-NodeRuntime.entitlements}"
 skip_codesign="${SKIP_CODESIGN:-false}"
 bundle_appium="${BUNDLE_APPIUM:-true}"
+bundle_android_runtime="${BUNDLE_ANDROID_RUNTIME:-true}"
 default_appium_url="${DEFAULT_APPIUM_URL:-http://127.0.0.1:4723}"
 default_control_bundle_id="${DEFAULT_CONTROL_BUNDLE_ID:-}"
 default_xcode_org_id="${DEFAULT_XCODE_ORG_ID:-${STUPIDMIRROR_XCODE_ORG_ID:-}}"
@@ -68,6 +69,10 @@ fi
 if [ "$bundle_appium" = "true" ]; then
   mkdir -p "${contents_path}/Resources"
   bash scripts/vendor-appium-runtime.sh "${contents_path}/Resources/Appium"
+fi
+if [ "$bundle_android_runtime" = "true" ]; then
+  mkdir -p "${contents_path}/Resources"
+  bash scripts/vendor-android-runtime.sh "${contents_path}/Resources/Android"
 fi
 
 cat > "${contents_path}/Info.plist" <<PLIST

@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.2.12 - 2026-08-12
+
+- Add Android 11+ discovery through ADB with direct H.264 mirroring and optional
+  raw device-audio playback through a pinned scrcpy server.
+- Add Android control through the bundled Appium UiAutomator2 driver, including
+  pointer gestures, text editing, hardware-style keys, semantic UI inspection,
+  and app lifecycle actions across the desktop UI and MCP harness.
+- Verify pinned UiAutomator2 and scrcpy runtime versions and checksums in release
+  packaging, while retaining the existing iOS XCUITest control path.
+- Probe cached Appium sessions before MCP reconnects so a restarted server or
+  device-side runner self-heals instead of leaving Android control falsely ready.
 
 ## 0.2.11 - 2026-08-12
 

@@ -8,6 +8,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     let captureSession = AVCaptureSession()
     let device: AVCaptureDevice?
     let wirelessEndpointURL: URL?
+    let androidDevice: AndroidDeviceMetadata?
 
     @Published private(set) var state: MirrorState = .stopped
     // Live aspect ratio read from actual frames, so the window can follow
@@ -31,6 +32,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var disposed = false
     private var lastObservedAspectRatio: Double?
     private var wirelessSRTStream: WirelessSRTH264Stream?
+    private var androidStream: AndroidScrcpyStream?
+    private var androidAudioEnabled = false
     private var wirelessStreamURL: URL?
     private var wirelessRetryTask: Task<Void, Never>?
     private var wirelessGeneration: UInt64 = 0
@@ -42,6 +45,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     init(device: AVCaptureDevice) {
         self.device = device
         self.wirelessEndpointURL = nil
+        self.androidDevice = nil
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
     }
@@ -49,13 +53,24 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     init(wirelessEndpointURL: URL) {
         self.device = nil
         self.wirelessEndpointURL = wirelessEndpointURL
+        self.androidDevice = nil
         self.wirelessStreamURL = wirelessEndpointURL
+        super.init()
+        sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
+    }
+
+    init(androidDevice: AndroidDeviceMetadata) {
+        self.device = nil
+        self.wirelessEndpointURL = nil
+        self.androidDevice = androidDevice
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
     }
 
     deinit {
         automationActionClearTask?.cancel()
+        wirelessSRTStream?.stop()
+        androidStream?.stop()
         clearSampleBufferConsumers()
         if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
             tearDownOnSessionQueue()
@@ -74,6 +89,16 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         }
         guard state != .starting else { return }
         state = .starting
+
+        if androidDevice != nil {
+            wirelessStartedAt = Date()
+            wirelessStartupBeganAt = wirelessStartedAt
+            wirelessStartupDetail = "Starting Android screen service…"
+            wirelessOnRunning = onRunning
+            wirelessGeneration &+= 1
+            startAndroidAttempt(generation: wirelessGeneration)
+            return
+        }
 
         if wirelessEndpointURL != nil {
             wirelessStartedAt = Date()
@@ -123,6 +148,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessRetryTask = nil
         wirelessSRTStream?.stop()
         wirelessSRTStream = nil
+        androidStream?.stop()
+        androidStream = nil
         wirelessOnRunning = nil
         wirelessStartedAt = nil
         wirelessStartupDetail = nil
@@ -276,6 +303,19 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     /// trigger microphone access. Callers should only enable it after the
     /// system reports audio capture as authorized.
     nonisolated func setAudioEnabled(_ enabled: Bool) {
+        sampleBufferConsumerLock.lock()
+        let androidAudioChanged = androidAudioEnabled != enabled
+        androidAudioEnabled = enabled
+        let usesAndroid = androidDevice != nil
+        sampleBufferConsumerLock.unlock()
+
+        if usesAndroid {
+            guard androidAudioChanged else { return }
+            Task { @MainActor [weak self] in
+                self?.restartAndroidForAudioPreferenceChange()
+            }
+            return
+        }
         sessionQueue.async { [self] in
             guard !disposed else { return }
             audioEnabled = enabled
@@ -377,6 +417,134 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         captureSession.commitConfiguration()
         configured = false
         lastObservedAspectRatio = nil
+    }
+
+    @MainActor
+    private func restartAndroidForAudioPreferenceChange() {
+        guard androidDevice != nil,
+              state == .starting || state == .running,
+              !disposed else { return }
+        wirelessGeneration &+= 1
+        wirelessRetryTask?.cancel()
+        wirelessRetryTask = nil
+        androidStream?.stop()
+        androidStream = nil
+        state = .starting
+        wirelessStartedAt = Date()
+        wirelessStartupBeganAt = wirelessStartedAt
+        wirelessStartupDetail = "Restarting Android audio stream…"
+        startAndroidAttempt(generation: wirelessGeneration)
+    }
+
+    @MainActor
+    private func startAndroidAttempt(generation: UInt64) {
+        guard generation == wirelessGeneration,
+              state == .starting,
+              let androidDevice,
+              !disposed else { return }
+        guard let adbPath = AndroidRuntime.adbExecutablePath() else {
+            failAndroidStart(AndroidADBError.adbUnavailable.localizedDescription)
+            return
+        }
+        guard let server = AndroidRuntime.scrcpyServerResource() else {
+            failAndroidStart("The bundled Android screen service is unavailable.")
+            return
+        }
+        sampleBufferConsumerLock.lock()
+        let audioEnabled = androidAudioEnabled
+        sampleBufferConsumerLock.unlock()
+        let stream = AndroidScrcpyStream(
+            configuration: AndroidScrcpyStream.Configuration(
+                serial: androidDevice.serial,
+                adbPath: adbPath,
+                serverPath: server.path,
+                serverVersion: server.version,
+                audioEnabled: audioEnabled
+            ),
+            onFrame: { [weak self] sampleBuffer in
+                self?.receiveWirelessSampleBuffer(sampleBuffer, generation: generation)
+            },
+            onAudio: { [weak self] sampleBuffer in
+                self?.receiveAndroidAudioSampleBuffer(sampleBuffer, generation: generation)
+            },
+            onSessionSize: { [weak self] width, height in
+                Task { @MainActor in
+                    self?.receiveAndroidSessionSize(width: width, height: height, generation: generation)
+                }
+            },
+            onFailure: { [weak self] error in
+                Task { @MainActor in
+                    self?.handleAndroidFailure(error, generation: generation)
+                }
+            }
+        )
+        androidStream?.stop()
+        androidStream = stream
+        wirelessStartupDetail = "Connecting the Android video stream…"
+        stream.start()
+    }
+
+    private func receiveAndroidAudioSampleBuffer(
+        _ sampleBuffer: CMSampleBuffer,
+        generation: UInt64
+    ) {
+        sampleBufferConsumerLock.lock()
+        let enabled = androidAudioEnabled
+        let consumer = enabled ? audioSampleBufferConsumer : nil
+        sampleBufferConsumerLock.unlock()
+        guard generation == wirelessGeneration else { return }
+        consumer?(sampleBuffer)
+    }
+
+    @MainActor
+    private func receiveAndroidSessionSize(width: Int, height: Int, generation: UInt64) {
+        guard generation == wirelessGeneration,
+              state == .starting || state == .running,
+              width > 0, height > 0 else { return }
+        let ratio = Double(width) / Double(height)
+        if frameAspectRatio == nil || abs((frameAspectRatio ?? ratio) - ratio) >= 0.01 {
+            frameAspectRatio = ratio
+        }
+    }
+
+    @MainActor
+    private func failAndroidStart(_ message: String) {
+        guard androidDevice != nil, state == .starting else { return }
+        wirelessGeneration &+= 1
+        wirelessRetryTask?.cancel()
+        wirelessRetryTask = nil
+        androidStream?.stop()
+        androidStream = nil
+        wirelessOnRunning = nil
+        wirelessStartupDetail = nil
+        wirelessStartupBeganAt = nil
+        state = .failed(message)
+    }
+
+    @MainActor
+    private func handleAndroidFailure(_ error: Error, generation: UInt64) {
+        guard generation == wirelessGeneration,
+              state == .starting || state == .running,
+              !disposed else { return }
+        androidStream?.stop()
+        androidStream = nil
+
+        let elapsed = Date().timeIntervalSince(wirelessStartedAt ?? Date())
+        guard elapsed < 30 else {
+            state = .failed(error.localizedDescription)
+            wirelessOnRunning = nil
+            wirelessStartupDetail = nil
+            wirelessStartupBeganAt = nil
+            return
+        }
+        state = .starting
+        wirelessStartupDetail = "Reconnecting the Android screen service…"
+        wirelessRetryTask?.cancel()
+        wirelessRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            self?.startAndroidAttempt(generation: generation)
+        }
     }
 
     private func clearSampleBufferConsumers() {

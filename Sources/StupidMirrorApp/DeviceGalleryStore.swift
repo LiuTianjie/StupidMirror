@@ -191,7 +191,8 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     var diagnostics: [DiagnosticItem] {
-        [
+        let androidRuntime = AndroidRuntime.status
+        return [
             DiagnosticItem(name: t("diagnostic.camera"), value: authorizationLabel(permissionStatus)),
             DiagnosticItem(name: t("diagnostic.microphone"), value: authorizationLabel(microphonePermissionStatus)),
             DiagnosticItem(
@@ -214,7 +215,17 @@ final class DeviceGalleryStore: ObservableObject {
             DiagnosticItem(name: t("diagnostic.controlBundle"), value: controlBundleID.isEmpty ? t("common.notSet") : controlBundleID),
             DiagnosticItem(name: t("diagnostic.xcodeTeam"), value: controlXcodeOrgID.isEmpty ? t("common.notSet") : controlXcodeOrgID),
             DiagnosticItem(name: t("diagnostic.wdaBundle"), value: effectiveControlWDABundleID.isEmpty ? t("common.default") : effectiveControlWDABundleID),
-            DiagnosticItem(name: t("diagnostic.libimobiledevice"), value: DeviceMetadataService.isAvailable ? t("connection.connected") : t("appium.state.missing"))
+            DiagnosticItem(name: t("diagnostic.libimobiledevice"), value: DeviceMetadataService.isAvailable ? t("connection.connected") : t("appium.state.missing")),
+            DiagnosticItem(
+                name: t("diagnostic.androidADB"),
+                value: androidRuntime.adbPath ?? t("appium.state.missing")
+            ),
+            DiagnosticItem(
+                name: t("diagnostic.androidMirror"),
+                value: androidRuntime.mirroringAvailable
+                    ? "scrcpy server \(androidRuntime.scrcpyServerVersion ?? "")"
+                    : t("appium.state.missing")
+            )
         ]
     }
 
@@ -232,6 +243,14 @@ final class DeviceGalleryStore: ObservableObject {
 
     var canUseControl: Bool {
         licenseManager.state.capabilities.controlEnabled
+    }
+
+    var hasConnectedIOSDevice: Bool {
+        connectedSessions.contains { $0.platform == .iOS }
+    }
+
+    var needsIOSAudioPermission: Bool {
+        hasConnectedIOSDevice && microphonePermissionStatus != .authorized
     }
 
     private var deviceControlDiagnosticLabel: String {
@@ -355,13 +374,15 @@ final class DeviceGalleryStore: ObservableObject {
     var wirelessSetupUSBSession: DeviceSession? {
         if let selectedSessionID,
            let selected = sessions.first(where: { $0.id == selectedSessionID }),
+           selected.platform == .iOS,
            selected.transport == .usb,
            selected.device.connectionState == .connected,
            selected.device.udid?.isEmpty == false {
             return selected
         }
         return sessions.first {
-            $0.transport == .usb
+            $0.platform == .iOS
+                && $0.transport == .usb
                 && $0.device.connectionState == .connected
                 && $0.device.udid?.isEmpty == false
         }
@@ -434,11 +455,15 @@ final class DeviceGalleryStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = nil
         refreshRequestedWhileRunning = false
-        let usbIDs = Set(sessions.filter { $0.transport == .usb }.map(\.id))
+        let usbIDs = Set(sessions.filter {
+            $0.platform == .iOS && $0.transport == .usb
+        }.map(\.id))
         desiredMirrorIDs.subtract(usbIDs)
         pendingActivationMirrorIDs.subtract(usbIDs)
         dismissActivationSheetIfPresented()
-        let usbSessions = sessions.filter { $0.transport == .usb }
+        let usbSessions = sessions.filter {
+            $0.platform == .iOS && $0.transport == .usb
+        }
         MirrorWindowRegistry.shared.closeAll(sessions: usbSessions)
         for session in usbSessions {
             session.mirrorSession.dispose()
@@ -454,7 +479,7 @@ final class DeviceGalleryStore: ObservableObject {
             disconnectedSince[id] = nil
             floatingMirrorIDs.remove(id)
         }
-        sessions.removeAll { $0.transport == .usb }
+        sessions.removeAll { $0.platform == .iOS && $0.transport == .usb }
         if selectedSessionID.map(usbIDs.contains) == true {
             selectedSessionID = sessions.first?.id
         }
@@ -468,13 +493,21 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func applyAudioPlaybackPreference() {
-        let audioEnabled = Self.shouldCaptureAudio(
-            playbackEnabled: audioPlaybackEnabled,
-            authorizationStatus: microphonePermissionStatus
-        )
         for session in sessions {
+            let audioEnabled = session.platform == .android
+                ? audioPlaybackEnabled
+                : Self.shouldCaptureAudio(
+                    playbackEnabled: audioPlaybackEnabled,
+                    authorizationStatus: microphonePermissionStatus
+                )
             session.mirrorSession.setAudioEnabled(audioEnabled)
         }
+    }
+
+    func enableAudioPlayback() async {
+        audioPlaybackEnabled = true
+        guard needsIOSAudioPermission else { return }
+        await requestMicrophonePermission()
     }
 
     nonisolated static func shouldCaptureAudio(
@@ -502,8 +535,12 @@ final class DeviceGalleryStore: ObservableObject {
             async let wirelessTask = Task.detached(priority: .utility) {
                 discoverWireless ? CoreDeviceDiscoveryService.wirelessDevices() : []
             }.value
+            async let androidTask = Task.detached(priority: .utility) {
+                AndroidADBService.discoverDevices()
+            }.value
             let metadata = await metadataTask
             let wirelessDevices = await wirelessTask
+            let androidDevices = await androidTask
             guard let self else { return }
             guard self.refreshGeneration == generation else { return }
             guard !Task.isCancelled, !self.isShuttingDown else {
@@ -513,13 +550,20 @@ final class DeviceGalleryStore: ObservableObject {
 
             let devices = canDiscoverUSB ? AVFoundationMirrorBackend.discoverMuxedDevices() : []
             guard self.refreshGeneration == generation, !Task.isCancelled else { return }
-            self.applyRefresh(devices: devices, metadata: metadata, wirelessDevices: wirelessDevices)
+            self.applyRefresh(
+                devices: devices,
+                metadata: metadata,
+                wirelessDevices: wirelessDevices,
+                androidDevices: androidDevices
+            )
             self.finishRefresh(generation: generation)
         }
     }
 
     func refreshForAutomation() async throws {
-        guard permissionStatus == .authorized || wirelessMirroringEnabled else {
+        guard permissionStatus == .authorized
+                || wirelessMirroringEnabled
+                || AndroidRuntime.adbExecutablePath() != nil else {
             throw DeviceAutomationError.permissionRequired
         }
         refresh()
@@ -544,7 +588,8 @@ final class DeviceGalleryStore: ObservableObject {
     private func applyRefresh(
         devices: [AVCaptureDevice],
         metadata: [DeviceMetadata],
-        wirelessDevices: [WirelessDeviceMetadata]
+        wirelessDevices: [WirelessDeviceMetadata],
+        androidDevices: [AndroidDeviceMetadata]
     ) {
         let existingByID = Self.latestValueByID(sessions) { $0.id }
         var nextSessions: [DeviceSession] = []
@@ -639,6 +684,43 @@ final class DeviceGalleryStore: ObservableObject {
                 let session = DeviceSession(device: identity, wirelessDevice: wirelessDevice)
                 nextSessions.append(session)
                 if autoStartMirrors && !wasReconnecting {
+                    autoStartIDs.insert(session.id)
+                }
+            }
+        }
+
+
+        for androidDevice in androidDevices {
+            let identity = androidDevice.identity
+            guard !isRemovedDevice(identity.id) else { continue }
+            guard connectedIDs.insert(identity.id).inserted else { continue }
+
+            if let existing = existingByID[identity.id],
+               existing.platform == .android,
+               existing.androidDevice == androidDevice,
+               existing.device.connectionState == identity.connectionState {
+                disconnectedSince[identity.id] = nil
+                var updatedSession = existing
+                updatedSession.device = identity
+                nextSessions.append(updatedSession)
+            } else {
+                let existing = existingByID[identity.id]
+                let wasReconnecting = existing?.device.connectionState == .disconnected
+                if let existing {
+                    MirrorWindowRegistry.shared.close(session: existing)
+                    existing.mirrorSession.dispose()
+                    existing.controlSession.stop(serverURL: appiumServerURL)
+                    if desiredMirrorIDs.contains(identity.id) {
+                        resumeAuthorizedIDs.insert(identity.id)
+                    }
+                }
+                disconnectedSince[identity.id] = nil
+                let session = DeviceSession(device: identity, androidDevice: androidDevice)
+                session.mirrorSession.setAudioEnabled(audioPlaybackEnabled)
+                nextSessions.append(session)
+                if autoStartMirrors,
+                   identity.connectionState == .connected,
+                   !wasReconnecting {
                     autoStartIDs.insert(session.id)
                 }
             }
@@ -753,7 +835,9 @@ final class DeviceGalleryStore: ObservableObject {
 
     func start(_ session: DeviceSession) {
         guard session.device.connectionState == .connected,
-              session.transport == .wireless || permissionStatus == .authorized else { return }
+              session.platform == .android
+                || session.transport == .wireless
+                || permissionStatus == .authorized else { return }
         select(session)
         requestMirrorStarts([session.id])
     }
@@ -945,7 +1029,9 @@ final class DeviceGalleryStore: ObservableObject {
         guard !isShuttingDown else { return }
         for session in sessions where sessionIDs.contains(session.id)
             && session.device.connectionState == .connected {
-            guard session.transport == .wireless || permissionStatus == .authorized else { continue }
+            guard session.platform == .android
+                    || session.transport == .wireless
+                    || permissionStatus == .authorized else { continue }
             desiredMirrorIDs.insert(session.id)
             prepareWirelessTransportIfNeeded(for: session)
             MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
@@ -1136,7 +1222,15 @@ final class DeviceGalleryStore: ObservableObject {
         ) { [weak self] message in
             guard let self, !self.isShuttingDown else { return }
             self.statusMessage = self.t(message)
-            self.presentControlSetup(for: session)
+            self.presentControlRecovery(for: session)
+        }
+    }
+
+    private func presentControlRecovery(for session: DeviceSession) {
+        if session.platform == .android {
+            presentDiagnostics()
+        } else {
+            presentControlSetup(for: session)
         }
     }
 
@@ -1171,6 +1265,10 @@ final class DeviceGalleryStore: ObservableObject {
             guard !isShuttingDown else { return }
             if ready {
                 guard session.controlSession.isConnecting else { return }
+                if session.platform == .android {
+                    prepareControl(for: session)
+                    return
+                }
                 await detectSigningTeams()
                 guard session.controlSession.isConnecting else { return }
                 do {
@@ -1180,12 +1278,12 @@ final class DeviceGalleryStore: ObservableObject {
                 } catch {
                     session.controlSession.failPreparation(error.localizedDescription)
                     statusMessage = error.localizedDescription
-                    presentControlSetup(for: session)
+                    presentControlRecovery(for: session)
                 }
             } else {
                 statusMessage = t("status.controlAppiumUnavailable")
                 session.controlSession.failPreparation("control.error.appiumUnavailable")
-                presentControlSetup(for: session)
+                presentControlRecovery(for: session)
             }
         }
     }
@@ -1201,7 +1299,10 @@ final class DeviceGalleryStore: ObservableObject {
         guard session.device.udid?.isEmpty == false else {
             throw DeviceAutomationError.deviceUnavailable
         }
-        if session.controlSession.isReady { return }
+        if session.controlSession.isReady,
+           await session.controlSession.verifyReadySession(serverURL: appiumServerURL) {
+            return
+        }
         if session.controlSession.resumeWarmSession(
             serverURL: appiumServerURL,
             bundleID: controlBundleID,
@@ -1218,19 +1319,28 @@ final class DeviceGalleryStore: ObservableObject {
             session.controlSession.failPreparation("control.error.appiumUnavailable")
             throw DeviceAutomationError.appiumUnavailable
         }
+        if session.platform == .android {
+            prepareControl(for: session)
+            try await waitForControlConnection(session)
+            return
+        }
         await detectSigningTeams()
         guard session.controlSession.isConnecting else { throw CancellationError() }
         let configuration = try await preparedControlConfiguration(for: session)
         guard session.controlSession.isConnecting else { throw CancellationError() }
         prepareControl(for: session, configuration: configuration)
 
+        try await waitForControlConnection(session)
+    }
+
+    private func waitForControlConnection(_ session: DeviceSession) async throws {
         let deadline = ContinuousClock.now + .seconds(240)
         while !session.controlSession.isReady {
             if case let .failed(message) = session.controlSession.state {
                 throw DeviceAutomationError.controlFailed(t(message))
             }
             guard ContinuousClock.now < deadline else {
-                throw DeviceAutomationError.timedOut("Connecting iPhone control timed out.")
+                throw DeviceAutomationError.timedOut("Connecting device control timed out.")
             }
             try Task.checkCancellation()
             try await Task.sleep(for: .milliseconds(150))
@@ -1249,7 +1359,7 @@ final class DeviceGalleryStore: ObservableObject {
         }
 
         let deadline = ContinuousClock.now + .seconds(
-            session.transport == .wireless ? 120 : 20
+            session.isIOSWireless ? 120 : 20
         )
         while session.mirrorSession.state != .running {
             if case let .failed(message) = session.mirrorSession.state {
@@ -1308,8 +1418,15 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func controlConfiguration(for session: DeviceSession) -> AppiumControlConfiguration {
+        if session.platform == .android {
+            return AppiumControlConfiguration(
+                platform: .android,
+                platformVersion: session.androidDevice?.osVersion ?? ""
+            )
+        }
         let hasCachedBuild = hasCachedWDABuild(for: session.device.udid)
         return AppiumControlConfiguration(
+            platform: .iOS,
             xcodeOrgID: controlXcodeOrgID,
             xcodeSigningID: controlXcodeSigningID,
             wdaBundleID: effectiveControlWDABundleID,
@@ -1649,6 +1766,10 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func captureThumbnail(for session: DeviceSession) {
+        if let androidDevice = session.androidDevice {
+            captureAndroidThumbnail(for: session, serial: androidDevice.serial)
+            return
+        }
         if session.transport == .wireless {
             captureWirelessThumbnail(for: session)
             return
@@ -1680,6 +1801,40 @@ final class DeviceGalleryStore: ObservableObject {
         } catch {
             thumbnailCaptures[session.id] = nil
             thumbnailErrors[session.id] = error.localizedDescription
+        }
+    }
+
+    private func captureAndroidThumbnail(for session: DeviceSession, serial: String) {
+        guard wirelessThumbnailTasks[session.id] == nil else { return }
+        let sessionID = session.id
+        wirelessThumbnailTasks[sessionID] = Task { @MainActor [weak self] in
+            defer { self?.wirelessThumbnailTasks[sessionID] = nil }
+            guard let self else { return }
+            do {
+                let data = try await Task.detached(priority: .utility) {
+                    try AndroidADBService.captureScreenshot(serial: serial)
+                }.value
+                try Task.checkCancellation()
+                guard let image = NSImage(data: data) else {
+                    throw WirelessThumbnailError.invalidImage
+                }
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                    self.thumbnails[sessionID] = image
+                    self.thumbnailAspectRatios[sessionID] = max(
+                        Double(image.size.width / max(image.size.height, 1)),
+                        0.1
+                    )
+                    self.thumbnailErrors[sessionID] = nil
+                }
+                MirrorWindowRegistry.shared.updateAspectRatio(
+                    for: session,
+                    aspectRatio: self.displayAspectRatio(for: session)
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                self.thumbnailErrors[sessionID] = error.localizedDescription
+            }
         }
     }
 

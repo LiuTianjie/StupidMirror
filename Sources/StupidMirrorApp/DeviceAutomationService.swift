@@ -34,22 +34,22 @@ enum DeviceAutomationError: LocalizedError, Sendable {
     var errorDescription: String? {
         switch self {
         case let .deviceNotFound(id):
-            "No connected iPhone matches '\(id)'. Call list_devices first."
+            "No connected device matches '\(id)'. Call list_devices first."
         case let .multipleDevices(ids):
-            "Multiple iPhones are connected. Pass device_id. Available: \(ids.joined(separator: ", "))."
+            "Multiple devices are connected. Pass device_id. Available: \(ids.joined(separator: ", "))."
         case .deviceUnavailable:
-            "The selected iPhone is unavailable or reconnecting."
+            "The selected device is unavailable or reconnecting."
         case .permissionRequired:
             "Camera permission is required for USB mirroring. Enable wireless mode to discover Xcode-paired devices without it."
         case .appiumUnavailable:
             "The local Appium service could not start."
         case .controlNotReady:
-            "iPhone control is not ready. Call connect_control first."
+            "Device control is not ready. Call connect_control first."
         case let .controlFailed(message), let .mirrorFailed(message), let .timedOut(message),
              let .assertionFailed(message):
             message
         case .activationRequired:
-            "Activation is required for iPhone control or for using more than one device at the same time."
+            "Activation is required for device control or for using more than one device at the same time."
         case let .invalidArgument(message):
             message
         }
@@ -59,6 +59,7 @@ enum DeviceAutomationError: LocalizedError, Sendable {
 struct AutomationDeviceSnapshot: Codable, Equatable, Sendable {
     let deviceID: String
     let udid: String?
+    let platform: String
     let name: String
     let productType: String
     let osVersion: String?
@@ -71,7 +72,7 @@ struct AutomationDeviceSnapshot: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case deviceID = "device_id"
-        case udid, name
+        case udid, platform, name
         case productType = "product_type"
         case osVersion = "os_version"
         case connectionState = "connection_state"
@@ -1021,10 +1022,14 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     func back(deviceID: String?) async throws {
         let session = try readyControlSession(deviceID: deviceID)
-        session.mirrorSession.showAutomationPoint(
-            CGPoint(x: 0.09, y: 0.075),
-            label: "AI · Back"
-        )
+        if session.platform == .android {
+            session.mirrorSession.showAutomationNotice("AI · Back")
+        } else {
+            session.mirrorSession.showAutomationPoint(
+                CGPoint(x: 0.09, y: 0.075),
+                label: "AI · Back"
+            )
+        }
         await Task.yield()
         try await withDeviceLock(session.id) {
             try await session.controlSession.pressBackAwaiting(serverURL: self.store.appiumServerURL)
@@ -1243,6 +1248,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         return AutomationDeviceSnapshot(
             deviceID: session.id,
             udid: session.device.udid,
+            platform: session.platform.rawValue,
             name: session.device.name,
             productType: session.device.productType,
             osVersion: session.device.osVersion,

@@ -2,14 +2,13 @@
 
 [English](README.md) · **简体中文**
 
-StupidMirror 是一款原生 macOS 菜单栏应用，可通过 USB，或完成一次 USB
-准备后通过同一局域网，镜像并操作真实 iPhone。USB 画面来自 macOS 通过
-CoreMediaIO / AVFoundation 暴露的 iPhone 屏幕源；无线画面由 Xcode 签名的
-WebDriverAgent 在 iPhone 端以 H.264 编码，通过 SRT 传输，并在 Mac 端使用
-VideoToolbox 解码。
+StupidMirror 是一款原生 macOS 菜单栏应用，可镜像并控制 iOS 与 Android
+真机。iPhone 支持 USB，以及完成一次 USB 准备后的同局域网无线镜像；
+Android 11 及以上设备通过 ADB 发现，并通过固定版本的 scrcpy server 直接
+传输 H.264 画面与 PCM 声音。
 
 [产品网站](https://liutianjie.github.io/StupidMirror/) ·
-[下载 StupidMirror v0.2.11](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.11/StupidMirror-v0.2.11-macos.zip) ·
+[下载 StupidMirror v0.2.12](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.12/StupidMirror-v0.2.12-macos.zip) ·
 [商业授权](COMMERCIAL-LICENSE.md)
 
 > 项目仍处于实验阶段。由于 macOS 将 iPhone 屏幕暴露为 AVFoundation
@@ -20,13 +19,15 @@ VideoToolbox 解码。
 - 通过 CoreMediaIO / AVFoundation 自动发现并镜像 USB iPhone。
 - 完成一次 USB 准备后，通过 Apple `devicectl` 与局域网无线镜像。
 - iPhone 端全分辨率 H.264、SRT 传输、Mac 端 VideoToolbox 解码。
+- 通过 ADB 自动发现 Android 11 及以上设备，在 StupidMirror 内直接显示 H.264
+  画面，并可播放手机声音。
 - 菜单栏设备面板、实时缩略图、诊断、设置与独立镜像窗口。
-- 可选的 Appium / XCUITest 真机控制：点击、滑动、长按、文本输入、剪贴板、
-  Home、App 切换以及按 Bundle ID 启停 App。
-- 发布包内置 Mac 侧 Appium / XCUITest 运行时，无需另装 Node 环境。
+- 可选的 Appium 真机控制：iOS 使用 XCUITest，Android 使用 UiAutomator2；
+  支持点击、滑动、长按、文本输入、Home / Back、App 切换和启停 App。
+- 发布包内置 Mac 侧 Appium、XCUITest 与 UiAutomator2 运行时，无需另装 Node。
 - 内置只监听本机的 MCP Server，可直接接入 Codex 或 Claude Code。
-- 本地 Apple Vision OCR、按需 iOS Accessibility、可见的 AI 操作与高亮标记。
-- 免费镜像一台设备；激活后支持多设备并行镜像与 iPhone 控制。
+- 本地 Apple Vision OCR、按需原生 Accessibility、可见的 AI 操作与高亮标记。
+- 免费镜像一台设备；激活后支持多设备并行镜像与设备控制。
 - 应用界面和产品网站均支持英文与简体中文。
 
 ## 系统要求
@@ -36,12 +37,23 @@ VideoToolbox 解码。
 - USB 镜像需要相机权限；播放 iPhone 音频时需要可选的麦克风权限。
 - 真机控制需要 iPhone 开启开发者模式 / UI Automation，并允许当前 Mac
   使用有效 Apple Development 身份签名 WebDriverAgentRunner。
+- Android 需要 Android 11 或更高版本、开启 USB 调试，并在 Mac 安装 Android
+  SDK Platform-Tools（`adb`）；手机弹出调试授权时需允许当前 Mac。
+- 首次点击 Android 的“连接控制”时，会自动安装 Appium UiAutomator2 的设置与
+  Server 辅助 APK；无需另装 StupidMirror Android App，也不需要额外账号。
+
+## Android 镜像与控制
+
+Android 画面和声音通过 ADB / scrcpy 独立传输，不连接控制也能使用。控制只会
+在用户明确点击“连接控制”时启动。首次连接通常需要 20–60 秒，期间会检查并
+按需安装 `io.appium.settings`、`io.appium.uiautomator2.server` 和
+`io.appium.uiautomator2.server.test`；后续连接通常直接复用。
 
 ## 快速开始
 
 直接下载已签名和 Apple 公证的版本：
 
-[下载 StupidMirror v0.2.11](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.11/StupidMirror-v0.2.11-macos.zip)
+[下载 StupidMirror v0.2.12](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.12/StupidMirror-v0.2.12-macos.zip)
 
 从源码运行：
 
@@ -68,7 +80,7 @@ open dist/StupidMirror.app
 2. 在内置连接向导中选择 **Codex** 或 **Claude Code**。
 3. 复制应用生成的配置或命令，其中已经包含本机
    `http://127.0.0.1:<port>/mcp` 地址、Bearer 认证，以及首次准备 WDA 所需的
-   240 秒工具超时。
+   240 秒首次控制代理准备超时。
 4. 将配置加入对应客户端，必要时重启客户端，然后让它调用 `list_devices`。
 
 生成的 Bearer Token 需要保密。服务只绑定 `127.0.0.1`；在应用中轮换 Token
@@ -80,9 +92,9 @@ open dist/StupidMirror.app
 - 观察与定位：读取最新镜像帧、本地 Vision OCR、按需 Accessibility、语义化
   元素查找、等待与断言。
 - 可见引导：在 Mac 镜像上编号高亮所有可点击目标，或高亮指定目标，不向
-  iPhone 发送任何输入。
+  手机发送任何输入。
 - 真机操作：点击、双击、长按、滑动、滚动、输入、清空/替换文本、按键、
-  App 切换，以及按 Bundle ID 启停 App。
+  App 切换，以及按 iOS Bundle ID 或 Android 包名启停 App。
 
 推荐的 Agent 操作顺序：
 
@@ -90,7 +102,7 @@ open dist/StupidMirror.app
 2. 使用 `observe_screen` 获取最新帧；日常导航优先启用本地 OCR，只有明确需要
    深层结构时才请求 Accessibility。
 3. 使用 `tap_text` 一次提交最多 16 个候选文案。StupidMirror 先在最新实时
-   镜像帧上做一次本地 OCR；像素中没有目标时，再为全部候选共享一次 WDA
+   镜像帧上做一次本地 OCR；像素中没有目标时，再为全部候选共享一次原生
    UI Tree 快照。
 4. 使用 `tap_element` 时携带 observation UUID，可拒绝已经过期的元素 ID。
 5. 文本输入优先使用 `replace_text` 或 `clear_text`，它们直接操作当前原生输入
@@ -98,7 +110,7 @@ open dist/StupidMirror.app
 
 `highlight_clickable_elements` 会把当前所有可见、启用且可点击的目标编号显示在
 Mac 镜像上；`highlight_elements` 可高亮指定元素；`clear_highlights` 可提前清除。
-这些高亮不会点击 iPhone，也不会被写进视频流。
+这些高亮不会点击手机，也不会被写进视频流。
 
 ## 隐私
 
@@ -107,7 +119,7 @@ OCR 使用 macOS Vision 按需在本地完成；AI 操作标记只渲染在 Mac 
 应用不内置模型，也不要求模型 API Key。
 
 激活服务只会向 Supabase 许可证接口发送随机安装 ID、用户输入的激活码、应用
-版本和返回的回执，不包含镜像帧、缩略图、iPhone 标识或控制输入。详见
+版本和返回的回执，不包含镜像帧、缩略图、设备标识或控制输入。详见
 [PRIVACY.md](PRIVACY.md)。
 
 ## 开发与文档

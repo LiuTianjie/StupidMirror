@@ -24,6 +24,25 @@ enum DeviceTrustState: String, Codable, Sendable {
     case unauthorized
 }
 
+enum DevicePlatform: String, Codable, CaseIterable, Sendable {
+    case iOS = "ios"
+    case android
+
+    var displayName: String {
+        switch self {
+        case .iOS: "iOS"
+        case .android: "Android"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .iOS: "iphone.gen3"
+        case .android: "apps.iphone"
+        }
+    }
+}
+
 enum DeviceTransport: String, Codable, Sendable {
     case usb
     case wireless
@@ -32,11 +51,32 @@ enum DeviceTransport: String, Codable, Sendable {
 struct DeviceIdentity: Identifiable, Hashable, Sendable {
     let id: String
     let udid: String?
+    let platform: DevicePlatform
     let name: String
     let productType: String
     let osVersion: String?
     var connectionState: DeviceConnectionState
     var trustState: DeviceTrustState
+
+    init(
+        id: String,
+        udid: String?,
+        platform: DevicePlatform = .iOS,
+        name: String,
+        productType: String,
+        osVersion: String?,
+        connectionState: DeviceConnectionState,
+        trustState: DeviceTrustState
+    ) {
+        self.id = id
+        self.udid = udid
+        self.platform = platform
+        self.name = name
+        self.productType = productType
+        self.osVersion = osVersion
+        self.connectionState = connectionState
+        self.trustState = trustState
+    }
 
     var subtitle: String {
         [productType, osVersion].compactMap { value in
@@ -106,18 +146,28 @@ struct DeviceSession: Identifiable {
     let transport: DeviceTransport
     let captureDevice: AVCaptureDevice?
     let wirelessDevice: WirelessDeviceMetadata?
+    let androidDevice: AndroidDeviceMetadata?
     let mirrorSession: MirrorCaptureSession
     let controlSession: AppiumControlSession
     let wirelessWDA: WirelessWDAService?
     var mirrorState: MirrorState
 
     var sourceID: String {
+        if let androidDevice {
+            return "android:\(androidDevice.serial)"
+        }
         switch transport {
         case .usb:
-            "usb:\(captureDevice?.uniqueID ?? id)"
+            return "usb:\(captureDevice?.uniqueID ?? id)"
         case .wireless:
-            "wireless:\(wirelessDevice?.preferredEndpointHost ?? id)"
+            return "wireless:\(wirelessDevice?.preferredEndpointHost ?? id)"
         }
+    }
+
+    var platform: DevicePlatform { device.platform }
+
+    var isIOSWireless: Bool {
+        platform == .iOS && transport == .wireless
     }
 
     @MainActor
@@ -127,6 +177,7 @@ struct DeviceSession: Identifiable {
         self.transport = .usb
         self.captureDevice = captureDevice
         self.wirelessDevice = nil
+        self.androidDevice = nil
         self.mirrorSession = MirrorCaptureSession(device: captureDevice)
         self.controlSession = AppiumControlSession(device: device)
         self.wirelessWDA = nil
@@ -140,11 +191,26 @@ struct DeviceSession: Identifiable {
         self.transport = .wireless
         self.captureDevice = nil
         self.wirelessDevice = wirelessDevice
+        self.androidDevice = nil
         self.mirrorSession = MirrorCaptureSession(
             wirelessEndpointURL: wirelessDevice.endpointURLs(port: 8_100).first!
         )
         self.controlSession = AppiumControlSession(device: device)
         self.wirelessWDA = WirelessWDAService()
+        self.mirrorState = .stopped
+    }
+
+    @MainActor
+    init(device: DeviceIdentity, androidDevice: AndroidDeviceMetadata) {
+        self.id = device.id
+        self.device = device
+        self.transport = androidDevice.transport
+        self.captureDevice = nil
+        self.wirelessDevice = nil
+        self.androidDevice = androidDevice
+        self.mirrorSession = MirrorCaptureSession(androidDevice: androidDevice)
+        self.controlSession = AppiumControlSession(device: device)
+        self.wirelessWDA = nil
         self.mirrorState = .stopped
     }
 }

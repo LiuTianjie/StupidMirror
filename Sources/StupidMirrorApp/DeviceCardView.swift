@@ -20,7 +20,7 @@ struct DeviceRowView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "iphone.gen3")
+            Image(systemName: session.platform.systemImage)
                 .font(.system(size: 16))
                 .foregroundStyle(isConnected ? .primary : .secondary)
                 .frame(width: 22)
@@ -73,9 +73,11 @@ struct DeviceRowView: View {
         let state = isConnected
             ? store.mirrorStateLabel(mirrorSession.state)
             : store.connectionStateLabel(session.device.connectionState)
-        let transport = session.transport == .wireless
-            ? store.t("transport.wireless")
-            : store.t("transport.usb")
+        let transport = session.platform == .android
+            ? "ADB"
+            : (session.transport == .wireless
+                ? store.t("transport.wireless")
+                : store.t("transport.usb"))
         return "\(state) · \(transport)"
     }
 
@@ -118,7 +120,7 @@ struct DeviceDetailView: View {
 
     private var detailHeader: some View {
         HStack(spacing: Theme.Spacing.md) {
-            Image(systemName: "iphone.gen3")
+            Image(systemName: session.platform.systemImage)
                 .font(.title2)
                 .foregroundStyle(Theme.Palette.accent)
 
@@ -133,9 +135,11 @@ struct DeviceDetailView: View {
             }
 
             StatusPill(
-                title: session.transport == .wireless
-                    ? store.t("transport.wireless")
-                    : store.t("transport.usb"),
+                title: session.platform == .android
+                    ? store.t("transport.adb")
+                    : (session.transport == .wireless
+                        ? store.t("transport.wireless")
+                        : store.t("transport.usb")),
                 color: session.transport == .wireless ? Theme.Palette.control : .secondary
             )
 
@@ -161,7 +165,7 @@ struct DeviceDetailView: View {
                     .shadow(color: .black.opacity(0.25), radius: 16, y: 8)
 
                 Group {
-                    if session.transport == .wireless,
+                    if (session.platform == .android || session.transport == .wireless),
                        let wirelessFrame = mirrorSession.latestWirelessFrame {
                         Image(nsImage: wirelessFrame)
                             .resizable()
@@ -214,7 +218,7 @@ struct DeviceDetailView: View {
                         .frame(maxWidth: 220)
                 } else if mirrorSession.state == .starting {
                     ProgressView().controlSize(.small)
-                    if session.transport == .wireless {
+                    if session.isIOSWireless {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(spacing: 4) {
                                 Text(mirrorSession.wirelessStartupDetail
@@ -236,7 +240,7 @@ struct DeviceDetailView: View {
                         .buttonStyle(.link)
                         .controlSize(.small)
                     }
-                } else if session.transport == .wireless && mirrorSession.state == .stopped {
+                } else if session.isIOSWireless && mirrorSession.state == .stopped {
                     Image(systemName: "play.circle")
                         .font(.system(size: 26))
                         .foregroundStyle(.secondary)
@@ -306,7 +310,7 @@ struct ControlConnectionLoadingView: View {
                     .tint(Theme.Palette.accent)
 
                 VStack(spacing: 4) {
-                    Text(store.t("control.loading.title"))
+                    Text(store.t(titleKey))
                         .font(.headline)
                         .foregroundStyle(Theme.Overlay.primaryText)
                     Text(store.t(phaseTitleKey))
@@ -328,7 +332,7 @@ struct ControlConnectionLoadingView: View {
                 .font(.system(.caption, design: .monospaced).weight(.medium))
                 .foregroundStyle(Theme.Palette.pending)
 
-                Text(store.t("control.loading.keepAwake"))
+                Text(store.t(keepAwakeKey))
                     .font(.caption2)
                     .foregroundStyle(Theme.Overlay.tertiaryText)
                     .multilineTextAlignment(.center)
@@ -349,7 +353,15 @@ struct ControlConnectionLoadingView: View {
     }
 
     private var phaseTitleKey: String {
-        switch controlSession.connectionPhase ?? .startingService {
+        if controlSession.platform == .android {
+            return switch controlSession.connectionPhase ?? .startingService {
+            case .startingService: "control.loading.android.startingService"
+            case .reusingAgent: "control.loading.android.reusingAgent"
+            case .installingAgent: "control.loading.android.installingAgent"
+            case .finishing: "control.loading.android.finishing"
+            }
+        }
+        return switch controlSession.connectionPhase ?? .startingService {
         case .startingService: "control.loading.startingService"
         case .reusingAgent: "control.loading.reusingAgent"
         case .installingAgent: "control.loading.installingAgent"
@@ -358,12 +370,31 @@ struct ControlConnectionLoadingView: View {
     }
 
     private var expectationKey: String {
-        switch controlSession.connectionPhase ?? .startingService {
+        if controlSession.platform == .android {
+            return switch controlSession.connectionPhase ?? .startingService {
+            case .startingService: "control.loading.expectation.short"
+            case .reusingAgent, .installingAgent: "control.loading.android.expectation.agent"
+            case .finishing: "control.loading.expectation.finishing"
+            }
+        }
+        return switch controlSession.connectionPhase ?? .startingService {
         case .startingService: "control.loading.expectation.short"
         case .reusingAgent: "control.loading.expectation.reuse"
         case .installingAgent: "control.loading.expectation.install"
         case .finishing: "control.loading.expectation.finishing"
         }
+    }
+
+    private var titleKey: String {
+        controlSession.platform == .android
+            ? "control.loading.android.title"
+            : "control.loading.title"
+    }
+
+    private var keepAwakeKey: String {
+        controlSession.platform == .android
+            ? "control.loading.android.keepAwake"
+            : "control.loading.keepAwake"
     }
 
     private func elapsedSeconds(at date: Date) -> Int {

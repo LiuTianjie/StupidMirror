@@ -2,15 +2,13 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-StupidMirror is a native macOS menu bar app for mirroring an iPhone over USB or,
-after one USB setup, the same local network. USB video uses the iPhone screen
-source exposed by macOS through CoreMediaIO and AVFoundation. Wireless video
-reuses an Xcode-signed WebDriverAgent build: VideoToolbox encodes its
-full-resolution screen frames as H.264 on the iPhone, SRT transports complete
-access units over the LAN, and the Mac decodes them with VideoToolbox.
+StupidMirror is a native macOS menu bar app for mirroring and controlling iOS
+and Android devices. iPhone mirroring works over USB or, after one USB setup,
+the same local network. Android 11+ devices are discovered through ADB and use
+a direct H.264 video and PCM audio stream from a pinned scrcpy server.
 
 [Product website](https://liutianjie.github.io/StupidMirror/) ·
-[Download StupidMirror v0.2.11](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.11/StupidMirror-v0.2.11-macos.zip) ·
+[Download StupidMirror v0.2.12](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.12/StupidMirror-v0.2.12-macos.zip) ·
 [Commercial licensing](COMMERCIAL-LICENSE.md)
 
 > This project is experimental. It depends on private-feeling system behavior:
@@ -24,14 +22,17 @@ access units over the LAN, and the Mac decodes them with VideoToolbox.
   private device transport implementation.
 - High-quality wireless H.264 mirroring over the local network, without a
   ReplayKit Broadcast Extension or companion iPhone app.
+- Android 11+ discovery through ADB, with H.264 video and optional device audio
+  decoded and played directly inside StupidMirror.
 - Menu bar dashboard with device list, thumbnails, diagnostics, and settings.
 - Standalone mirror windows with device-ratio sizing.
 - Chinese and English UI copy.
-- Optional Appium/XCUITest control support for tap, swipe, text input, clipboard
-  paste, Home, and app switcher actions.
+- Optional Appium control through XCUITest on iOS and UiAutomator2 on Android,
+  including tap, swipe, text input, Home/Back, app switching, and app lifecycle
+  actions.
 - Bundled Mac-side Appium runtime for packaged release builds.
 - Free one-device mirroring with one-time activation for simultaneous
-  multi-device mirroring and iPhone control. Activation uses a private Supabase
+  multi-device mirroring and device control. Activation uses a private Supabase
   license service; the purchase QR area is currently an explicit placeholder.
 - Local probes for AVFoundation discovery, frame capture, device discovery, and
   WebDriverAgent readiness.
@@ -47,6 +48,12 @@ access units over the LAN, and the Mac decodes them with VideoToolbox.
 - Optional control support: iPhone trust, Developer Mode/UI Automation, and a
   WebDriverAgentRunner that the Mac app can install or start through its bundled
   Node/Appium/XCUITest runtime.
+- Android support: Android 11 or newer, USB debugging enabled, and Android SDK
+  Platform-Tools (`adb`) installed on the Mac. Approve this Mac's debugging key
+  on the phone when prompted.
+- Android control installs Appium's UiAutomator2 settings/server helper APKs on
+  the phone the first time **Connect** is used. No separate StupidMirror Android
+  app or account is required.
 
 ## Quick Start
 
@@ -153,7 +160,7 @@ If permission is denied:
 To restore optional audio after declining it, enable StupidMirror under Privacy
 & Security -> Microphone, return to the app, and recheck the permission.
 
-## Optional iPhone Control
+## Optional Device Control
 
 Packaged Mac builds include a local Appium/XCUITest runtime at
 `StupidMirror.app/Contents/Resources/Appium`. Click **Connect** in StupidMirror;
@@ -172,6 +179,13 @@ itself. WebDriverAgentRunner still needs valid signing before real-device
 control can work, and the iPhone must trust this Mac with Developer Mode/UI
 Automation enabled.
 
+For Android, the packaged runtime also includes Appium's UiAutomator2 driver.
+The first explicit **Connect** may take 20–60 seconds while it checks and
+installs `io.appium.settings`, `io.appium.uiautomator2.server`, and
+`io.appium.uiautomator2.server.test`. Later connections normally reuse them.
+Mirroring and audio use ADB/scrcpy independently and do not require control to
+be connected.
+
 For source development, you can still use the host Appium install:
 
 ```sh
@@ -182,7 +196,7 @@ make run-appium
 ## AI Harness through MCP
 
 StupidMirror does not embed an AI model, require a model API key, or upload the
-iPhone screen to a model provider. Instead, its localhost MCP server exposes a
+device screen to a model provider. Instead, its localhost MCP server exposes a
 device harness that external agents such as Codex or Claude can use with the
 user's existing account and privacy settings.
 
@@ -192,7 +206,7 @@ user's existing account and privacy settings.
 2. Select **Codex** or **Claude Code** in the built-in connection guide.
 3. Copy the generated configuration or command. It already contains the local
    `http://127.0.0.1:<port>/mcp` endpoint, bearer authentication, and a 240-second
-   tool timeout for first-time WDA setup.
+   tool timeout for first-time control-agent setup.
 4. Add that configuration to the selected client, restart the client if needed,
    then ask it to call `list_devices`.
 
@@ -206,10 +220,10 @@ rotating the token immediately invalidates the previous client credential.
 - Observation and targeting: live-frame screenshots, local Vision OCR,
   opt-in Accessibility trees, semantic element lookup, waits, and assertions.
 - Visible guidance: highlight every clickable target or a selected set on the
-  Mac mirror without sending input to the iPhone.
+  Mac mirror without sending input to the device.
 - Real-device actions: tap, double-tap, long-press, swipe, scroll, type, clear
   or replace text, press hardware-style buttons, switch apps, and activate or
-  terminate an app by bundle ID.
+  terminate an app by iOS bundle ID or Android package name.
 
 The preferred agent loop is:
 
@@ -219,11 +233,11 @@ The preferred agent loop is:
    `include_accessibility` only for explicit deep hierarchy inspection.
 3. `tap_text` takes up to 16 candidate labels and checks the latest live mirror
    frame with local Vision OCR first. If pixels do not expose a label,
-   it parses one WDA UI Tree for every candidate together and clicks the fresh
+   it parses one native UI tree for every candidate together and clicks the fresh
    observed frame. `find_any_element` provides the same lookup without clicking.
 4. A missing label therefore costs one OCR pass plus one hierarchy snapshot,
-   rather than one slow negative WDA predicate lookup per synonym. Existing
-   native element references still use direct WDA element clicks.
+   rather than one slow negative native predicate lookup per synonym. Existing
+   native element references still use direct element clicks.
 5. When neither OCR nor Accessibility describes an icon, canvas, or custom
    control, request `observe_screen` with `include_image: true` and let the AI
    inspect the screenshot before using one targeted normalized coordinate.
@@ -231,21 +245,21 @@ The preferred agent loop is:
 `tap_element` accepts the observation UUID so an agent can reject stale element
 identifiers after the screen changes. Element actions and raw control tools are
 marked as potentially destructive in MCP metadata because their real-world
-effect depends on the visible iPhone UI.
+effect depends on the visible device UI.
 
-Avoid Accessibility or UI-tree queries between focusing a text field and
-`type_text`: XCUITest snapshotting can disturb the app's input state. The fast
-native lookup and batch tools are designed to keep that control loop short.
+On iOS, avoid Accessibility or UI-tree queries between focusing a text field
+and `type_text`: XCUITest snapshotting can disturb the app's input state. The
+fast native lookup and batch tools are designed to keep that control loop short.
 Use `replace_text` to atomically clear and replace the active field, or
-`clear_text` to empty it. Both operate on WDA's active native element and verify
-the resulting value, so agents do not need to invoke the iOS selection menu or
-guess delete-key coordinates.
+`clear_text` to empty it. Both operate on the active native element and verify
+the resulting value, so agents do not need to invoke a selection menu or guess
+delete-key coordinates.
 
 For user-guided operation, `highlight_clickable_elements` reads native
 Accessibility semantics and numbers every visible enabled clickable target on
 the Mac mirror. `highlight_elements` highlights any selected element IDs from
 the latest observation, and `clear_highlights` removes the overlay early. These
-tools never send a tap or other input event to the iPhone. Highlight counts are
+tools never send a tap or other input event to the device. Highlight counts are
 not capped; identical native target geometry is only drawn once to avoid
 duplicate container/child markers.
 
@@ -261,7 +275,7 @@ the capture/encoding hot path.
 Actions invoked through the AI harness are visible in StupidMirror: semantic
 targets are boxed, taps are marked, swipes show their path and direction, and
 non-positional actions display a short `AI` notice. This overlay is rendered by
-the Mac UI only. It is not burned into the iPhone frame, sent to the device, or
+the Mac UI only. It is not burned into the device frame, sent to the device, or
 processed by the video encoder; direct manual mirror interactions are not
 labelled as AI actions.
 
@@ -301,7 +315,7 @@ to `http://127.0.0.1:4723`.
 
 License activation sends only the random installation ID, entered activation
 code, app version, and the returned receipt to the Supabase license endpoint.
-It never includes mirrored frames, thumbnails, iPhone identifiers, or control
+It never includes mirrored frames, thumbnails, device identifiers, or control
 input. See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Documentation

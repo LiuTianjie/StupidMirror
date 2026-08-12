@@ -7,6 +7,8 @@ cache_dir="${APPIUM_RUNTIME_CACHE:-${repo_root}/.build/appium-runtime}"
 appium_version="${APPIUM_VERSION:-3.5.2}"
 xcuitest_driver_name="${APPIUM_XCUITEST_DRIVER_NAME:-xcuitest}"
 xcuitest_driver_version="${APPIUM_XCUITEST_DRIVER_VERSION:-12.3.0}"
+uiautomator2_driver_name="${APPIUM_UIAUTOMATOR2_DRIVER_NAME:-uiautomator2}"
+uiautomator2_driver_version="${APPIUM_UIAUTOMATOR2_DRIVER_VERSION:-8.2.2}"
 remote_xpc_version="${APPIUM_IOS_REMOTEXPC_VERSION:-5.13.2}"
 srt_version="1.5.4"
 srt_slice="${repo_root}/.build/artifacts/stupidmirror/libsrt/libsrt.xcframework/ios-arm64"
@@ -29,9 +31,10 @@ node_version="$("$node_bin" --version)"
 wanted_stamp="appium=${appium_version}
 node=${node_version}
 driver=${xcuitest_driver_name}@${xcuitest_driver_version}
+android_driver=${uiautomator2_driver_name}@${uiautomator2_driver_version}
 remotexpc=${remote_xpc_version}
 srt=${srt_version}
-layout=11"
+layout=12"
 
 install_srt_support() {
   if [ ! -f "${srt_slice}/libsrt.a" ] || [ ! -d "${srt_slice}/Headers" ]; then
@@ -52,19 +55,26 @@ XCCONFIG
 
 assert_runtime_versions() {
   local driver_package="${cache_dir}/home/node_modules/appium-xcuitest-driver/package.json"
+  local android_driver_package="${cache_dir}/home/node_modules/appium-uiautomator2-driver/package.json"
   local remote_xpc_package="${cache_dir}/home/node_modules/appium-ios-remotexpc/package.json"
   local actual_driver_version
+  local actual_android_driver_version
   local actual_remote_xpc_version
 
-  if [ ! -f "$driver_package" ] || [ ! -f "$remote_xpc_package" ]; then
-    echo "Bundled Appium runtime is missing the pinned XCUITest or RemoteXPC package." >&2
+  if [ ! -f "$driver_package" ] || [ ! -f "$android_driver_package" ] || [ ! -f "$remote_xpc_package" ]; then
+    echo "Bundled Appium runtime is missing a pinned device driver or RemoteXPC package." >&2
     exit 1
   fi
 
   actual_driver_version="$("$node_bin" -p "require(process.argv[1]).version" "$driver_package")"
+  actual_android_driver_version="$("$node_bin" -p "require(process.argv[1]).version" "$android_driver_package")"
   actual_remote_xpc_version="$("$node_bin" -p "require(process.argv[1]).version" "$remote_xpc_package")"
   if [ "$actual_driver_version" != "$xcuitest_driver_version" ]; then
     echo "XCUITest driver version mismatch: expected ${xcuitest_driver_version}, got ${actual_driver_version}." >&2
+    exit 1
+  fi
+  if [ "$actual_android_driver_version" != "$uiautomator2_driver_version" ]; then
+    echo "UiAutomator2 driver version mismatch: expected ${uiautomator2_driver_version}, got ${actual_android_driver_version}." >&2
     exit 1
   fi
   if [ "$actual_remote_xpc_version" != "$remote_xpc_version" ]; then
@@ -157,12 +167,19 @@ JSON
   "$npm_bin" --prefix "$cache_dir" install --omit=dev --no-audit --no-fund
   APPIUM_HOME="${cache_dir}/home" "${cache_dir}/bin/node" "${cache_dir}/node_modules/appium/build/lib/main.js" \
     driver install "${xcuitest_driver_name}@${xcuitest_driver_version}"
+  APPIUM_HOME="${cache_dir}/home" "${cache_dir}/bin/node" "${cache_dir}/node_modules/appium/build/lib/main.js" \
+    driver install "${uiautomator2_driver_name}@${uiautomator2_driver_version}"
   "$npm_bin" --prefix "${cache_dir}/home" install --save-dev --save-exact \
     "appium-ios-remotexpc@${remote_xpc_version}" --no-audit --no-fund
   nested_appium="${cache_dir}/home/node_modules/appium-xcuitest-driver/node_modules/appium"
   if [ -L "$nested_appium" ]; then
     rm "$nested_appium"
     cp -R "${cache_dir}/node_modules/appium" "$nested_appium"
+  fi
+  android_nested_appium="${cache_dir}/home/node_modules/appium-uiautomator2-driver/node_modules/appium"
+  if [ -L "$android_nested_appium" ]; then
+    rm "$android_nested_appium"
+    cp -R "${cache_dir}/node_modules/appium" "$android_nested_appium"
   fi
   install_srt_support
   APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
@@ -177,6 +194,13 @@ fi
 assert_runtime_versions
 install_srt_support
 APPIUM_HOME="${cache_dir}/home" bash "${repo_root}/scripts/patch-wda-for-control.sh"
+for driver_root in appium-xcuitest-driver appium-uiautomator2-driver; do
+  nested_appium="${cache_dir}/home/node_modules/${driver_root}/node_modules/appium"
+  if [ -L "$nested_appium" ]; then
+    rm "$nested_appium"
+    cp -R "${cache_dir}/node_modules/appium" "$nested_appium"
+  fi
+done
 
 mkdir -p "${cache_dir}/bin"
 cat > "${cache_dir}/bin/appium" <<'SH'

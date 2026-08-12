@@ -572,10 +572,13 @@ private final class XMLScreenElementDelegate: NSObject, XMLParserDelegate {
             path = "\(stack[stack.count - 1].path)/\(childIndex)"
         }
 
-        let type = attributeDict["type"] ?? elementName
+        let type = attributeDict["type"] ?? attributeDict["class"] ?? elementName
         let name = Self.nonEmpty(attributeDict["name"])
+            ?? Self.nonEmpty(attributeDict["resource-id"])
         let label = Self.nonEmpty(attributeDict["label"])
+            ?? Self.nonEmpty(attributeDict["content-desc"])
         let value = Self.nonEmpty(attributeDict["value"])
+            ?? Self.nonEmpty(attributeDict["text"])
         let frame = Self.frame(attributeDict)
         let parentID = stack.reversed().compactMap(\.semanticID).first
         let parentDepth = stack.reversed().first(where: { $0.semanticID != nil })?.semanticDepth ?? -1
@@ -608,11 +611,19 @@ private final class XMLScreenElementDelegate: NSObject, XMLParserDelegate {
                 label: label,
                 value: value,
                 enabled: Self.bool(attributeDict["enabled"], defaultValue: true),
-                visible: Self.bool(attributeDict["visible"], defaultValue: true),
+                visible: Self.bool(
+                    attributeDict["visible"]
+                        ?? attributeDict["displayed"]
+                        ?? attributeDict["visible-to-user"],
+                    defaultValue: true
+                ),
                 accessible: Self.optionalBool(attributeDict["accessible"]),
-                selected: Self.optionalBool(attributeDict["selected"]),
+                selected: Self.optionalBool(attributeDict["selected"])
+                    ?? Self.optionalBool(attributeDict["checked"]),
                 focused: Self.optionalBool(attributeDict["focused"]),
-                hittable: Self.optionalBool(attributeDict["hittable"]),
+                hittable: Self.optionalBool(attributeDict["hittable"])
+                    ?? Self.optionalBool(attributeDict["clickable"])
+                    ?? Self.optionalBool(attributeDict["long-clickable"]),
                 index: Int(attributeDict["index"] ?? ""),
                 frame: frame,
                 normalizedFrame: normalizedFrame,
@@ -663,12 +674,26 @@ private final class XMLScreenElementDelegate: NSObject, XMLParserDelegate {
     }
 
     private static func frame(_ attributes: [String: String]) -> ScreenElementFrame? {
-        guard let x = Double(attributes["x"] ?? ""),
-              let y = Double(attributes["y"] ?? ""),
-              let width = Double(attributes["width"] ?? ""),
-              let height = Double(attributes["height"] ?? ""),
-              width > 0, height > 0 else { return nil }
-        return ScreenElementFrame(x: x, y: y, width: width, height: height)
+        if let x = Double(attributes["x"] ?? ""),
+           let y = Double(attributes["y"] ?? ""),
+           let width = Double(attributes["width"] ?? ""),
+           let height = Double(attributes["height"] ?? ""),
+           width > 0, height > 0 {
+            return ScreenElementFrame(x: x, y: y, width: width, height: height)
+        }
+        guard let bounds = attributes["bounds"] else { return nil }
+        let values = bounds.split(whereSeparator: { !$0.isNumber && $0 != "-" })
+            .compactMap { Double($0) }
+        guard values.count == 4 else { return nil }
+        let width = values[2] - values[0]
+        let height = values[3] - values[1]
+        guard width > 0, height > 0 else { return nil }
+        return ScreenElementFrame(
+            x: values[0],
+            y: values[1],
+            width: width,
+            height: height
+        )
     }
 }
 
