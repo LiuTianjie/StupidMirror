@@ -8,7 +8,7 @@ the same local network. Android 11+ devices are discovered through ADB and use
 a direct H.264 video and PCM audio stream from a pinned scrcpy server.
 
 [Product website](https://liutianjie.github.io/StupidMirror/) ·
-[Download StupidMirror v0.2.12](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.12/StupidMirror-v0.2.12-macos.zip) ·
+[Download StupidMirror v0.2.13](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.13/StupidMirror-v0.2.13-macos.zip) ·
 [Commercial licensing](COMMERCIAL-LICENSE.md)
 
 > This project is experimental. It depends on private-feeling system behavior:

@@ -8,7 +8,7 @@ Android 11 及以上设备通过 ADB 发现，并通过固定版本的 scrcpy se
 传输 H.264 画面与 PCM 声音。
 
 [产品网站](https://liutianjie.github.io/StupidMirror/) ·
-[下载 StupidMirror v0.2.12](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.12/StupidMirror-v0.2.12-macos.zip) ·
+[下载 StupidMirror v0.2.13](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.13/StupidMirror-v0.2.13-macos.zip) ·
 [商业授权](COMMERCIAL-LICENSE.md)
 
 > 项目仍处于实验阶段。由于 macOS 将 iPhone 屏幕暴露为 AVFoundation
@@ -53,7 +53,7 @@ Android 画面和声音通过 ADB / scrcpy 独立传输，不连接控制也能�
 
 直接下载已签名和 Apple 公证的版本：
 
-[下载 StupidMirror v0.2.12](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.12/StupidMirror-v0.2.12-macos.zip)
+[下载 StupidMirror v0.2.13](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.13/StupidMirror-v0.2.13-macos.zip)
 
 从源码运行：
 

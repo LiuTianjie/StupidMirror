@@ -3,6 +3,40 @@
 import XCTest
 
 final class DeviceDiscoveryTests: XCTestCase {
+    func testCameraPermissionRemainsReachableWhenAndroidIsConnected() {
+        XCTAssertEqual(
+            DeviceGalleryStore.cameraPermissionPresentation(
+                authorizationStatus: .notDetermined,
+                hasCameraIndependentConnectedDevice: true
+            ),
+            .banner
+        )
+        XCTAssertEqual(
+            DeviceGalleryStore.cameraPermissionPresentation(
+                authorizationStatus: .denied,
+                hasCameraIndependentConnectedDevice: true
+            ),
+            .banner
+        )
+    }
+
+    func testCameraPermissionUsesFullPageWithoutAnotherUsableDevice() {
+        XCTAssertEqual(
+            DeviceGalleryStore.cameraPermissionPresentation(
+                authorizationStatus: .notDetermined,
+                hasCameraIndependentConnectedDevice: false
+            ),
+            .fullPage
+        )
+        XCTAssertEqual(
+            DeviceGalleryStore.cameraPermissionPresentation(
+                authorizationStatus: .authorized,
+                hasCameraIndependentConnectedDevice: true
+            ),
+            .hidden
+        )
+    }
+
     func testAudioCaptureRequiresBothExplicitPreferenceAndAuthorization() {
         XCTAssertFalse(DeviceGalleryStore.shouldCaptureAudio(
             playbackEnabled: false,

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.13 - 2026-08-12
+
+- Keep the Camera permission action visible while an Android or wireless device
+  is connected, so USB iPhone discovery and first-time wireless preparation
+  cannot become blocked behind the active-device view.
+- Narrow standalone mirror resize hit regions to the outer 6 points, leaving the
+  rest of the title bar available for reliable click-and-drag window movement.
+
 ## 0.2.12 - 2026-08-12
 
 - Add Android 11+ discovery through ADB with direct H.264 mirroring and optional

@@ -124,14 +124,11 @@ struct GalleryView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if store.permissionStatus != .authorized
-            && !store.connectedSessions.contains(where: {
-                $0.platform == .android || $0.transport == .wireless
-            }) {
+        if store.cameraPermissionPresentation == .fullPage {
             PermissionView()
         } else {
             VStack(spacing: 0) {
-                if store.permissionStatus != .authorized && store.hasConnectedIOSDevice {
+                if store.cameraPermissionPresentation == .banner {
                     CameraPermissionBanner()
                     Divider()
                 }

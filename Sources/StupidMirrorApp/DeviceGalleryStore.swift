@@ -26,6 +26,12 @@ enum WirelessSetupState: Equatable, Sendable {
     case failed(String)
 }
 
+enum CameraPermissionPresentation: Equatable {
+    case hidden
+    case fullPage
+    case banner
+}
+
 enum DashboardSettingsTab: Hashable, Sendable {
     case general
     case mcp
@@ -247,6 +253,23 @@ final class DeviceGalleryStore: ObservableObject {
 
     var hasConnectedIOSDevice: Bool {
         connectedSessions.contains { $0.platform == .iOS }
+    }
+
+    var cameraPermissionPresentation: CameraPermissionPresentation {
+        Self.cameraPermissionPresentation(
+            authorizationStatus: permissionStatus,
+            hasCameraIndependentConnectedDevice: connectedSessions.contains {
+                $0.platform == .android || $0.transport == .wireless
+            }
+        )
+    }
+
+    nonisolated static func cameraPermissionPresentation(
+        authorizationStatus: AVAuthorizationStatus,
+        hasCameraIndependentConnectedDevice: Bool
+    ) -> CameraPermissionPresentation {
+        guard authorizationStatus != .authorized else { return .hidden }
+        return hasCameraIndependentConnectedDevice ? .banner : .fullPage
     }
 
     var needsIOSAudioPermission: Bool {
