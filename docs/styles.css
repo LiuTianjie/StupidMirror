@@ -194,8 +194,18 @@ button {
   right: 0;
 }
 
-.nav-cta {
+.nav-mobile-link {
+  display: none;
+}
+
+.nav-actions {
   justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-cta {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -205,6 +215,7 @@ button {
   background: rgba(255, 255, 255, 0.08);
   font-size: 12px;
   font-weight: 600;
+  white-space: nowrap;
   backdrop-filter: blur(10px);
   transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
 }
@@ -1328,8 +1339,12 @@ button {
     grid-template-columns: 1fr auto;
   }
 
-  .nav-cta {
+  .nav-actions {
     display: none;
+  }
+
+  .site-menu .nav-mobile-link {
+    display: block;
   }
 
   .menu-toggle {

@@ -125,53 +125,105 @@ const chineseAttributes = new Map([
 
 const normalizeText = (value) => value.replace(/\s+/g, " ").trim();
 
-const applyChineseLocale = () => {
-  document.documentElement.lang = "zh-CN";
-  document.title = "StupidMirror｜让 iPhone 镜像可操作、可自动化";
-  document.querySelector('meta[name="description"]')?.setAttribute(
-    "content",
-    "StupidMirror 是一款原生 macOS iPhone 镜像与自动化工具，支持 USB / 无线镜像、本地 OCR、MCP 控制与多设备并行。"
-  );
-  document.querySelector('meta[property="og:title"]')?.setAttribute(
-    "content",
-    "StupidMirror｜让 iPhone 镜像可操作、可自动化"
-  );
-  document.querySelector('meta[property="og:description"]')?.setAttribute(
-    "content",
-    "把真实 iPhone 接入 Mac，也接入 Codex 与 Claude Code。"
-  );
-  document.querySelector('meta[property="og:locale"]')?.setAttribute("content", "zh_CN");
+const localeMetadata = {
+  en: {
+    lang: "en",
+    title: "StupidMirror | Native iPhone mirroring and automation for macOS",
+    description:
+      "StupidMirror is a native macOS iPhone mirroring and automation harness with USB and wireless video, local OCR, MCP control, and multi-device workflows.",
+    ogTitle: "StupidMirror | Make a real iPhone observable and operable",
+    ogDescription: "Bring a real iPhone to your Mac — and into Codex or Claude Code.",
+    ogLocale: "en_US",
+  },
+  zh: {
+    lang: "zh-CN",
+    title: "StupidMirror｜让 iPhone 镜像可操作、可自动化",
+    description:
+      "StupidMirror 是一款原生 macOS iPhone 镜像与自动化工具，支持 USB / 无线镜像、本地 OCR、MCP 控制与多设备并行。",
+    ogTitle: "StupidMirror｜让 iPhone 镜像可操作、可自动化",
+    ogDescription: "把真实 iPhone 接入 Mac，也接入 Codex 与 Claude Code。",
+    ogLocale: "zh_CN",
+  },
+};
 
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  const textNodes = [];
-  while (walker.nextNode()) textNodes.push(walker.currentNode);
-  textNodes.forEach((node) => {
-    const key = normalizeText(node.nodeValue || "");
-    const translation = chineseText.get(key);
-    if (!translation) return;
-    const leading = node.nodeValue.match(/^\s*/)?.[0] || "";
-    const trailing = node.nodeValue.match(/\s*$/)?.[0] || "";
-    node.nodeValue = `${leading}${translation}${trailing}`;
+const localizableTextNodes = [];
+const textWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+while (textWalker.nextNode()) {
+  const node = textWalker.currentNode;
+  const english = node.nodeValue || "";
+  const translation = chineseText.get(normalizeText(english));
+  if (!translation) continue;
+  const leading = english.match(/^\s*/)?.[0] || "";
+  const trailing = english.match(/\s*$/)?.[0] || "";
+  localizableTextNodes.push({
+    node,
+    english,
+    chinese: `${leading}${translation}${trailing}`,
+  });
+}
+
+const localizableAttributes = [];
+document.querySelectorAll("[aria-label], [alt]").forEach((element) => {
+  ["aria-label", "alt"].forEach((attribute) => {
+    const english = element.getAttribute(attribute);
+    const chinese = english ? chineseAttributes.get(english) : null;
+    if (english && chinese) localizableAttributes.push({ element, attribute, english, chinese });
+  });
+});
+
+const languageSwitch = document.querySelector("[data-lang-switch]");
+let currentLocale = "en";
+
+const applyLocale = (locale, { updateHistory = false } = {}) => {
+  const nextLocale = locale === "zh" ? "zh" : "en";
+  const metadata = localeMetadata[nextLocale];
+  const isChinese = nextLocale === "zh";
+
+  document.documentElement.lang = metadata.lang;
+  document.title = metadata.title;
+  document
+    .querySelector('meta[name="description"]')
+    ?.setAttribute("content", metadata.description);
+  document.querySelector('meta[property="og:title"]')?.setAttribute("content", metadata.ogTitle);
+  document
+    .querySelector('meta[property="og:description"]')
+    ?.setAttribute("content", metadata.ogDescription);
+  document.querySelector('meta[property="og:locale"]')?.setAttribute("content", metadata.ogLocale);
+
+  localizableTextNodes.forEach(({ node, english, chinese }) => {
+    node.nodeValue = isChinese ? chinese : english;
+  });
+  localizableAttributes.forEach(({ element, attribute, english, chinese }) => {
+    element.setAttribute(attribute, isChinese ? chinese : english);
   });
 
-  document.querySelectorAll("[aria-label], [alt]").forEach((element) => {
-    ["aria-label", "alt"].forEach((attribute) => {
-      const current = element.getAttribute(attribute);
-      const translation = current ? chineseAttributes.get(current) : null;
-      if (translation) element.setAttribute(attribute, translation);
-    });
-  });
-
-  const languageSwitch = document.querySelector("[data-lang-switch]");
   if (languageSwitch) {
-    languageSwitch.textContent = "English";
-    languageSwitch.setAttribute("href", "./");
+    languageSwitch.textContent = isChinese ? "English" : "中文";
+    languageSwitch.setAttribute("href", isChinese ? "./" : "?lang=zh");
   }
+
+  currentLocale = nextLocale;
+  if (updateHistory) {
+    const url = new URL(window.location.href);
+    if (isChinese) url.searchParams.set("lang", "zh");
+    else url.searchParams.delete("lang");
+    window.history.pushState({ locale: nextLocale }, "", url);
+  }
+  document.documentElement.classList.remove("locale-pending");
 };
 
 const requestedLocale = new URLSearchParams(window.location.search).get("lang");
-if (requestedLocale === "zh") applyChineseLocale();
-document.documentElement.classList.remove("locale-pending");
+applyLocale(requestedLocale === "zh" ? "zh" : "en");
+
+languageSwitch?.addEventListener("click", (event) => {
+  event.preventDefault();
+  applyLocale(currentLocale === "zh" ? "en" : "zh", { updateHistory: true });
+});
+
+window.addEventListener("popstate", () => {
+  const locale = new URLSearchParams(window.location.search).get("lang") === "zh" ? "zh" : "en";
+  applyLocale(locale);
+});
 
 document.querySelectorAll("[data-year]").forEach((node) => {
   node.textContent = new Date().getFullYear();
