@@ -1,5 +1,7 @@
 # StupidMirror
 
+**English** · [简体中文](README.zh-CN.md)
+
 StupidMirror is a native macOS menu bar app for mirroring an iPhone over USB or,
 after one USB setup, the same local network. USB video uses the iPhone screen
 source exposed by macOS through CoreMediaIO and AVFoundation. Wireless video
@@ -183,6 +185,31 @@ StupidMirror does not embed an AI model, require a model API key, or upload the
 iPhone screen to a model provider. Instead, its localhost MCP server exposes a
 device harness that external agents such as Codex or Claude can use with the
 user's existing account and privacy settings.
+
+### Connect Codex or Claude Code
+
+1. Open StupidMirror, choose **Settings → MCP**, and enable the local MCP server.
+2. Select **Codex** or **Claude Code** in the built-in connection guide.
+3. Copy the generated configuration or command. It already contains the local
+   `http://127.0.0.1:<port>/mcp` endpoint, bearer authentication, and a 240-second
+   tool timeout for first-time WDA setup.
+4. Add that configuration to the selected client, restart the client if needed,
+   then ask it to call `list_devices`.
+
+Keep the generated bearer token private. The server binds to localhost only;
+rotating the token immediately invalidates the previous client credential.
+
+### What the MCP server exposes
+
+- Device and session lifecycle: discover devices, start or stop mirrors,
+  connect or disconnect control, inspect status, and collect diagnostics.
+- Observation and targeting: live-frame screenshots, local Vision OCR,
+  opt-in Accessibility trees, semantic element lookup, waits, and assertions.
+- Visible guidance: highlight every clickable target or a selected set on the
+  Mac mirror without sending input to the iPhone.
+- Real-device actions: tap, double-tap, long-press, swipe, scroll, type, clear
+  or replace text, press hardware-style buttons, switch apps, and activate or
+  terminate an app by bundle ID.
 
 The preferred agent loop is:
 

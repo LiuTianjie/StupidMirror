@@ -22,6 +22,6 @@ python3 -m http.server 4173 --directory docs
 
 默认访问地址为 <https://liutianjie.github.io/StupidMirror/>。
 
-页面不依赖后端或打包流程。`mvp-architecture.md` 和 `research.md` 是原有项目文档，不影响站点入口。
+页面默认使用英文，可通过顶部语言入口切换完整中文文案；不依赖后端或打包流程。`mvp-architecture.md` 和 `research.md` 是原有项目文档，不影响站点入口。
 
 StupidMirror 采用 PolyForm Noncommercial 1.0.0：个人及其他非商业用途可免费使用，商业用途需要项目所有者另行书面授权。

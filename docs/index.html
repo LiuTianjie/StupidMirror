@@ -1,20 +1,26 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="StupidMirror 是一款原生 macOS iPhone 镜像与自动化工具，支持 USB / 无线镜像、本地 OCR、MCP 控制与多设备并行。"
+      content="StupidMirror is a native macOS iPhone mirroring and automation harness with USB and wireless video, local OCR, MCP control, and multi-device workflows."
     />
     <meta name="theme-color" content="#080b0d" />
-    <meta property="og:title" content="StupidMirror｜让 iPhone 镜像可操作、可自动化" />
+    <meta property="og:title" content="StupidMirror | Make a real iPhone observable and operable" />
     <meta
       property="og:description"
-      content="把真实 iPhone 接入 Mac，也接入 Codex 与 Claude Code。"
+      content="Bring a real iPhone to your Mac — and into Codex or Claude Code."
     />
     <meta property="og:image" content="assets/dashboard.webp" />
-    <title>StupidMirror｜让 iPhone 镜像可操作、可自动化</title>
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="zh_CN" />
+    <title>StupidMirror | Native iPhone mirroring and automation for macOS</title>
+    <link rel="canonical" href="https://liutianjie.github.io/StupidMirror/" />
+    <link rel="alternate" hreflang="en" href="https://liutianjie.github.io/StupidMirror/" />
+    <link rel="alternate" hreflang="zh-CN" href="https://liutianjie.github.io/StupidMirror/zh/" />
+    <link rel="alternate" hreflang="x-default" href="https://liutianjie.github.io/StupidMirror/" />
     <link rel="icon" href="assets/favicon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -25,12 +31,12 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <a class="skip-link" href="#main">跳到正文</a>
+    <a class="skip-link" href="#main">Skip to content</a>
     <div class="page-noise" aria-hidden="true"></div>
 
     <header class="site-header" data-header>
-      <nav class="nav-shell" aria-label="主导航">
-        <a class="brand" href="#top" aria-label="StupidMirror 首页">
+      <nav class="nav-shell" aria-label="Primary navigation">
+        <a class="brand" href="#top" aria-label="StupidMirror home">
           <img src="assets/app-icon.webp" alt="" width="40" height="40" />
           <span>StupidMirror</span>
         </a>
@@ -43,14 +49,16 @@
           data-menu-toggle
         >
           <span></span><span></span>
-          <span class="sr-only">打开导航</span>
+          <span class="sr-only">Open navigation</span>
         </button>
 
         <div class="site-menu" id="site-menu" data-menu>
-          <a href="#mirror">镜像</a>
-          <a href="#wireless">无线</a>
-          <a href="#automation">AI 自动化</a>
-          <a href="#scenes">使用场景</a>
+          <a href="#mirror">Mirror</a>
+          <a href="#wireless">Wireless</a>
+          <a href="#automation">AI harness</a>
+          <a href="#scenes">Use cases</a>
+          <a href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="zh/" data-lang-switch>中文</a>
         </div>
 
         <a
@@ -59,7 +67,7 @@
           target="_blank"
           rel="noreferrer"
         >
-          下载最新版
+          Download latest
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="M5 15 15 5M8 5h7v7" />
           </svg>
@@ -77,13 +85,13 @@
           <img class="hero-app-icon" src="assets/app-icon.webp" alt="" width="84" height="84" />
           <div class="hero-kicker">StupidMirror for macOS</div>
           <h1>
-            <span class="hero-title-solid">把 iPhone 接上 Mac。</span>
-            <span class="hero-title-outline">剩下的交给</span>
-            <span class="hero-title-outline">StupidMirror。</span>
+            <span class="hero-title-solid">Put your iPhone on your Mac.</span>
+            <span class="hero-title-outline">Leave the rest to</span>
+            <span class="hero-title-outline">StupidMirror.</span>
           </h1>
           <p class="hero-lead">
-            USB 或无线，把真实 iPhone 放到 Mac 上。再通过本地 OCR、访问树与 MCP，
-            把它交给你和 AI 一起操作。
+            Mirror a real iPhone over USB or Wi-Fi. Then let local OCR,
+            Accessibility, and MCP make it operable by you and your AI agent.
           </p>
           <div class="hero-actions">
             <a
@@ -92,7 +100,7 @@
               target="_blank"
               rel="noreferrer"
             >
-              下载 macOS 版
+              Download for macOS
             </a>
             <a
               class="button button-ghost"
@@ -100,13 +108,13 @@
               target="_blank"
               rel="noreferrer"
             >
-              GitHub 源码
+              View source
               <svg viewBox="0 0 20 20" aria-hidden="true">
                 <path d="M5 15 15 5M8 5h7v7" />
               </svg>
             </a>
           </div>
-          <div class="hero-meta" aria-label="产品信息">
+          <div class="hero-meta" aria-label="Product information">
             <span>v0.2.11</span>
             <span>macOS 15+</span>
             <span>USB / LAN / LOCAL MCP</span>
@@ -118,11 +126,11 @@
             class="screenshot-button hero-product-shot"
             type="button"
             data-lightbox="assets/dashboard.webp"
-            aria-label="放大查看 StupidMirror 主界面"
+            aria-label="Enlarge the StupidMirror dashboard"
           >
             <img
               src="assets/dashboard.webp"
-              alt="StupidMirror 主界面正在镜像一台 iPhone"
+              alt="The StupidMirror dashboard mirroring an iPhone"
               width="1900"
               height="1585"
             />
@@ -133,12 +141,12 @@
       <section class="manifesto section-shell">
         <div class="section-index reveal">01 / MIRROR</div>
         <div class="manifesto-copy reveal">
-          <p class="display-line">它是一面镜子，</p>
-          <p class="display-line muted">也是一套设备操作台。</p>
+          <p class="display-line">It is a mirror,</p>
+          <p class="display-line muted">and a device operations console.</p>
         </div>
         <p class="manifesto-note reveal">
-          镜像、控制和自动化不再是三套割裂的工具。设备发现、实时画面、独立窗口与 AI
-          操作，都在一个原生 macOS 应用里完成。
+          Mirroring, control, and automation no longer live in separate tools.
+          Discovery, live video, independent windows, and AI actions all happen in one native Mac app.
         </p>
       </section>
 
@@ -153,39 +161,39 @@
               class="screenshot-button"
               type="button"
               data-lightbox="assets/camera-mirror.webp"
-              aria-label="放大查看相机镜像截图"
+              aria-label="Enlarge the camera mirroring screenshot"
             >
               <img
                 src="assets/camera-mirror.webp"
-                alt="iPhone 打开相机时，StupidMirror 主窗口与独立镜像窗口仍在同步显示"
+                alt="StupidMirror keeps both mirror windows live while the iPhone camera is open"
                 loading="lazy"
                 width="2200"
                 height="1382"
               />
             </button>
           </div>
-          <span class="visual-caption">开启相机，镜像仍然保持。</span>
+          <span class="visual-caption">Open the camera. The mirror stays live.</span>
         </div>
 
         <div class="mirror-copy reveal">
-          <div class="eyebrow eyebrow-dark">真正稳定的镜像体验</div>
-          <h2>不用锁屏。<br />不用来回切换。</h2>
+          <div class="eyebrow eyebrow-dark">A mirror built to stay live</div>
+          <h2>No lock screen.<br />No context switching.</h2>
           <p>
-            StupidMirror 直接使用 macOS 暴露的 iPhone 屏幕源。即使 iPhone
-            正在使用摄像头，Mac 上的主窗口与独立镜像窗口也能继续显示。
+            StupidMirror uses the iPhone screen source exposed directly by macOS.
+            Even while the iPhone camera is active, the dashboard and standalone mirror keep rendering.
           </p>
           <div class="feature-list">
             <article>
               <span>01</span>
-              <div><strong>USB 即连即用</strong><p>连接并信任 Mac，设备自动发现。</p></div>
+              <div><strong>Plug in over USB</strong><p>Connect, trust the Mac, and the device appears.</p></div>
             </article>
             <article>
               <span>02</span>
-              <div><strong>独立镜像窗口</strong><p>按真实设备比例展示，适合调试、录屏与演示。</p></div>
+              <div><strong>Standalone mirror</strong><p>True device proportions for debugging, capture, and demos.</p></div>
             </article>
             <article>
               <span>03</span>
-              <div><strong>多台 iPhone</strong><p>激活后可同时镜像与控制多台设备。</p></div>
+              <div><strong>Multiple iPhones</strong><p>Mirror and control multiple devices after activation.</p></div>
             </article>
           </div>
         </div>
@@ -195,23 +203,23 @@
         <div class="section-shell capability-grid">
           <article class="capability-card reveal">
             <span class="cap-index">01 / NATIVE</span>
-            <h3>原生速度</h3>
-            <p>Swift + AVFoundation / CoreMediaIO，不套一层笨重的浏览器壳。</p>
+            <h3>Native speed</h3>
+            <p>Swift, AVFoundation, and CoreMediaIO — without a heavyweight browser shell.</p>
           </article>
           <article class="capability-card reveal">
             <span class="cap-index">02 / WIRELESS</span>
-            <h3>无线自由</h3>
-            <p>一次 USB 准备，之后在同一局域网内主动发现并镜像。</p>
+            <h3>Wireless freedom</h3>
+            <p>Prepare once over USB, then discover and mirror on the same local network.</p>
           </article>
           <article class="capability-card reveal">
             <span class="cap-index">03 / VISION</span>
-            <h3>本地识别</h3>
-            <p>macOS Vision OCR 与 iOS 访问树协同，减少视觉模型盲猜。</p>
+            <h3>Local recognition</h3>
+            <p>macOS Vision OCR and iOS Accessibility replace visual guesswork with real targets.</p>
           </article>
           <article class="capability-card reveal">
             <span class="cap-index">04 / MCP</span>
-            <h3>MCP 控制</h3>
-            <p>点击、滑动、长按、输入、清空，直接进入 Agent 工作流。</p>
+            <h3>MCP control</h3>
+            <p>Tap, swipe, long-press, type, and clear — directly from an agent workflow.</p>
           </article>
         </div>
       </section>
@@ -221,11 +229,11 @@
           <div class="section-heading reveal">
             <div>
               <div class="section-index section-index-light">02 / WIRELESS</div>
-              <h2>一根线起步，<br /><span>之后无线继续。</span></h2>
+              <h2>Start with one cable.<br /><span>Keep going wirelessly.</span></h2>
             </div>
             <p>
-              内置向导会检查设备、Apple 开发账号与画面代理。完成一次准备后，断开 USB，
-              仍可通过局域网获得全分辨率 H.264 镜像。
+              The built-in guide checks the device, your Apple development account, and the screen agent.
+              After one USB setup, disconnect the cable and keep a full-resolution H.264 mirror over your LAN.
             </p>
           </div>
 
@@ -238,25 +246,25 @@
                 class="screenshot-button"
                 type="button"
                 data-lightbox="assets/wireless-setup.webp"
-                aria-label="放大查看无线镜像设置向导"
+                aria-label="Enlarge the wireless mirroring setup guide"
               >
                 <img
                   src="assets/wireless-setup.webp"
-                  alt="StupidMirror 无线镜像四步设置向导"
+                  alt="The four-step StupidMirror wireless mirroring guide"
                   loading="lazy"
                   width="1900"
                   height="1584"
                 />
               </button>
-              <figcaption>首次通过 USB 准备一次</figcaption>
+              <figcaption>Prepare once over USB</figcaption>
             </figure>
 
             <div class="wireless-specs reveal">
-              <div class="spec"><strong>45</strong><span>FPS 目标帧率</span></div>
-              <div class="spec"><strong>SRT</strong><span>完整访问单元传输</span></div>
-              <div class="spec"><strong>H.264</strong><span>VideoToolbox 编解码</span></div>
+              <div class="spec"><strong>45</strong><span>FPS target</span></div>
+              <div class="spec"><strong>SRT</strong><span>Complete access units</span></div>
+              <div class="spec"><strong>H.264</strong><span>VideoToolbox codec</span></div>
               <p>
-                镜像与控制保持独立：只想查看画面时，不会擅自安装或启动控制流程。
+                Mirroring and control stay separate. Viewing a screen never installs or starts the control path behind your back.
               </p>
             </div>
 
@@ -268,17 +276,17 @@
                 class="screenshot-button"
                 type="button"
                 data-lightbox="assets/mcp-settings.webp"
-                aria-label="放大查看 MCP 配置界面"
+                aria-label="Enlarge the MCP configuration screen"
               >
                 <img
                   src="assets/mcp-settings.webp"
-                  alt="StupidMirror 内置 MCP Server 配置界面"
+                  alt="The built-in StupidMirror MCP server configuration"
                   loading="lazy"
                   width="1900"
                   height="1584"
                 />
               </button>
-              <figcaption>MCP 配置已内置</figcaption>
+              <figcaption>MCP configuration included</figcaption>
             </figure>
           </div>
         </div>
@@ -289,14 +297,14 @@
         <div class="section-shell">
           <div class="automation-intro reveal">
             <div class="section-index section-index-cyan">03 / AI HARNESS</div>
-            <h2>AI 不是旁观者。<br /><span>它真的可以操作 iPhone。</span></h2>
+            <h2>AI is not a spectator.<br /><span>It can operate the iPhone.</span></h2>
             <p>
-              StupidMirror 内置只监听本机的 MCP Server。不内置模型，不要求额外填写模型 API
-              Key，把真机能力直接交给你已在使用的 Codex 或 Claude Code。
+              StupidMirror includes an MCP server bound to localhost. It embeds no model and asks for no model API key —
+              it hands the real device to the Codex or Claude Code setup you already use.
             </p>
           </div>
 
-          <div class="tool-rail reveal" aria-label="支持的自动化动作">
+          <div class="tool-rail reveal" aria-label="Supported automation actions">
             <span>OBSERVE</span><i></i><span>TAP</span><i></i><span>SWIPE</span><i></i>
             <span>LONG PRESS</span><i></i><span>TYPE</span><i></i><span>ASSERT</span>
           </div>
@@ -307,11 +315,11 @@
                 class="screenshot-button"
                 type="button"
                 data-lightbox="assets/automation-1.webp"
-                aria-label="放大查看主屏幕元素识别效果"
+                aria-label="Enlarge Home Screen element recognition"
               >
                 <img
                   src="assets/automation-1.webp"
-                  alt="iPhone 主屏幕中的可点击区域被编号标注"
+                  alt="Numbered clickable regions on the iPhone Home Screen"
                   loading="lazy"
                   width="794"
                   height="1812"
@@ -323,11 +331,11 @@
                 class="screenshot-button"
                 type="button"
                 data-lightbox="assets/automation-5.webp"
-                aria-label="放大查看信息流元素识别效果"
+                aria-label="Enlarge feed element recognition"
               >
                 <img
                   src="assets/automation-5.webp"
-                  alt="复杂信息流页面中的可点击区域被识别"
+                  alt="Recognized clickable regions in a dense content feed"
                   loading="lazy"
                   width="794"
                   height="1812"
@@ -339,11 +347,11 @@
                 class="screenshot-button"
                 type="button"
                 data-lightbox="assets/automation-7.webp"
-                aria-label="放大查看短视频页面识别效果"
+                aria-label="Enlarge short-video screen recognition"
               >
                 <img
                   src="assets/automation-7.webp"
-                  alt="短视频页面中的按钮和标签被编号标注"
+                  alt="Numbered buttons and labels on a short-video screen"
                   loading="lazy"
                   width="794"
                   height="1812"
@@ -355,18 +363,18 @@
           <div class="automation-copy-grid">
             <article class="reveal">
               <span>01</span>
-              <h3>先看懂，再操作</h3>
-              <p>最新镜像帧、本地 Vision OCR 与 iOS 访问树共同定位真实目标。</p>
+              <h3>Understand, then act</h3>
+              <p>The latest frame, local Vision OCR, and iOS Accessibility converge on the real target.</p>
             </article>
             <article class="reveal">
               <span>02</span>
-              <h3>每一步都可见</h3>
-              <p>目标框、点击位置和滑动轨迹只显示在 Mac 侧，方便随时确认与接管。</p>
+              <h3>Every action is visible</h3>
+              <p>Targets, taps, and swipe paths appear only on the Mac, ready for review or takeover.</p>
             </article>
             <article class="reveal">
               <span>03</span>
-              <h3>复杂界面也能找</h3>
-              <p>系统设置、App Store、内容流与自定义业务页面都能获得语义化目标。</p>
+              <h3>Built for real interfaces</h3>
+              <p>System Settings, the App Store, dense feeds, and custom canvases all yield semantic targets.</p>
             </article>
           </div>
         </div>
@@ -377,36 +385,36 @@
           <div class="gallery-heading reveal">
             <div>
               <div class="eyebrow eyebrow-dark">Real screens. Real control.</div>
-              <h2>不是 Demo 页，<br />是真实世界的 App。</h2>
+              <h2>Not a demo page.<br />Real-world apps.</h2>
             </div>
-            <p>拖动浏览截图，点击任意画面可放大查看识别细节。</p>
+            <p>Drag through the captures. Open any screen to inspect the recognized targets.</p>
           </div>
         </div>
 
-        <div class="screen-gallery" aria-label="真实应用识别截图">
+        <div class="screen-gallery" aria-label="Recognition captures from real apps">
           <figure class="gallery-card reveal">
             <button class="screenshot-button" type="button" data-lightbox="assets/automation-2.webp">
-              <img src="assets/automation-2.webp" alt="美团页面元素识别" loading="lazy" width="794" height="1812" />
+              <img src="assets/automation-2.webp" alt="Element recognition on a Meituan screen" loading="lazy" width="794" height="1812" />
             </button>
-            <figcaption>本地生活 / 密集信息</figcaption>
+            <figcaption>Local services / dense information</figcaption>
           </figure>
           <figure class="gallery-card reveal">
             <button class="screenshot-button" type="button" data-lightbox="assets/automation-3.webp">
-              <img src="assets/automation-3.webp" alt="iOS 设置页面元素识别" loading="lazy" width="794" height="1812" />
+              <img src="assets/automation-3.webp" alt="Element recognition in iOS Settings" loading="lazy" width="794" height="1812" />
             </button>
-            <figcaption>系统设置 / 原生控件</figcaption>
+            <figcaption>System Settings / native controls</figcaption>
           </figure>
           <figure class="gallery-card reveal">
             <button class="screenshot-button" type="button" data-lightbox="assets/automation-4.webp">
-              <img src="assets/automation-4.webp" alt="App Store 页面元素识别" loading="lazy" width="794" height="1812" />
+              <img src="assets/automation-4.webp" alt="Element recognition in the App Store" loading="lazy" width="794" height="1812" />
             </button>
-            <figcaption>App Store / 多层卡片</figcaption>
+            <figcaption>App Store / layered cards</figcaption>
           </figure>
           <figure class="gallery-card reveal">
             <button class="screenshot-button" type="button" data-lightbox="assets/automation-6.webp">
-              <img src="assets/automation-6.webp" alt="教育应用页面元素识别" loading="lazy" width="794" height="1812" />
+              <img src="assets/automation-6.webp" alt="Element recognition in an education app" loading="lazy" width="794" height="1812" />
             </button>
-            <figcaption>业务应用 / 自定义画布</figcaption>
+            <figcaption>Business apps / custom canvas</figcaption>
           </figure>
         </div>
       </section>
@@ -415,10 +423,10 @@
         <div class="privacy-mark reveal" aria-hidden="true">LOCAL</div>
         <div class="privacy-content reveal">
           <div class="section-index">04 / PRIVACY</div>
-          <h2>识别在本地。<br />控制权也在你手里。</h2>
+          <h2>Recognition stays local.<br />Control stays with you.</h2>
           <p>
-            OCR 在 Mac 本地按需运行。操作标记不写回 iPhone，也不烧录进视频流。
-            StupidMirror 自身不内置模型、不要求模型 API Key，更不会主动把屏幕上传给模型服务。
+            OCR runs on demand on your Mac. Action overlays never go back to the iPhone or into the video stream.
+            StupidMirror embeds no model, needs no model API key, and never uploads the screen to a model service on its own.
           </p>
           <div class="privacy-pills">
             <span>LOCALHOST MCP</span>
@@ -432,26 +440,26 @@
         <div class="section-shell">
           <div class="scenes-heading reveal">
             <div class="section-index section-index-light">05 / USE CASES</div>
-            <h2>一台 Mac，<br /><span>三种新工作方式。</span></h2>
+            <h2>One Mac.<br /><span>Three new ways to work.</span></h2>
           </div>
           <div class="scene-grid">
             <article class="scene-card reveal">
               <span class="scene-number">01</span>
-              <h3>开发与测试</h3>
-              <p>真机调试、问题复现、流程回归，不再在 iPhone 与 Mac 之间反复切换。</p>
-              <ul><li>真实设备画面</li><li>可见操作轨迹</li><li>快速重连 WDA</li></ul>
+              <h3>Development &amp; testing</h3>
+              <p>Debug real hardware, reproduce issues, and rerun flows without bouncing between iPhone and Mac.</p>
+              <ul><li>Live device video</li><li>Visible action trails</li><li>Fast WDA reconnects</li></ul>
             </article>
             <article class="scene-card scene-card-accent reveal">
               <span class="scene-number">02</span>
-              <h3>AI 自动化</h3>
-              <p>通过 MCP 把真机交给 Codex 或 Claude Code，执行可观察、可验证的操作链路。</p>
-              <ul><li>语义化定位</li><li>本地 OCR</li><li>点击与文本输入</li></ul>
+              <h3>AI automation</h3>
+              <p>Hand a real device to Codex or Claude Code through MCP for observable, verifiable workflows.</p>
+              <ul><li>Semantic targeting</li><li>Local OCR</li><li>Taps and text input</li></ul>
             </article>
             <article class="scene-card reveal">
               <span class="scene-number">03</span>
-              <h3>演示与多设备</h3>
-              <p>独立镜像窗口适合录屏、直播与演示；激活后可并行管理多台 iPhone。</p>
-              <ul><li>设备比例窗口</li><li>多设备并行</li><li>中英文界面</li></ul>
+              <h3>Demos &amp; multiple devices</h3>
+              <p>Standalone mirrors fit recording, streaming, and demos; activation unlocks parallel iPhone workflows.</p>
+              <ul><li>Device-ratio windows</li><li>Parallel devices</li><li>English and Chinese UI</li></ul>
             </article>
           </div>
         </div>
@@ -462,8 +470,8 @@
         <div class="cta-content reveal">
           <img src="assets/app-icon.webp" alt="" width="96" height="96" />
           <div class="eyebrow">StupidMirror for macOS</div>
-          <h2>现在，把真实 iPhone<br /><span>接入你的工作流。</span></h2>
-          <p>macOS 15+ · 个人及非商业用途免费 · 商业使用需另行授权</p>
+          <h2>Now put a real iPhone<br /><span>into your workflow.</span></h2>
+          <p>macOS 15+ · Free for personal and noncommercial use · Commercial license required</p>
           <div class="hero-actions cta-actions">
             <a
               class="button button-primary"
@@ -471,7 +479,7 @@
               target="_blank"
               rel="noreferrer"
             >
-              下载最新公开版
+              Download latest release
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M8 5h7v7" /></svg>
             </a>
             <a
@@ -479,7 +487,7 @@
               href="https://github.com/LiuTianjie/StupidMirror"
               target="_blank"
               rel="noreferrer"
-            >在 GitHub 查看</a>
+            >View on GitHub</a>
           </div>
         </div>
       </section>
@@ -493,13 +501,13 @@
       </div>
     </footer>
 
-    <dialog class="lightbox" data-lightbox-dialog aria-label="截图预览">
-      <button type="button" class="lightbox-close" data-lightbox-close aria-label="关闭预览">
+    <dialog class="lightbox" data-lightbox-dialog aria-label="Screenshot preview">
+      <button type="button" class="lightbox-close" data-lightbox-close aria-label="Close preview">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M6 6l12 12M18 6 6 18" />
         </svg>
       </button>
-      <img src="" alt="放大的产品截图" data-lightbox-image />
+      <img src="" alt="Enlarged product screenshot" data-lightbox-image />
     </dialog>
 
     <script src="script.js"></script>
