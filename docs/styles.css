@@ -677,6 +677,86 @@ button {
   color: var(--cyan);
 }
 
+.android-compat {
+  position: relative;
+  margin-top: 28px;
+  padding: 34px 38px;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(480px, 1.4fr);
+  align-items: center;
+  gap: 42px;
+  border-radius: var(--radius-lg);
+  color: var(--white);
+  background:
+    linear-gradient(115deg, rgba(196, 255, 99, 0.11), transparent 34%),
+    var(--ink);
+  overflow: hidden;
+}
+
+.android-compat::after {
+  content: "";
+  position: absolute;
+  width: 180px;
+  height: 180px;
+  right: -72px;
+  top: -94px;
+  border: 1px solid rgba(196, 255, 99, 0.32);
+  border-radius: 50%;
+}
+
+.android-kicker {
+  color: var(--lime);
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.android-compat h3 {
+  margin: 10px 0 8px;
+  font-family: var(--display);
+  font-size: clamp(24px, 2.3vw, 34px);
+  letter-spacing: -0.045em;
+}
+
+.android-compat p {
+  max-width: 560px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  line-height: 1.85;
+}
+
+.android-compat-specs {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.android-compat-specs span {
+  padding: 15px 18px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+}
+
+.android-compat-specs span:nth-child(odd) {
+  border-right: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.android-compat-specs span:nth-child(-n + 2) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.android-compat-specs b {
+  color: var(--white);
+  font-family: var(--display);
+  font-weight: 600;
+}
+
 .wireless-section {
   position: relative;
   padding: 145px 0 170px;
@@ -1447,6 +1527,10 @@ button {
     border-bottom: 1px solid var(--line);
   }
 
+  .android-compat {
+    grid-template-columns: 1fr;
+  }
+
   .automation-copy-grid article:nth-child(2) {
     border-right: 0;
   }
@@ -1595,6 +1679,25 @@ button {
 
   .capability-card h3 {
     margin-top: 48px;
+  }
+
+  .android-compat {
+    padding: 28px 24px;
+    gap: 26px;
+  }
+
+  .android-compat-specs {
+    grid-template-columns: 1fr;
+  }
+
+  .android-compat-specs span,
+  .android-compat-specs span:nth-child(odd) {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .android-compat-specs span:last-child {
+    border-bottom: 0;
   }
 
   .automation-copy-grid article,
