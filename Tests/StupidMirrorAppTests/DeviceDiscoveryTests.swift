@@ -168,6 +168,176 @@ final class DeviceDiscoveryTests: XCTestCase {
         ])
     }
 
+    func testUSBIdentityPrefersMetadataThenCacheThenExistingUDID() {
+        let metadata = DeviceMetadata(
+            udid: "metadata-udid",
+            name: "Phone",
+            productType: "iPhone18,4",
+            osVersion: "26.5"
+        )
+        XCTAssertEqual(
+            AVFoundationMirrorBackend.resolvedUDID(
+                captureUniqueID: "capture-1",
+                metadataMatch: metadata,
+                cachedUDID: "cached-udid",
+                existingUDID: "existing-udid"
+            ),
+            "metadata-udid"
+        )
+        XCTAssertEqual(
+            AVFoundationMirrorBackend.resolvedUDID(
+                captureUniqueID: "capture-1",
+                metadataMatch: nil,
+                cachedUDID: "cached-udid",
+                existingUDID: "existing-udid"
+            ),
+            "cached-udid"
+        )
+        XCTAssertEqual(
+            AVFoundationMirrorBackend.resolvedUDID(
+                captureUniqueID: "capture-1",
+                metadataMatch: nil,
+                cachedUDID: nil,
+                existingUDID: "existing-udid"
+            ),
+            "existing-udid"
+        )
+        XCTAssertNil(
+            AVFoundationMirrorBackend.resolvedUDID(
+                captureUniqueID: "capture-1",
+                metadataMatch: nil,
+                cachedUDID: nil,
+                existingUDID: nil
+            )
+        )
+    }
+
+    func testSoleUSBCaptureBindsTheOnlyMetadataRecord() {
+        let metadata = DeviceMetadata(
+            udid: "only-udid",
+            name: "Nickname",
+            productType: "iPhone18,4",
+            osVersion: "26.5"
+        )
+        XCTAssertEqual(
+            AVFoundationMirrorBackend.preferSoleMetadataMatch(
+                captureCount: 1,
+                metadata: [metadata]
+            )?.udid,
+            "only-udid"
+        )
+        XCTAssertNil(
+            AVFoundationMirrorBackend.preferSoleMetadataMatch(
+                captureCount: 2,
+                metadata: [metadata]
+            )
+        )
+    }
+
+    func testWirelessDiscoveryFailureIsDistinctFromAnEmptyDeviceList() {
+        XCTAssertNotEqual(
+            WirelessDiscoveryOutcome.unavailable,
+            WirelessDiscoveryOutcome.available([])
+        )
+        XCTAssertEqual(
+            WirelessDiscoveryOutcome.available([]),
+            WirelessDiscoveryOutcome.available([])
+        )
+    }
+
+    func testDisconnectedSessionsAreKeptForTheRetentionWindow() {
+        let now = Date()
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldKeepDisconnectedSession(
+                previouslyConnected: true,
+                disconnectedAt: now,
+                now: now,
+                retention: 30
+            )
+        )
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldKeepDisconnectedSession(
+                previouslyConnected: false,
+                disconnectedAt: now.addingTimeInterval(-10),
+                now: now,
+                retention: 30
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldKeepDisconnectedSession(
+                previouslyConnected: false,
+                disconnectedAt: now.addingTimeInterval(-31),
+                now: now,
+                retention: 30
+            )
+        )
+    }
+
+    func testWirelessStreamRetryUsesTheFailureWindowNotTheOriginalStartTime() {
+        let now = Date()
+        XCTAssertTrue(
+            MirrorCaptureSession.shouldRetryWirelessFailure(
+                lastFailureAt: now.addingTimeInterval(-10),
+                now: now,
+                window: 120
+            )
+        )
+        XCTAssertFalse(
+            MirrorCaptureSession.shouldRetryWirelessFailure(
+                lastFailureAt: now.addingTimeInterval(-121),
+                now: now,
+                window: 120
+            )
+        )
+        XCTAssertTrue(
+            MirrorCaptureSession.shouldRetryWirelessFailure(
+                lastFailureAt: nil,
+                now: now,
+                window: 120
+            )
+        )
+    }
+
+    @MainActor
+    func testSessionMatchesDiscoveryByUDIDAndLastUSBCaptureID() {
+        let identity = DeviceIdentity(
+            id: "unique-capture",
+            udid: nil,
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            connectionState: .disconnected,
+            trustState: .trusted
+        )
+        var session = DeviceSession(
+            device: identity,
+            wirelessDevice: WirelessDeviceMetadata(
+                udid: "later-udid",
+                name: "iPhone",
+                productType: "iPhone18,4",
+                osVersion: "26.5",
+                hostname: "iphone.coredevice.local"
+            )
+        )
+        session.id = "unique-capture"
+        session.lastUSBCaptureUniqueID = "capture-unique"
+
+        XCTAssertTrue(session.matchesDiscovery(id: "unique-capture", udid: nil, captureUniqueID: "capture-unique"))
+        XCTAssertFalse(session.matchesDiscovery(id: "other", udid: "later-udid", captureUniqueID: nil))
+
+        session.device = DeviceIdentity(
+            id: "later-udid",
+            udid: "later-udid",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            connectionState: .connected,
+            trustState: .trusted
+        )
+        session.id = "later-udid"
+        XCTAssertTrue(session.matchesDiscovery(id: "later-udid", udid: "later-udid", captureUniqueID: "capture-unique"))
+    }
+
     func testWirelessTunnelMustBeConnectedBeforeItIsUsable() {
         let device = WirelessDeviceMetadata(
             udid: "device",
@@ -226,6 +396,62 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertEqual(session.wirelessDevice?.tunnelIPAddress, "fd00::2")
     }
 
+    @MainActor
+    func testAdoptWirelessKeepsControlAndWDAOwners() {
+        let original = WirelessDeviceMetadata(
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            hostname: "device.coredevice.local",
+            tunnelIPAddress: "fd00::1",
+            tunnelState: "disconnected"
+        )
+        let connected = WirelessDeviceMetadata(
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            hostname: "device.coredevice.local",
+            tunnelIPAddress: "fd00::1",
+            tunnelState: "connected"
+        )
+        var session = DeviceSession(
+            device: DeviceIdentity(
+                id: "device",
+                udid: "device",
+                name: "iPhone",
+                productType: "iPhone18,4",
+                osVersion: "26.5",
+                connectionState: .disconnected,
+                trustState: .trusted
+            ),
+            wirelessDevice: original
+        )
+        let mirrorOwner = session.mirrorSession
+        let controlOwner = session.controlSession
+        let wdaOwner = session.wirelessWDA
+
+        session.adoptWireless(
+            identity: DeviceIdentity(
+                id: "device",
+                udid: "device",
+                name: "iPhone",
+                productType: "iPhone18,4",
+                osVersion: "26.5",
+                connectionState: .connected,
+                trustState: .trusted
+            ),
+            wirelessDevice: connected
+        )
+
+        XCTAssertEqual(session.transport, .wireless)
+        XCTAssertTrue(session.mirrorSession === mirrorOwner)
+        XCTAssertTrue(session.controlSession === controlOwner)
+        XCTAssertTrue(session.wirelessWDA === wdaOwner)
+        XCTAssertEqual(session.device.connectionState, .connected)
+    }
+
     func testWirelessWDAKeepsAppleCoreDeviceHostnameForControlDiscovery() {
         XCTAssertEqual(
             WirelessWDAService.lanHostname(from: "Test-iPhone.coredevice.local"),
@@ -258,6 +484,17 @@ final class DeviceDiscoveryTests: XCTestCase {
         ))
         XCTAssertFalse(WirelessWDAService.outputIndicatesLockedDevice("Testing started"))
         XCTAssertFalse(WirelessWDAService.outputIndicatesUnavailableDevice("Testing started"))
+    }
+
+    func testWirelessWDAControlURLFormatsIPv6Hosts() throws {
+        XCTAssertEqual(
+            WirelessWDAService.controlURL(host: "192.168.31.135")?.absoluteString,
+            "http://192.168.31.135:8100"
+        )
+        XCTAssertEqual(
+            WirelessWDAService.controlURL(host: "fd00::1234")?.absoluteString,
+            "http://[fd00::1234]:8100"
+        )
     }
 
     func testWirelessWDAUsesXCTestRunnerBundleIdentifier() {

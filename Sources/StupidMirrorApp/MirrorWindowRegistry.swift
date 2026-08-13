@@ -98,6 +98,22 @@ final class MirrorWindowRegistry {
         }
     }
 
+    func rekey(from oldID: String, to newID: String) {
+        guard oldID != newID else { return }
+        if let window = windows.removeValue(forKey: oldID) {
+            windows[newID] = window
+        }
+        if let delegate = delegates.removeValue(forKey: oldID) {
+            delegate.sessionID = newID
+            delegates[newID] = delegate
+        }
+    }
+
+    func refreshContent(session: DeviceSession, store: DeviceGalleryStore) {
+        guard let window = windows[session.id] else { return }
+        update(window: window, session: session, store: store)
+    }
+
     func closeAll(sessions: [DeviceSession]) {
         for session in sessions {
             close(session: session)
@@ -196,10 +212,10 @@ final class MirrorWindowRegistry {
 
     private func installDelegate(for window: NSWindow, session: DeviceSession, aspectRatio: Double) {
         delegates[session.id]?.detach()
-        let delegate = MirrorWindowDelegate { [weak self, weak mirrorSession = session.mirrorSession] in
+        let delegate = MirrorWindowDelegate(sessionID: session.id) { [weak self, weak mirrorSession = session.mirrorSession] sessionID in
             mirrorSession?.stop()
-            self?.windows[session.id] = nil
-            self?.delegates[session.id] = nil
+            self?.windows[sessionID] = nil
+            self?.delegates[sessionID] = nil
         }
         delegate.aspectRatio = aspectRatio
         window.delegate = delegate
@@ -243,11 +259,13 @@ final class MirrorWindowRegistry {
 
 @MainActor
 private final class MirrorWindowDelegate: NSObject, NSWindowDelegate {
-    private let onClose: () -> Void
+    private let onClose: (String) -> Void
+    var sessionID: String
 
     var aspectRatio: Double = 0
 
-    init(onClose: @escaping () -> Void) {
+    init(sessionID: String, onClose: @escaping (String) -> Void) {
+        self.sessionID = sessionID
         self.onClose = onClose
     }
 
@@ -265,7 +283,7 @@ private final class MirrorWindowDelegate: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         detach()
-        onClose()
+        onClose(sessionID)
     }
 }
 

@@ -6,9 +6,9 @@ import Foundation
 
 final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     let captureSession = AVCaptureSession()
-    let device: AVCaptureDevice?
-    let wirelessEndpointURL: URL?
-    let androidDevice: AndroidDeviceMetadata?
+    private(set) var device: AVCaptureDevice?
+    private(set) var wirelessEndpointURL: URL?
+    private(set) var androidDevice: AndroidDeviceMetadata?
 
     @Published private(set) var state: MirrorState = .stopped
     // Live aspect ratio read from actual frames, so the window can follow
@@ -38,6 +38,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var wirelessRetryTask: Task<Void, Never>?
     private var wirelessGeneration: UInt64 = 0
     private var wirelessStartedAt: Date?
+    private var lastStreamFailureAt: Date?
     private var wirelessOnRunning: (@MainActor @Sendable () -> Void)?
     private var lastWirelessPreviewUpdate = Date.distantPast
     private var automationActionClearTask: Task<Void, Never>?
@@ -82,12 +83,62 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     }
 
     @MainActor
+    func retargetToUSB(_ captureDevice: AVCaptureDevice) {
+        guard device?.uniqueID != captureDevice.uniqueID
+                || wirelessEndpointURL != nil
+                || androidDevice != nil else {
+            return
+        }
+        resetForRetarget()
+        device = captureDevice
+        wirelessEndpointURL = nil
+        androidDevice = nil
+        wirelessStreamURL = nil
+    }
+
+    @MainActor
+    func retargetToWireless(endpointURL: URL) {
+        guard wirelessEndpointURL != endpointURL || device != nil || androidDevice != nil else {
+            return
+        }
+        resetForRetarget()
+        device = nil
+        wirelessEndpointURL = endpointURL
+        androidDevice = nil
+        wirelessStreamURL = endpointURL
+    }
+
+    @MainActor
+    private func resetForRetarget() {
+        stop()
+        sessionQueue.sync {
+            tearDownOnSessionQueue()
+            disposed = false
+            configured = false
+        }
+        latestFrameStore.clear()
+        frameAspectRatio = nil
+        latestWirelessFrame = nil
+        lastStreamFailureAt = nil
+    }
+
+    nonisolated static func shouldRetryWirelessFailure(
+        lastFailureAt: Date?,
+        now: Date = Date(),
+        window: TimeInterval = 120
+    ) -> Bool {
+        let started = lastFailureAt ?? now
+        return now.timeIntervalSince(started) < window
+    }
+
+    @MainActor
     func start(onRunning: @escaping @MainActor @Sendable () -> Void = {}) {
         if state == .running {
             onRunning()
             return
         }
         guard state != .starting else { return }
+        lastStreamFailureAt = nil
         state = .starting
 
         if androidDevice != nil {
@@ -610,10 +661,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 self.state = .running
                 self.wirelessStartupDetail = nil
                 self.wirelessStartupBeganAt = nil
+                self.lastStreamFailureAt = nil
                 let onRunning = self.wirelessOnRunning
                 self.wirelessOnRunning = nil
                 onRunning?()
             }
+            self.lastStreamFailureAt = nil
             if self.frameAspectRatio == nil || abs((self.frameAspectRatio ?? ratio) - ratio) >= 0.01 {
                 self.frameAspectRatio = ratio
             }
@@ -644,8 +697,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessSRTStream?.stop()
         wirelessSRTStream = nil
 
-        let elapsed = Date().timeIntervalSince(wirelessStartedAt ?? Date())
-        guard elapsed < 120 else {
+        lastStreamFailureAt = lastStreamFailureAt ?? Date()
+        guard Self.shouldRetryWirelessFailure(lastFailureAt: lastStreamFailureAt) else {
             state = .failed(error.localizedDescription)
             wirelessOnRunning = nil
             return

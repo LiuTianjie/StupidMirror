@@ -75,6 +75,11 @@ struct WirelessDeviceMetadata: Hashable, Sendable {
     }
 }
 
+enum WirelessDiscoveryOutcome: Equatable, Sendable {
+    case available([WirelessDeviceMetadata])
+    case unavailable
+}
+
 /// Discovers Xcode-paired iPhones through Apple's supported `devicectl` CLI.
 /// The app never opens or implements the underlying device transport protocol.
 enum CoreDeviceDiscoveryService {
@@ -84,8 +89,8 @@ enum CoreDeviceDiscoveryService {
         FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun")
     }
 
-    static func wirelessDevices() -> [WirelessDeviceMetadata] {
-        guard isAvailable else { return [] }
+    static func discoverWirelessDevices() -> WirelessDiscoveryOutcome {
+        guard isAvailable else { return .unavailable }
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("StupidMirror-CoreDevice-\(UUID().uuidString).json")
@@ -107,16 +112,16 @@ enum CoreDeviceDiscoveryService {
             process.waitUntilExit()
         } catch {
             logger.error("Failed to launch devicectl: \(error.localizedDescription, privacy: .public)")
-            return []
+            return .unavailable
         }
         guard process.terminationStatus == 0,
               let data = try? Data(contentsOf: outputURL) else {
             logger.error("devicectl discovery failed with status \(process.terminationStatus)")
-            return []
+            return .unavailable
         }
         let devices = parseWirelessDevices(data)
         logger.info("Discovered \(devices.count) wireless iPhone(s)")
-        return devices
+        return .available(devices)
     }
 
     nonisolated static func parseWirelessDevices(_ data: Data) -> [WirelessDeviceMetadata] {

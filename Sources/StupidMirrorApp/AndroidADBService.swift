@@ -164,15 +164,22 @@ enum AndroidADBService {
         let stderr: Data
     }
 
-    static func discoverDevices() -> [AndroidDeviceMetadata] {
-        guard let adb = AndroidRuntime.adbExecutablePath(),
-              let result = try? run(adb: adb, arguments: ["devices", "-l"], timeout: 5) else {
-            return []
+    enum DiscoveryOutcome: Equatable, Sendable {
+        case available([AndroidDeviceMetadata])
+        case unavailable
+    }
+
+    static func discoverDevices() -> DiscoveryOutcome {
+        guard let adb = AndroidRuntime.adbExecutablePath() else {
+            return .unavailable
+        }
+        guard let result = try? run(adb: adb, arguments: ["devices", "-l"], timeout: 5) else {
+            return .unavailable
         }
         let output = String(decoding: result.stdout, as: UTF8.self)
-        return parseDeviceList(output).map { listed in
+        return .available(parseDeviceList(output).map { listed in
             metadata(for: listed, adb: adb)
-        }
+        })
     }
 
     static func captureScreenshot(serial: String) throws -> Data {

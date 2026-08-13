@@ -41,6 +41,34 @@ enum DeviceMetadataService {
         return nil
     }
 
+    enum CaptureUDIDCache {
+        static let defaultsKey = "StupidMirror.captureUniqueIDToUDID"
+
+        static func udid(for uniqueID: String) -> String? {
+            guard !uniqueID.isEmpty else { return nil }
+            let value = stored()[uniqueID]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value?.isEmpty == false ? value : nil
+        }
+
+        static func remember(uniqueID: String, udid: String) {
+            let trimmedUniqueID = uniqueID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedUDID = udid.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedUniqueID.isEmpty, !trimmedUDID.isEmpty else { return }
+            var map = stored()
+            map[trimmedUniqueID] = trimmedUDID
+            UserDefaults.standard.set(map, forKey: defaultsKey)
+        }
+
+        nonisolated static func udid(for uniqueID: String, in map: [String: String]) -> String? {
+            let value = map[uniqueID]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value?.isEmpty == false ? value : nil
+        }
+
+        private static func stored() -> [String: String] {
+            UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
+        }
+    }
+
     private static func readInfo(udid: String) -> [String: String] {
         guard let ideviceInfo = executablePath(named: "ideviceinfo") else {
             return [:]

@@ -141,15 +141,16 @@ enum ControlConnectionPhase: Equatable, Sendable {
 }
 
 struct DeviceSession: Identifiable {
-    let id: String
+    var id: String
     var device: DeviceIdentity
-    let transport: DeviceTransport
-    let captureDevice: AVCaptureDevice?
+    var transport: DeviceTransport
+    var captureDevice: AVCaptureDevice?
+    var lastUSBCaptureUniqueID: String?
     var wirelessDevice: WirelessDeviceMetadata?
     let androidDevice: AndroidDeviceMetadata?
     let mirrorSession: MirrorCaptureSession
     let controlSession: AppiumControlSession
-    let wirelessWDA: WirelessWDAService?
+    var wirelessWDA: WirelessWDAService?
     var mirrorState: MirrorState
 
     var sourceID: String {
@@ -176,6 +177,7 @@ struct DeviceSession: Identifiable {
         self.device = device
         self.transport = .usb
         self.captureDevice = captureDevice
+        self.lastUSBCaptureUniqueID = captureDevice.uniqueID
         self.wirelessDevice = nil
         self.androidDevice = nil
         self.mirrorSession = MirrorCaptureSession(device: captureDevice)
@@ -190,6 +192,7 @@ struct DeviceSession: Identifiable {
         self.device = device
         self.transport = .wireless
         self.captureDevice = nil
+        self.lastUSBCaptureUniqueID = nil
         self.wirelessDevice = wirelessDevice
         self.androidDevice = nil
         self.mirrorSession = MirrorCaptureSession(
@@ -206,12 +209,70 @@ struct DeviceSession: Identifiable {
         self.device = device
         self.transport = androidDevice.transport
         self.captureDevice = nil
+        self.lastUSBCaptureUniqueID = nil
         self.wirelessDevice = nil
         self.androidDevice = androidDevice
         self.mirrorSession = MirrorCaptureSession(androidDevice: androidDevice)
         self.controlSession = AppiumControlSession(device: device)
         self.wirelessWDA = nil
         self.mirrorState = .stopped
+    }
+
+    @MainActor
+    mutating func adoptUSB(identity: DeviceIdentity, captureDevice: AVCaptureDevice) {
+        device = identity
+        controlSession.updateDevice(identity)
+        let needsRetarget = transport != .usb || self.captureDevice?.uniqueID != captureDevice.uniqueID
+        self.captureDevice = captureDevice
+        lastUSBCaptureUniqueID = captureDevice.uniqueID
+        if needsRetarget {
+            transport = .usb
+            mirrorSession.retargetToUSB(captureDevice)
+        }
+    }
+
+    @MainActor
+    mutating func adoptWireless(identity: DeviceIdentity, wirelessDevice: WirelessDeviceMetadata) {
+        device = identity
+        controlSession.updateDevice(identity)
+        self.wirelessDevice = wirelessDevice
+        if wirelessWDA == nil {
+            wirelessWDA = WirelessWDAService()
+        }
+        guard transport != .wireless else { return }
+        transport = .wireless
+        captureDevice = nil
+        if let url = wirelessDevice.endpointURLs(port: 8_100).first {
+            mirrorSession.retargetToWireless(endpointURL: url)
+        }
+    }
+
+    func matchesDiscovery(id: String, udid: String?, captureUniqueID: String?) -> Bool {
+        if self.id == id { return true }
+        if let udid, !udid.isEmpty, self.id == udid || device.udid == udid {
+            return true
+        }
+        if let captureUniqueID, !captureUniqueID.isEmpty {
+            return self.captureDevice?.uniqueID == captureUniqueID
+                || lastUSBCaptureUniqueID == captureUniqueID
+        }
+        return false
+    }
+
+    @MainActor
+    static func reusePreferenceScore(_ session: DeviceSession) -> Int {
+        var score = 0
+        if session.device.udid?.isEmpty == false { score += 8 }
+        if session.controlSession.isReady { score += 4 }
+        if session.controlSession.isConnecting { score += 2 }
+        if session.wirelessWDA != nil { score += 2 }
+        switch session.mirrorSession.state {
+        case .running: score += 2
+        case .starting: score += 1
+        case .stopped, .failed: break
+        }
+        if session.id == session.device.udid { score += 1 }
+        return score
     }
 }
 

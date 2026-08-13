@@ -79,6 +79,10 @@ final class WirelessWDAService: @unchecked Sendable {
         let output: String
     }
 
+    static let installedLaunchReadyTimeout: Duration = .seconds(45)
+    static let extraReadyTimeout: Duration = .seconds(30)
+    static let existingProcessReadyTimeout: Duration = .seconds(45)
+
     private let lock = NSLock()
     private var remoteProcess: RemoteProcess?
     private var cachedEndpoint: WirelessWDAEndpoint?
@@ -153,11 +157,24 @@ final class WirelessWDAService: @unchecked Sendable {
         configuration: AppiumControlConfiguration,
         progress: @escaping @Sendable (WirelessWDAProgress) async -> Void = { _ in }
     ) async throws -> WirelessWDAEndpoint {
+        try await WirelessWDAEnsureGate.shared.run(udid: device.udid) {
+            try await self.ensureRunningUniquely(
+                device: device,
+                configuration: configuration,
+                progress: progress
+            )
+        }
+    }
+
+    private func ensureRunningUniquely(
+        device: WirelessDeviceMetadata,
+        configuration: AppiumControlConfiguration,
+        progress: @escaping @Sendable (WirelessWDAProgress) async -> Void
+    ) async throws -> WirelessWDAEndpoint {
         // CoreDevice endpoints are dynamic. Prefer the current tunnel address,
         // but retain every devicectl-provided hostname as a generic fallback.
-        // Never cache one candidate across a discovery generation.
         guard device.isTunnelConnected else { throw WirelessWDAError.deviceUnavailable }
-        let baseURLs = Self.candidateBaseURLs(for: device)
+        let baseURLs = probeURLs(for: device)
         guard !baseURLs.isEmpty else { throw WirelessWDAError.deviceUnavailable }
         if await Self.isLocalNetworkDenied(hostname: device.preferredEndpointHost) {
             throw WirelessWDAError.localNetworkDenied
@@ -179,6 +196,15 @@ final class WirelessWDAService: @unchecked Sendable {
             return endpoint
         }
 
+        if lock.withLock({ remoteProcess }) != nil {
+            await progress(.waitingForAgent)
+            if let endpoint = await Self.waitUntilReady(baseURLs, timeout: Self.existingProcessReadyTimeout) {
+                remember(endpoint)
+                await progress(.connectingVideo)
+                return endpoint
+            }
+        }
+
         let isolated = configuration.isolated(forDeviceUDID: device.udid)
         let team = isolated.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !team.isEmpty else { throw WirelessWDAError.missingSigningTeam }
@@ -186,24 +212,26 @@ final class WirelessWDAService: @unchecked Sendable {
         guard !bundleID.isEmpty else { throw WirelessWDAError.missingSigningTeam }
 
         await progress(.launchingInstalledAgent)
-        if let installedProcess = try? await Task.detached(priority: .userInitiated, operation: {
-            try Self.launchInstalledRunner(udid: device.udid, bundleID: bundleID)
-        }).value {
-            lock.withLock { remoteProcess = installedProcess }
+        let launched: RemoteProcess?
+        do {
+            launched = try await Task.detached(priority: .userInitiated, operation: {
+                try Self.launchInstalledRunner(udid: device.udid, bundleID: bundleID)
+            }).value
+            lock.withLock { remoteProcess = launched }
+        } catch {
+            launched = nil
+        }
+
+        if launched != nil {
             await progress(.waitingForAgent)
-            if let endpoint = await Self.waitUntilReady(baseURLs, timeout: .seconds(15)) {
+            if let endpoint = await waitForReadyWithoutReinstalling(baseURLs) {
                 remember(endpoint)
                 await progress(.connectingVideo)
                 return endpoint
             }
-            await Task.detached(priority: .utility) {
-                try? Self.terminate(installedProcess)
-            }.value
-            lock.withLock {
-                if remoteProcess?.pid == installedProcess.pid {
-                    remoteProcess = nil
-                }
-            }
+            // A launched runner that has not answered /status is still starting.
+            // Reinstalling it kills the process the video plane is waiting on.
+            throw WirelessWDAError.timedOut
         }
 
         await progress(.preparingAgent)
@@ -214,22 +242,55 @@ final class WirelessWDAService: @unchecked Sendable {
             )
         }.value
         await progress(.installingAgent)
-        let launched = try await Task.detached(priority: .userInitiated) {
+        let installed = try await Task.detached(priority: .userInitiated) {
             try Self.installAndLaunch(
                 runner: preparedRunner,
                 udid: device.udid,
                 bundleID: bundleID
             )
         }.value
-        lock.withLock { remoteProcess = launched }
+        lock.withLock { remoteProcess = installed }
         await progress(.waitingForAgent)
 
-        if let endpoint = await Self.waitUntilReady(baseURLs, timeout: .seconds(20)) {
+        if let endpoint = await waitForReadyWithoutReinstalling(baseURLs) {
             remember(endpoint)
             await progress(.connectingVideo)
             return endpoint
         }
         throw WirelessWDAError.timedOut
+    }
+
+    private func waitForReadyWithoutReinstalling(_ baseURLs: [URL]) async -> WirelessWDAEndpoint? {
+        if let endpoint = await Self.waitUntilReady(baseURLs, timeout: Self.installedLaunchReadyTimeout) {
+            return endpoint
+        }
+        return await Self.waitUntilReady(baseURLs, timeout: Self.extraReadyTimeout)
+    }
+
+    private func probeURLs(for device: WirelessDeviceMetadata) -> [URL] {
+        var urls = Self.candidateBaseURLs(for: device)
+        if let cached = lock.withLock({ cachedEndpoint }) {
+            if !urls.contains(cached.controlURL) {
+                urls.insert(cached.controlURL, at: 0)
+            }
+            if let videoControl = Self.controlURL(host: cached.videoHost),
+               !urls.contains(videoControl) {
+                urls.append(videoControl)
+            }
+        }
+        return urls
+    }
+
+    nonisolated static func controlURL(host: String) -> URL? {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = trimmed.contains(":") && !(trimmed.hasPrefix("[") && trimmed.hasSuffix("]"))
+            ? "[\(trimmed)]"
+            : trimmed
+        components.port = 8_100
+        return components.url
     }
 
     func stop() {
@@ -651,6 +712,27 @@ final class WirelessWDAService: @unchecked Sendable {
                 completion.finish(false)
             }
         }
+    }
+}
+
+private actor WirelessWDAEnsureGate {
+    static let shared = WirelessWDAEnsureGate()
+
+    private var inFlight: [String: Task<WirelessWDAEndpoint, Error>] = [:]
+
+    func run(
+        udid: String,
+        body: @escaping @Sendable () async throws -> WirelessWDAEndpoint
+    ) async throws -> WirelessWDAEndpoint {
+        if let existing = inFlight[udid] {
+            return try await existing.value
+        }
+        let task = Task {
+            try await body()
+        }
+        inFlight[udid] = task
+        defer { inFlight[udid] = nil }
+        return try await task.value
     }
 }
 

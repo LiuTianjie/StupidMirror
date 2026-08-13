@@ -126,7 +126,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     @Published private(set) var connectionPhase: ControlConnectionPhase?
     @Published private(set) var connectionStartedAt: Date?
 
-    private let device: DeviceIdentity
+    private var device: DeviceIdentity
     private var sessionID: String?
     private var sessionServerURL: String?
     private var connectionTask: Task<Void, Never>?
@@ -138,6 +138,10 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     private var generation: UInt64 = 0
 
     init(device: DeviceIdentity) {
+        self.device = device
+    }
+
+    func updateDevice(_ device: DeviceIdentity) {
         self.device = device
     }
 
