@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct LicenseActivationView: View {
@@ -53,7 +54,7 @@ struct LicenseActivationView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                purchasePlaceholder
+                purchaseQRCode
 
                 HStack {
                     Spacer()
@@ -99,16 +100,21 @@ struct LicenseActivationView: View {
         }
     }
 
-    private var purchasePlaceholder: some View {
+    private var purchaseQRCode: some View {
         HStack(spacing: Theme.Spacing.md) {
-            Image(systemName: "qrcode")
-                .font(.system(size: 48))
-                .frame(width: 64, height: 64)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            if let image = Self.xiaohongshuQRCodeImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .frame(width: 132, height: 132)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(store.t("license.purchase.title"))
                     .font(.headline)
-                Text(store.t("license.purchase.placeholder"))
+                Text(store.t("license.purchase.help"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -117,6 +123,36 @@ struct LicenseActivationView: View {
         .padding(12)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
     }
+
+    private static let xiaohongshuQRCodeImage: NSImage? = {
+        guard
+            let url = Bundle.module.url(
+                forResource: "xiaohongshu-purchase-card",
+                withExtension: "jpg"
+            ),
+            let source = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+
+        var sourceRect = NSRect(origin: .zero, size: source.size)
+        guard let sourceImage = source.cgImage(forProposedRect: &sourceRect, context: nil, hints: nil) else {
+            return nil
+        }
+
+        // Keep the uploaded profile card intact in the bundle and crop only for
+        // presentation. These bounds include the QR code's required white margin.
+        let cropRect = CGRect(
+            x: CGFloat(sourceImage.width) * 0.6727,
+            y: CGFloat(sourceImage.height) * 0.7579,
+            width: CGFloat(sourceImage.width) * 0.2634,
+            height: CGFloat(sourceImage.height) * 0.1930
+        ).integral
+        guard let qrCode = sourceImage.cropping(to: cropRect) else {
+            return nil
+        }
+        return NSImage(cgImage: qrCode, size: NSSize(width: qrCode.width, height: qrCode.height))
+    }()
 
     private func submit() {
         guard !licenseManager.isActivating else { return }

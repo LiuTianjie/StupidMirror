@@ -34,7 +34,10 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")
             ],
-            path: "Sources/StupidMirrorApp"
+            path: "Sources/StupidMirrorApp",
+            resources: [
+                .process("Resources")
+            ]
         ),
         .testTarget(
             name: "StupidMirrorAppTests",

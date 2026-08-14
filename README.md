@@ -33,7 +33,7 @@ a direct H.264 video and PCM audio stream from a pinned scrcpy server.
 - Bundled Mac-side Appium runtime for packaged release builds.
 - Free one-device mirroring with one-time activation for simultaneous
   multi-device mirroring and device control. Activation uses a private Supabase
-  license service; the purchase QR area is currently an explicit placeholder.
+  license service, with purchase access available through Xiaohongshu.
 - Local probes for AVFoundation discovery, frame capture, device discovery, and
   WebDriverAgent readiness.
 
