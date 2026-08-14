@@ -83,6 +83,10 @@ enum AVFoundationMirrorBackend {
         AVCaptureDevice.authorizationStatus(for: .video)
     }
 
+    static func audioAuthorizationStatus() -> AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
     // Kept as a compatibility alias while callers migrate to the explicit API.
     static func authorizationStatus() -> AVAuthorizationStatus {
         videoAuthorizationStatus()
@@ -90,6 +94,10 @@ enum AVFoundationMirrorBackend {
 
     static func requestVideoAccess() async -> Bool {
         await permissionRequestCoordinator.requestAccess(for: .video)
+    }
+
+    static func requestAudioAccess() async -> Bool {
+        await permissionRequestCoordinator.requestAccess(for: .audio)
     }
 
     static func warmUpDiscovery() {

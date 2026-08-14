@@ -57,7 +57,9 @@ final class PreviewContainerView: NSView {
     fileprivate lazy var videoFrameRelay = LatestMainQueueRelay<CMSampleBuffer> { [weak self] sampleBuffer in
         self?.enqueueVideo(sampleBuffer)
     }
-    fileprivate let audioSampleBufferRelay = AudioSampleBufferRelay()
+    fileprivate lazy var audioSampleBufferRelay = AudioSampleBufferRelay(
+        synchronizer: renderSynchronizer
+    )
 
     var cornerRadius: CGFloat = 0 {
         didSet {
@@ -76,7 +78,9 @@ final class PreviewContainerView: NSView {
         layer?.addSublayer(displayLayer)
         layer?.mask = maskLayer
         renderSynchronizer.addRenderer(audioSampleBufferRelay.renderer)
-        renderSynchronizer.rate = 1.0
+        renderSynchronizer.delaysRateChangeUntilHasSufficientMediaData = false
+        audioSampleBufferRelay.renderer.volume = 1.0
+        audioSampleBufferRelay.renderer.isMuted = false
     }
 
     required init?(coder: NSCoder) {
@@ -250,8 +254,14 @@ final class LatestMainQueueRelay<Value>: @unchecked Sendable {
 final class AudioSampleBufferRelay: @unchecked Sendable {
     let renderer = AVSampleBufferAudioRenderer()
 
+    private let synchronizer: AVSampleBufferRenderSynchronizer
     private let lock = NSLock()
     private var active = true
+    private var enqueuedSampleCount = 0
+
+    init(synchronizer: AVSampleBufferRenderSynchronizer) {
+        self.synchronizer = synchronizer
+    }
 
     func enqueue(_ sampleBuffer: CMSampleBuffer) {
         lock.lock()
@@ -263,6 +273,11 @@ final class AudioSampleBufferRelay: @unchecked Sendable {
             return
         }
         if renderer.isReadyForMoreMediaData {
+            enqueuedSampleCount += 1
+            if enqueuedSampleCount == 1 {
+                let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                synchronizer.setRate(1.0, time: presentationTime)
+            }
             renderer.enqueue(sampleBuffer)
         }
     }

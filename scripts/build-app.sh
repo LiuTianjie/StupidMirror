@@ -107,6 +107,8 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <true/>
   <key>NSCameraUsageDescription</key>
   <string>StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>StupidMirror uses microphone access to receive and play the audio track of an iPhone connected over USB.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>StupidMirror uses the local network to connect to Xcode-paired iPhones when wireless mode is enabled.</string>
   <key>NSHighResolutionCapable</key>
@@ -138,10 +140,12 @@ fi
 cp "$purchase_qr_path" "${resources_path}/xiaohongshu-purchase-card.jpg"
 cat > "${resources_path}/en.lproj/InfoPlist.strings" <<'STRINGS'
 "NSCameraUsageDescription" = "StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.";
+"NSMicrophoneUsageDescription" = "StupidMirror uses microphone access to receive and play the audio track of an iPhone connected over USB.";
 "NSLocalNetworkUsageDescription" = "StupidMirror uses the local network to connect to Xcode-paired iPhones when wireless mode is enabled.";
 STRINGS
 cat > "${resources_path}/zh-Hans.lproj/InfoPlist.strings" <<'STRINGS'
 "NSCameraUsageDescription" = "StupidMirror 使用相机权限接收通过 USB 连接的 iPhone 视频画面，不会采集 Mac 摄像头。";
+"NSMicrophoneUsageDescription" = "StupidMirror 使用麦克风权限接收并播放通过 USB 连接的 iPhone 音轨。";
 "NSLocalNetworkUsageDescription" = "启用无线模式后，StupidMirror 会通过本地网络连接已在 Xcode 配对的 iPhone。";
 STRINGS
 
@@ -169,6 +173,7 @@ assert_true_entitlement() {
 
 assert_nonempty_plist_value "${contents_path}/Info.plist" CFBundleIdentifier
 assert_nonempty_plist_value "${contents_path}/Info.plist" NSCameraUsageDescription
+assert_nonempty_plist_value "${contents_path}/Info.plist" NSMicrophoneUsageDescription
 
 if [ "$skip_codesign" != "true" ] && command -v codesign >/dev/null 2>&1; then
   if [ -z "$entitlements" ] || [ ! -f "$entitlements" ]; then
@@ -176,6 +181,7 @@ if [ "$skip_codesign" != "true" ] && command -v codesign >/dev/null 2>&1; then
     exit 1
   fi
   assert_true_entitlement "$entitlements" com.apple.security.device.camera
+  assert_true_entitlement "$entitlements" com.apple.security.device.audio-input
   if [ "$bundle_appium" = "true" ]; then
     if [ ! -f "$node_entitlements" ]; then
       echo "Node runtime entitlements file not found: ${node_entitlements}" >&2

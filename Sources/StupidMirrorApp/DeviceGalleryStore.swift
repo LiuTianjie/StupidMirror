@@ -45,7 +45,9 @@ final class DeviceGalleryStore: ObservableObject {
 
     @Published private(set) var sessions: [DeviceSession] = []
     @Published private(set) var permissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
+    @Published private(set) var microphonePermissionStatus: AVAuthorizationStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
     @Published private(set) var isRequestingCameraPermission = false
+    @Published private(set) var isRequestingMicrophonePermission = false
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var statusMessage: String = AppCopy.text("status.ready", language: DeviceGalleryStore.initialLanguage)
     @Published private(set) var thumbnails: [String: NSImage] = [:]
@@ -200,6 +202,7 @@ final class DeviceGalleryStore: ObservableObject {
         let androidRuntime = AndroidRuntime.status
         return [
             DiagnosticItem(name: t("diagnostic.camera"), value: authorizationLabel(permissionStatus)),
+            DiagnosticItem(name: t("diagnostic.microphone"), value: authorizationLabel(microphonePermissionStatus)),
             DiagnosticItem(
                 name: t("diagnostic.backend"),
                 value: wirelessMirroringEnabled
@@ -271,6 +274,10 @@ final class DeviceGalleryStore: ObservableObject {
         return hasCameraIndependentConnectedDevice ? .banner : .fullPage
     }
 
+    var needsIOSAudioPermission: Bool {
+        hasConnectedIOSDevice && microphonePermissionStatus != .authorized
+    }
+
     private var deviceControlDiagnosticLabel: String {
         if sessions.contains(where: { $0.controlSession.isReady }) {
             return t("control.state.ready")
@@ -314,6 +321,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     func refreshIfCameraAuthorized() {
         permissionStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
+        microphonePermissionStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
         if permissionStatus != .authorized && !wirelessMirroringEnabled {
             statusMessage = t("status.permissionRequired")
         }
@@ -441,6 +449,28 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
+    func openMicrophonePrivacySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    func requestMicrophonePermission() async {
+        guard !isRequestingMicrophonePermission else { return }
+        isRequestingMicrophonePermission = true
+        defer { isRequestingMicrophonePermission = false }
+        let granted = await AVFoundationMirrorBackend.requestAudioAccess()
+        updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
+        if granted {
+            audioPlaybackEnabled = true
+        }
+    }
+
+    func recheckMicrophonePermission() {
+        updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
+    }
+
     private func updateCameraPermissionStatus(_ status: AVAuthorizationStatus) {
         let previous = permissionStatus
         permissionStatus = status
@@ -489,25 +519,34 @@ final class DeviceGalleryStore: ObservableObject {
         refresh()
     }
 
+    private func updateMicrophonePermissionStatus(_ status: AVAuthorizationStatus) {
+        microphonePermissionStatus = status
+        applyAudioPlaybackPreference()
+    }
+
     private func applyAudioPlaybackPreference() {
         for session in sessions {
-            let audioEnabled = Self.shouldCaptureDeviceAudio(
-                platform: session.platform,
-                playbackEnabled: audioPlaybackEnabled
-            )
+            let audioEnabled = session.platform == .android
+                ? audioPlaybackEnabled
+                : Self.shouldCaptureAudio(
+                    playbackEnabled: audioPlaybackEnabled,
+                    authorizationStatus: microphonePermissionStatus
+                  )
             session.mirrorSession.setAudioEnabled(audioEnabled)
         }
     }
 
     func enableAudioPlayback() async {
         audioPlaybackEnabled = true
+        guard needsIOSAudioPermission else { return }
+        await requestMicrophonePermission()
     }
 
-    nonisolated static func shouldCaptureDeviceAudio(
-        platform: DevicePlatform,
-        playbackEnabled: Bool
+    nonisolated static func shouldCaptureAudio(
+        playbackEnabled: Bool,
+        authorizationStatus: AVAuthorizationStatus
     ) -> Bool {
-        platform == .android && playbackEnabled
+        playbackEnabled && authorizationStatus == .authorized
     }
 
     func refresh() {
@@ -648,9 +687,9 @@ final class DeviceGalleryStore: ObservableObject {
                 rebaseSession(&existing, to: identity)
                 existing.adoptUSB(identity: identity, captureDevice: captureDevice)
                 existing.device.connectionState = identity.connectionState
-                existing.mirrorSession.setAudioEnabled(Self.shouldCaptureDeviceAudio(
-                    platform: existing.platform,
-                    playbackEnabled: audioPlaybackEnabled
+                existing.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
+                    playbackEnabled: audioPlaybackEnabled,
+                    authorizationStatus: microphonePermissionStatus
                 ))
                 disconnectedSince[existing.id] = nil
                 if shouldResume {
@@ -663,9 +702,9 @@ final class DeviceGalleryStore: ObservableObject {
                 claim(existing)
             } else {
                 let session = DeviceSession(device: identity, captureDevice: captureDevice)
-                session.mirrorSession.setAudioEnabled(Self.shouldCaptureDeviceAudio(
-                    platform: session.platform,
-                    playbackEnabled: audioPlaybackEnabled
+                session.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
+                    playbackEnabled: audioPlaybackEnabled,
+                    authorizationStatus: microphonePermissionStatus
                 ))
                 nextSessions.append(session)
                 claim(session)
@@ -1904,6 +1943,7 @@ final class DeviceGalleryStore: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.updateCameraPermissionStatus(AVFoundationMirrorBackend.videoAuthorizationStatus())
+                self.updateMicrophonePermissionStatus(AVFoundationMirrorBackend.audioAuthorizationStatus())
                 self.refresh()
             }
         }
