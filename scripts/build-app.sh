@@ -34,6 +34,7 @@ trap 'rm -rf -- "$build_work_dir"' EXIT
 contents_path="${app_path}/Contents"
 macos_path="${contents_path}/MacOS"
 icon_path="${ICON_PATH:-Assets/AppIcon.icns}"
+purchase_qr_path="${PURCHASE_QR_PATH:-Sources/StupidMirrorApp/Resources/xiaohongshu-purchase-card.jpg}"
 
 xml_escape() {
   local value="$1"
@@ -130,6 +131,11 @@ PLIST
 
 resources_path="${contents_path}/Resources"
 mkdir -p "${resources_path}/en.lproj" "${resources_path}/zh-Hans.lproj"
+if [ ! -s "$purchase_qr_path" ]; then
+  echo "Purchase QR resource not found: ${purchase_qr_path}" >&2
+  exit 1
+fi
+cp "$purchase_qr_path" "${resources_path}/xiaohongshu-purchase-card.jpg"
 cat > "${resources_path}/en.lproj/InfoPlist.strings" <<'STRINGS'
 "NSCameraUsageDescription" = "StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.";
 "NSLocalNetworkUsageDescription" = "StupidMirror uses the local network to connect to Xcode-paired iPhones when wireless mode is enabled.";

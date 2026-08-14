@@ -126,7 +126,10 @@ struct LicenseActivationView: View {
 
     private static let xiaohongshuQRCodeImage: NSImage? = {
         guard
-            let url = Bundle.module.url(
+            let url = Bundle.main.url(
+                forResource: "xiaohongshu-purchase-card",
+                withExtension: "jpg"
+            ) ?? Bundle.module.url(
                 forResource: "xiaohongshu-purchase-card",
                 withExtension: "jpg"
             ),

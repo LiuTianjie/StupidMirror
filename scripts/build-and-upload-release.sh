@@ -14,6 +14,7 @@ official_uiautomator2_driver_version="8.2.2"
 official_remote_xpc_version="5.13.2"
 official_scrcpy_server_version="4.1"
 official_scrcpy_server_sha256="deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae"
+official_purchase_qr_sha256="5b81d8cef5e28b4b43f9783eb90c5900650352e98049413c242882bcd57dd346"
 tag="${1:-${TAG:-}}"
 version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
@@ -164,6 +165,7 @@ assert_release_app() {
   local bundled_node="${app}/Contents/Resources/Appium/bin/node"
   local bundled_runtime="${app}/Contents/Resources/Appium"
   local bundled_android_runtime="${app}/Contents/Resources/Android"
+  local bundled_purchase_qr="${app}/Contents/Resources/xiaohongshu-purchase-card.jpg"
   local nested_binary
   local nested_team_id
   local nested_count=0
@@ -216,6 +218,16 @@ assert_release_app() {
       fi
     done
   done
+
+  if [ ! -s "$bundled_purchase_qr" ]; then
+    echo "Release does not contain the Xiaohongshu purchase QR resource." >&2
+    exit 1
+  fi
+  value="$(shasum -a 256 "$bundled_purchase_qr" | awk '{print $1}')"
+  if [ "$value" != "$official_purchase_qr_sha256" ]; then
+    echo "Bundled purchase QR checksum mismatch." >&2
+    exit 1
+  fi
 
   if ! codesign -d --entitlements :- "$app" > "$signed_entitlements" 2>/dev/null; then
     echo "Could not read signed release entitlements." >&2
