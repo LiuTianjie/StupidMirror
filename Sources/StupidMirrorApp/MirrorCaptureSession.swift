@@ -387,6 +387,14 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
+            // iPhone screen sources are muxed devices. Even when the session
+            // only connects a video output, their audio input port is enabled
+            // by default, which makes iOS hand audio ownership to the capture
+            // route and silences the phone speaker. Disable the port itself;
+            // merely omitting AVCaptureAudioDataOutput is not sufficient.
+            for port in input.ports where port.mediaType == .audio {
+                port.isEnabled = false
+            }
             guard captureSession.canAddInput(input) else {
                 throw MirrorError.cannotAddInput
             }
