@@ -60,10 +60,10 @@ not have the right to license on both of those terms.
 ## Device and Permission Notes
 
 The app needs Camera permission because USB iPhone screen sources are exposed
-through AVFoundation capture APIs. Microphone permission is optional and must
-not block video-only mirroring. Permission requests belong behind explicit user
-actions, must coalesce concurrent requests, and must never be triggered during
-startup or periodic refresh.
+through AVFoundation capture APIs. iPhone mirroring must remain video-only so
+audio continues playing on the phone. Permission requests belong behind
+explicit user actions, must coalesce concurrent requests, and must never be
+triggered during startup or periodic refresh.
 
 Contributors testing permission flows should check both the packaged app and
 `swift run`, because macOS stores permissions per binary/app identity. Public

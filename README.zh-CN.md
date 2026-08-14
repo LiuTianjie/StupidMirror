@@ -34,7 +34,7 @@ Android 11 及以上设备通过 ADB 发现，并通过固定版本的 scrcpy se
 
 - macOS 15 或更高版本。
 - 信任当前 Mac 的 iPhone；首次无线配置需要 USB。
-- USB 镜像需要相机权限；播放 iPhone 音频时需要可选的麦克风权限。
+- USB 镜像需要相机权限；iPhone 镜像只同步画面，声音继续在 iPhone 上播放。
 - 真机控制需要 iPhone 开启开发者模式 / UI Automation，并允许当前 Mac
   使用有效 Apple Development 身份签名 WebDriverAgentRunner。
 - Android 需要 Android 11 或更高版本、开启 USB 调试，并在 Mac 安装 Android

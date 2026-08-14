@@ -68,9 +68,9 @@ Before an artifact is uploaded, the release script asserts:
 
 - the fixed bundle ID and signing Team ID;
 - the fixed HTTPS license endpoint and non-secret Supabase publishable key;
-- non-empty Camera and Microphone usage descriptions in the base, English, and
-  Simplified Chinese resources;
-- Camera and audio-input entitlements on the app;
+- a non-empty Camera usage description in the base, English, and Simplified
+  Chinese resources;
+- the Camera entitlement on the app;
 - explicit valid signatures on bundled Node and native helpers, plus Node JIT
   entitlements;
 - sealed resources, notarization and stapling, Gatekeeper assessment, and

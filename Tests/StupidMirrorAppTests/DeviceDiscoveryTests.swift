@@ -37,18 +37,18 @@ final class DeviceDiscoveryTests: XCTestCase {
         )
     }
 
-    func testAudioCaptureRequiresBothExplicitPreferenceAndAuthorization() {
-        XCTAssertFalse(DeviceGalleryStore.shouldCaptureAudio(
-            playbackEnabled: false,
-            authorizationStatus: .authorized
+    func testOnlyAndroidCanAttachDeviceAudio() {
+        XCTAssertFalse(DeviceGalleryStore.shouldCaptureDeviceAudio(
+            platform: .iOS,
+            playbackEnabled: true
         ))
-        XCTAssertFalse(DeviceGalleryStore.shouldCaptureAudio(
-            playbackEnabled: true,
-            authorizationStatus: .notDetermined
+        XCTAssertFalse(DeviceGalleryStore.shouldCaptureDeviceAudio(
+            platform: .android,
+            playbackEnabled: false
         ))
-        XCTAssertTrue(DeviceGalleryStore.shouldCaptureAudio(
-            playbackEnabled: true,
-            authorizationStatus: .authorized
+        XCTAssertTrue(DeviceGalleryStore.shouldCaptureDeviceAudio(
+            platform: .android,
+            playbackEnabled: true
         ))
     }
 

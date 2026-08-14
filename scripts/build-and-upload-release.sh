@@ -184,7 +184,7 @@ assert_release_app() {
     exit 1
   fi
 
-  for key in NSCameraUsageDescription NSMicrophoneUsageDescription; do
+  for key in NSCameraUsageDescription; do
     value="$(/usr/libexec/PlistBuddy -c "Print :${key}" "$info_plist" 2>/dev/null || true)"
     if [ -z "$value" ]; then
       echo "Release Info.plist is missing a non-empty ${key}." >&2
@@ -209,7 +209,7 @@ assert_release_app() {
       echo "Release is missing a valid ${locale} InfoPlist.strings file." >&2
       exit 1
     fi
-    for key in NSCameraUsageDescription NSMicrophoneUsageDescription; do
+    for key in NSCameraUsageDescription; do
       if ! plutil -p "$strings_file" | grep -q "\"${key}\""; then
         echo "Release ${locale} InfoPlist.strings is missing ${key}." >&2
         exit 1
@@ -221,7 +221,7 @@ assert_release_app() {
     echo "Could not read signed release entitlements." >&2
     exit 1
   fi
-  for key in com.apple.security.device.camera com.apple.security.device.audio-input; do
+  for key in com.apple.security.device.camera; do
     value="$(/usr/libexec/PlistBuddy -c "Print :${key}" "$signed_entitlements" 2>/dev/null || true)"
     if [ "$value" != "true" ]; then
       echo "Signed release is missing required entitlement ${key}." >&2

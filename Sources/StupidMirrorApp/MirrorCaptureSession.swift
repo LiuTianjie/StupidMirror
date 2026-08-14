@@ -4,7 +4,7 @@ import Combine
 import CoreImage
 import Foundation
 
-final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     let captureSession = AVCaptureSession()
     private(set) var device: AVCaptureDevice?
     private(set) var wirelessEndpointURL: URL?
@@ -23,12 +23,10 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private let sessionQueue = DispatchQueue(label: "stupidmirror.capture.session")
     private let sessionQueueKey = DispatchSpecificKey<UInt8>()
     private let videoOutput = AVCaptureVideoDataOutput()
-    private let audioOutput = AVCaptureAudioDataOutput()
     private let sampleBufferConsumerLock = NSLock()
     private var videoSampleBufferConsumer: (@Sendable (CMSampleBuffer) -> Void)?
     private var audioSampleBufferConsumer: (@Sendable (CMSampleBuffer) -> Void)?
     private var configured = false
-    private var audioEnabled = false
     private var disposed = false
     private var lastObservedAspectRatio: Double?
     private var wirelessSRTStream: WirelessSRTH264Stream?
@@ -166,7 +164,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             do {
                 guard !disposed else { throw MirrorError.disposed }
                 try configureIfNeeded()
-                applyAudioEnabledOnSessionQueue()
                 if !captureSession.isRunning {
                     captureSession.startRunning()
                 }
@@ -350,9 +347,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         automationActions.removeAll(keepingCapacity: true)
     }
 
-    /// Audio capture is opt-in so merely opening a mirror cannot implicitly
-    /// trigger microphone access. Callers should only enable it after the
-    /// system reports audio capture as authorized.
+    /// Android audio is optional. iPhone mirroring is deliberately video-only
+    /// so the phone keeps ownership of and continues playing its own audio.
     nonisolated func setAudioEnabled(_ enabled: Bool) {
         sampleBufferConsumerLock.lock()
         let androidAudioChanged = androidAudioEnabled != enabled
@@ -366,13 +362,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 self?.restartAndroidForAudioPreferenceChange()
             }
             return
-        }
-        sessionQueue.async { [self] in
-            guard !disposed else { return }
-            audioEnabled = enabled
-            if configured {
-                applyAudioEnabledOnSessionQueue()
-            }
         }
     }
 
@@ -428,24 +417,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         }
     }
 
-    private func applyAudioEnabledOnSessionQueue() {
-        let hasAudioOutput = captureSession.outputs.contains { $0 === audioOutput }
-
-        if audioEnabled {
-            guard !hasAudioOutput, captureSession.canAddOutput(audioOutput) else { return }
-            captureSession.beginConfiguration()
-            audioOutput.setSampleBufferDelegate(self, queue: sessionQueue)
-            captureSession.addOutput(audioOutput)
-            captureSession.commitConfiguration()
-        } else {
-            audioOutput.setSampleBufferDelegate(nil, queue: nil)
-            guard hasAudioOutput else { return }
-            captureSession.beginConfiguration()
-            captureSession.removeOutput(audioOutput)
-            captureSession.commitConfiguration()
-        }
-    }
-
     private func stopRunningOnSessionQueue() {
         if captureSession.isRunning {
             captureSession.stopRunning()
@@ -454,7 +425,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     private func tearDownOnSessionQueue() {
         videoOutput.setSampleBufferDelegate(nil, queue: nil)
-        audioOutput.setSampleBufferDelegate(nil, queue: nil)
         stopRunningOnSessionQueue()
 
         guard configured || !captureSession.inputs.isEmpty || !captureSession.outputs.isEmpty else { return }
@@ -716,15 +686,6 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     // Reads frame dimensions off the capture stream and reports aspect
     // ratio only when it actually changes (e.g. the device rotates).
     nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        if output === audioOutput {
-            guard audioEnabled else { return }
-            sampleBufferConsumerLock.lock()
-            let consumer = audioSampleBufferConsumer
-            sampleBufferConsumerLock.unlock()
-            consumer?(sampleBuffer)
-            return
-        }
-
         latestFrameStore.submit(sampleBuffer)
 
         sampleBufferConsumerLock.lock()

@@ -51,10 +51,9 @@ macOS exposes USB iPhone screen sources through AVFoundation capture APIs, so th
 app needs Camera permission. This permission is used to read the iPhone screen
 source, not to capture a Mac webcam.
 
-Microphone permission is optional and is used only to receive the connected
-iPhone's audio track. Declining it does not block video mirroring; StupidMirror
-leaves audio disconnected. The app checks permission state at launch but only
-asks macOS for Camera or Microphone access after an explicit user action.
+iPhone mirroring is video-only. StupidMirror does not request Microphone
+permission or attach the iPhone audio track, so audio remains on the iPhone.
+The app only asks macOS for Camera access after an explicit user action.
 
 ## User Responsibility
 

@@ -32,11 +32,6 @@ final class AppLocalizationTests: XCTestCase {
             "permission.requesting",
             "permission.usbBanner.title",
             "permission.usbBanner.body",
-            "permission.microphone.title",
-            "permission.microphone.body.notDetermined",
-            "permission.microphone.body.denied",
-            "permission.microphone.requestAccess",
-            "permission.microphone.openSettings",
             "status.controlPreparingAgent",
             "status.controlSetupRequired",
             "status.controlAppiumUnavailable",
@@ -111,8 +106,7 @@ final class AppLocalizationTests: XCTestCase {
             "control.error.unlockDevice",
             "control.error.signing",
             "status.deviceDisconnectedRefreshing",
-            "diagnostic.mirror",
-            "diagnostic.microphone"
+            "diagnostic.mirror"
         ]
     }
 }
