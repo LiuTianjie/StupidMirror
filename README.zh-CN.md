@@ -34,8 +34,9 @@ Android 11 及以上设备通过 ADB 发现，并通过固定版本的 scrcpy se
 
 - macOS 15 或更高版本。
 - 信任当前 Mac 的 iPhone；首次无线配置需要 USB。
-- USB 镜像需要相机权限。开始捕捉后，iOS 会把声音切换到 macOS 的系统捕捉；
-  开启“在 Mac 上播放设备声音”并授予麦克风权限后，可由 Mac 播放这路声音。
+- USB 镜像需要相机权限。iPhone 屏幕源是音视频混合设备：音频口一旦打开，
+  iOS 就会把播放权交给 Mac 并关掉手机扬声器。默认关闭“在 Mac 上播放设备
+  声音”，声音留在 iPhone；打开该开关并授予麦克风权限后，才投到这台 Mac。
 - 真机控制需要 iPhone 开启开发者模式 / UI Automation，并允许当前 Mac
   使用有效 Apple Development 身份签名 WebDriverAgentRunner。
 - Android 需要 Android 11 或更高版本、开启 USB 调试，并在 Mac 安装 Android

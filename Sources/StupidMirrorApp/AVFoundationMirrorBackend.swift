@@ -158,6 +158,36 @@ enum AVFoundationMirrorBackend {
     }
 }
 
+/// USB iPhone screens are CoreMediaIO muxed devices (video + audio).
+///
+/// iOS treats an enabled audio port as a live USB playback destination and
+/// mutes the phone speaker. Omitting `AVCaptureAudioDataOutput` is not enough:
+/// the default-enabled port still claims the route and the samples are
+/// discarded. Video-only mirroring must disable those ports; Mac playback
+/// enables them and actually consumes the buffers.
+enum IOSUSBAudioRouting {
+    static func shouldEnableMuxedAudioPorts(
+        playbackEnabled: Bool,
+        authorizationStatus: AVAuthorizationStatus
+    ) -> Bool {
+        playbackEnabled && authorizationStatus == .authorized
+    }
+
+    static func setMuxedAudioPortsEnabled(_ enabled: Bool, on input: AVCaptureDeviceInput) {
+        for port in input.ports where port.mediaType == .audio {
+            port.isEnabled = enabled
+        }
+    }
+
+    static func muxedAudioPortsAreEnabled(on input: AVCaptureDeviceInput) -> Bool {
+        input.ports.contains { $0.mediaType == .audio && $0.isEnabled }
+    }
+
+    static func hasMuxedAudioPorts(on input: AVCaptureDeviceInput) -> Bool {
+        input.ports.contains { $0.mediaType == .audio }
+    }
+}
+
 /// Keeps CoreMediaIO discovery sessions alive. Throwaway sessions often miss
 /// a just-attached iPhone muxed source until a later poll.
 private final class MuxedDeviceCatalog: @unchecked Sendable {

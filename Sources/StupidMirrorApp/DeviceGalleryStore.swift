@@ -537,16 +537,72 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func enableAudioPlayback() async {
+        if needsIOSAudioPermission {
+            await requestMicrophonePermission()
+            if microphonePermissionStatus != .authorized {
+                let androidCanPlayWithoutMicrophone = sessions.contains {
+                    $0.platform == .android
+                }
+                if !androidCanPlayWithoutMicrophone {
+                    audioPlaybackEnabled = false
+                    return
+                }
+            }
+        }
         audioPlaybackEnabled = true
-        guard needsIOSAudioPermission else { return }
-        await requestMicrophonePermission()
+    }
+
+    nonisolated static func shouldDeferUSBForWireless(
+        wirelessModeEnabled: Bool,
+        usbUDID: String?,
+        wirelessConnectedUDIDs: Set<String>
+    ) -> Bool {
+        guard wirelessModeEnabled, let usbUDID else { return false }
+        return wirelessConnectedUDIDs.contains(usbUDID)
+    }
+
+    nonisolated static func shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
+        transport: DeviceTransport,
+        platform: DevicePlatform,
+        isAndroid: Bool
+    ) -> Bool {
+        platform == .iOS && !isAndroid && transport == .wireless
+    }
+
+    nonisolated static func shouldStartUSBThumbnailCapture(
+        liveMirrorDesired: Bool,
+        mirrorState: MirrorState
+    ) -> Bool {
+        if liveMirrorDesired { return false }
+        switch mirrorState {
+        case .starting, .running:
+            return false
+        case .stopped, .failed:
+            return true
+        }
     }
 
     nonisolated static func shouldCaptureAudio(
         playbackEnabled: Bool,
         authorizationStatus: AVAuthorizationStatus
     ) -> Bool {
-        playbackEnabled && authorizationStatus == .authorized
+        IOSUSBAudioRouting.shouldEnableMuxedAudioPorts(
+            playbackEnabled: playbackEnabled,
+            authorizationStatus: authorizationStatus
+        )
+    }
+
+    var audioPlaybackToggle: Binding<Bool> {
+        Binding(
+            get: { self.audioPlaybackEnabled },
+            set: { enabled in
+                if enabled {
+                    Task { await self.enableAudioPlayback() }
+                } else {
+                    self.audioPlaybackEnabled = false
+                }
+            }
+        )
     }
 
     func refresh() {
@@ -634,6 +690,11 @@ final class DeviceGalleryStore: ObservableObject {
         var resumeIDs = Set<String>()
         var autoStartIDs = Set<String>()
         let now = Date()
+        let wirelessConnectedUDIDs: Set<String> = {
+            guard wirelessMirroringEnabled else { return [] }
+            guard case let .available(wirelessDevices) = wirelessDiscovery else { return [] }
+            return Set(wirelessDevices.filter(\.isTunnelConnected).map(\.udid))
+        }()
 
         func claim(_ session: DeviceSession) {
             claimedIDs.insert(session.id)
@@ -655,8 +716,15 @@ final class DeviceGalleryStore: ObservableObject {
                 captureCount: devices.count,
                 remaining: remaining
             )
-            guard !isRemovedDevice(identity.id),
-                  claimedIDs.insert(identity.id).inserted else { continue }
+            guard !isRemovedDevice(identity.id) else { continue }
+            if Self.shouldDeferUSBForWireless(
+                wirelessModeEnabled: wirelessMirroringEnabled,
+                usbUDID: identity.udid,
+                wirelessConnectedUDIDs: wirelessConnectedUDIDs
+            ) {
+                continue
+            }
+            guard claimedIDs.insert(identity.id).inserted else { continue }
             if let udid = identity.udid {
                 claimedIDs.insert(udid)
             }
@@ -767,8 +835,13 @@ final class DeviceGalleryStore: ObservableObject {
             }
         case .unavailable:
             // A failed devicectl poll is unknown, not "every wireless iPhone vanished".
+            // USB sessions still follow the regular disconnect path.
             remaining.removeAll { session in
-                guard session.platform == .iOS, session.androidDevice == nil else { return false }
+                guard Self.shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
+                    transport: session.transport,
+                    platform: session.platform,
+                    isAndroid: session.androidDevice != nil
+                ) else { return false }
                 guard !claimedIDs.contains(session.id) else { return false }
                 nextSessions.append(session)
                 claim(session)
@@ -1273,6 +1346,8 @@ final class DeviceGalleryStore: ObservableObject {
                     || session.transport == .wireless
                     || permissionStatus == .authorized else { continue }
             desiredMirrorIDs.insert(session.id)
+            thumbnailCaptures[session.id]?.cancel()
+            thumbnailCaptures[session.id] = nil
             prepareWirelessTransportIfNeeded(for: session)
             MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
         }
@@ -1301,20 +1376,30 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func prepareWirelessTransportIfNeeded(for session: DeviceSession) {
-        guard session.transport == .wireless,
+        guard desiredMirrorIDs.contains(session.id),
+              session.transport == .wireless,
               wirelessTransportTasks[session.id] == nil,
               let wirelessDevice = session.wirelessDevice,
               let wirelessWDA = session.wirelessWDA else { return }
 
         let sessionID = session.id
         let mirrorSession = session.mirrorSession
+        mirrorSession.onWirelessEndpointNeedsRefresh = { [weak self] in
+            guard let self,
+                  let current = self.sessions.first(where: { $0.id == sessionID }) else {
+                return
+            }
+            self.prepareWirelessTransportIfNeeded(for: current)
+        }
         wirelessTransportTasks[sessionID] = Task { @MainActor [weak self, weak wirelessWDA, weak mirrorSession] in
             await Task.yield()
             guard let self, let wirelessWDA, let mirrorSession, !self.isShuttingDown else { return }
             defer { self.wirelessTransportTasks[sessionID] = nil }
 
             await self.detectSigningTeams()
-            guard !Task.isCancelled, !self.isShuttingDown else { return }
+            guard !Task.isCancelled,
+                  !self.isShuttingDown,
+                  self.desiredMirrorIDs.contains(sessionID) else { return }
             do {
                 var resolvedEndpoint: WirelessWDAEndpoint?
                 var lastError: Error?
@@ -2044,7 +2129,20 @@ final class DeviceGalleryStore: ObservableObject {
             return
         }
         if session.transport == .wireless {
+            if let liveFrame = session.mirrorSession.latestWirelessFrame,
+               session.mirrorSession.state == .running || session.mirrorSession.state == .starting {
+                applyWirelessImageThumbnail(liveFrame, for: session)
+                return
+            }
             captureWirelessThumbnail(for: session)
+            return
+        }
+        if session.transport == .usb,
+           !Self.shouldStartUSBThumbnailCapture(
+            liveMirrorDesired: desiredMirrorIDs.contains(session.id),
+            mirrorState: session.mirrorSession.state
+           ) {
+            applyLiveUSBThumbnail(from: session)
             return
         }
         if session.mirrorSession.state == .running || session.mirrorSession.state == .starting {
@@ -2133,6 +2231,21 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
+    private func applyWirelessImageThumbnail(_ image: NSImage, for session: DeviceSession) {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+            thumbnails[session.id] = image
+            thumbnailAspectRatios[session.id] = max(
+                Double(image.size.width / max(image.size.height, 1)),
+                0.1
+            )
+            thumbnailErrors[session.id] = nil
+        }
+        MirrorWindowRegistry.shared.updateAspectRatio(
+            for: session,
+            aspectRatio: displayAspectRatio(for: session)
+        )
+    }
+
     private func captureWirelessThumbnail(for session: DeviceSession) {
         guard session.controlSession.isReady,
               wirelessThumbnailTasks[session.id] == nil else { return }
@@ -2147,14 +2260,8 @@ final class DeviceGalleryStore: ObservableObject {
                 guard let image = NSImage(data: data) else {
                     throw WirelessThumbnailError.invalidImage
                 }
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                    self.thumbnails[sessionID] = image
-                    self.thumbnailAspectRatios[sessionID] = max(
-                        Double(image.size.width / max(image.size.height, 1)),
-                        0.1
-                    )
-                    self.thumbnailErrors[sessionID] = nil
-                }
+                guard let session = self.sessions.first(where: { $0.id == sessionID }) else { return }
+                self.applyWirelessImageThumbnail(image, for: session)
             } catch is CancellationError {
                 return
             } catch {

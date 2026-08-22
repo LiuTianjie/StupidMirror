@@ -268,18 +268,19 @@ final class AudioSampleBufferRelay: @unchecked Sendable {
         defer { lock.unlock() }
         guard active else { return }
 
-        if renderer.status == .failed {
+        if renderer.status == .failed || !renderer.isReadyForMoreMediaData {
             renderer.flush()
-            return
+            enqueuedSampleCount = 0
         }
-        if renderer.isReadyForMoreMediaData {
-            enqueuedSampleCount += 1
-            if enqueuedSampleCount == 1 {
-                let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-                synchronizer.setRate(1.0, time: presentationTime)
-            }
-            renderer.enqueue(sampleBuffer)
+        enqueuedSampleCount += 1
+        if enqueuedSampleCount == 1 {
+            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let startTime = presentationTime.isValid && presentationTime.isNumeric
+                ? presentationTime
+                : .zero
+            synchronizer.setRate(1.0, time: startTime)
         }
+        renderer.enqueue(sampleBuffer)
     }
 
     func stop() {

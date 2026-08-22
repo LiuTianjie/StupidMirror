@@ -85,6 +85,7 @@ final class AppLocalizationTests: XCTestCase {
             "settings.language",
             "settings.audioPlayback",
             "settings.audioPlaybackHelp",
+            "toolbar.audioPlayback",
             "common.close",
             "card.installControlAgent",
             "detail.installControlAgent",

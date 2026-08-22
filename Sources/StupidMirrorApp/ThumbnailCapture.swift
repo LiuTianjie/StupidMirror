@@ -15,6 +15,7 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
     private let firstFrameTimeout: TimeInterval
     private var didComplete = false // Protected by completionLock.
     private var configured = false // Accessed only on queue.
+    private var deviceInput: AVCaptureDeviceInput? // Accessed only on queue.
 
     init(
         maximumPixelDimension: CGFloat = 1_280,
@@ -58,6 +59,9 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
                 return
             }
             self.captureSession.startRunning()
+            if let input = self.deviceInput {
+                IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: input)
+            }
             if self.hasCompleted {
                 self.tearDownOnQueue()
             }
@@ -79,6 +83,10 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
                 throw ThumbnailCaptureError.cannotAddInput
             }
             captureSession.addInput(input)
+            deviceInput = input
+            // A one-shot thumbnail still opens the muxed iPhone source. Leave
+            // its audio port off so plugging in a phone does not mute speakers.
+            IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: input)
 
             output.alwaysDiscardsLateVideoFrames = true
             output.videoSettings = [
@@ -92,6 +100,7 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             configured = true
         } catch {
             output.setSampleBufferDelegate(nil, queue: nil)
+            deviceInput = nil
             for output in captureSession.outputs {
                 captureSession.removeOutput(output)
             }
@@ -179,6 +188,7 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
         }
         captureSession.commitConfiguration()
         configured = false
+        deviceInput = nil
         context.clearCaches()
     }
 }

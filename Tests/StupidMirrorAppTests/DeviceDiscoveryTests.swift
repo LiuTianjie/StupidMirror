@@ -52,6 +52,85 @@ final class DeviceDiscoveryTests: XCTestCase {
         ))
     }
 
+    func testWirelessModeDefersUSBWhenTheTunnelIsConnected() {
+        XCTAssertTrue(DeviceGalleryStore.shouldDeferUSBForWireless(
+            wirelessModeEnabled: true,
+            usbUDID: "UDID-1",
+            wirelessConnectedUDIDs: ["UDID-1"]
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldDeferUSBForWireless(
+            wirelessModeEnabled: true,
+            usbUDID: "UDID-1",
+            wirelessConnectedUDIDs: ["UDID-2"]
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldDeferUSBForWireless(
+            wirelessModeEnabled: false,
+            usbUDID: "UDID-1",
+            wirelessConnectedUDIDs: ["UDID-1"]
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldDeferUSBForWireless(
+            wirelessModeEnabled: true,
+            usbUDID: nil,
+            wirelessConnectedUDIDs: ["UDID-1"]
+        ))
+    }
+
+    func testFailedWirelessDiscoveryPreservesWirelessSessionsOnly() {
+        XCTAssertTrue(DeviceGalleryStore.shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
+            transport: .wireless,
+            platform: .iOS,
+            isAndroid: false
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
+            transport: .usb,
+            platform: .iOS,
+            isAndroid: false
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
+            transport: .wireless,
+            platform: .android,
+            isAndroid: true
+        ))
+    }
+
+    func testUSBThumbnailCaptureYieldsToALiveMirror() {
+        XCTAssertFalse(DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+            liveMirrorDesired: true,
+            mirrorState: .stopped
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+            liveMirrorDesired: false,
+            mirrorState: .starting
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+            liveMirrorDesired: false,
+            mirrorState: .running
+        ))
+        XCTAssertTrue(DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+            liveMirrorDesired: false,
+            mirrorState: .stopped
+        ))
+    }
+
+    func testIOSUSBAudioStaysOnPhoneUnlessMacPlaybackIsAuthorized() {
+        XCTAssertFalse(IOSUSBAudioRouting.shouldEnableMuxedAudioPorts(
+            playbackEnabled: false,
+            authorizationStatus: .authorized
+        ))
+        XCTAssertFalse(IOSUSBAudioRouting.shouldEnableMuxedAudioPorts(
+            playbackEnabled: true,
+            authorizationStatus: .notDetermined
+        ))
+        XCTAssertFalse(IOSUSBAudioRouting.shouldEnableMuxedAudioPorts(
+            playbackEnabled: true,
+            authorizationStatus: .denied
+        ))
+        XCTAssertTrue(IOSUSBAudioRouting.shouldEnableMuxedAudioPorts(
+            playbackEnabled: true,
+            authorizationStatus: .authorized
+        ))
+    }
+
     func testDeviceInfoParserReadsOneProcessPayload() {
         let parsed = DeviceMetadataService.parseInfo(
             """

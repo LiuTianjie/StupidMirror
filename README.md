@@ -134,10 +134,11 @@ in-app button, and an in-flight request disables that button so it cannot be
 requested twice concurrently.
 
 Camera access is required because macOS exposes USB iPhone screen sources
-through AVFoundation camera capture APIs. Starting USB capture routes iPhone
-audio into the macOS system capture source. Enable **Play Device Audio on Mac**
-to hear that captured audio through the Mac; macOS also requires Microphone
-permission for this audio track.
+through AVFoundation camera capture APIs. Those sources are muxed: an enabled
+audio port makes iOS hand playback to the Mac and mute the phone speaker.
+**Play Device Audio on Mac** is off by default so the iPhone keeps its speaker.
+Turn the switch on to send that USB audio to this Mac; macOS also requires
+Microphone permission for that optional track.
 
 Wireless mode does not require Camera permission. Enable it under Settings,
 then keep the Mac and iPhone on the same local network. The first setup for each

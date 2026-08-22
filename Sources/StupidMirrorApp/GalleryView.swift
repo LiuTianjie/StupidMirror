@@ -201,6 +201,19 @@ struct GalleryView: View {
             .toggleStyle(ToolbarSelectionToggleStyle(color: Theme.Palette.accent))
             .help(store.t("settings.autoOpen"))
         }
+        ToolbarItem(placement: .automatic) {
+            Toggle(isOn: store.audioPlaybackToggle) {
+                ToolbarIconLabel(
+                    title: store.t("toolbar.audioPlayback"),
+                    systemImage: store.audioPlaybackEnabled ? "speaker.wave.2.fill" : "speaker.slash",
+                    iconColor: store.audioPlaybackEnabled ? Theme.Palette.accent : .primary,
+                    titleColor: store.audioPlaybackEnabled ? Theme.Palette.accent : .secondary
+                )
+            }
+            .toggleStyle(ToolbarSelectionToggleStyle(color: Theme.Palette.accent))
+            .help(store.t("settings.audioPlaybackHelp"))
+            .disabled(store.isRequestingMicrophonePermission)
+        }
         ToolbarItemGroup(placement: .automatic) {
             Button {
                 store.stopAll()
@@ -1153,18 +1166,7 @@ struct SettingsView: View {
                         }
                         Toggle(
                             store.t("settings.audioPlayback"),
-                            isOn: Binding(
-                                get: { store.audioPlaybackEnabled },
-                                set: { enabled in
-                                    if enabled {
-                                        Task {
-                                            await store.enableAudioPlayback()
-                                        }
-                                    } else {
-                                        store.audioPlaybackEnabled = false
-                                    }
-                                }
-                            )
+                            isOn: store.audioPlaybackToggle
                         )
                         .disabled(store.isRequestingMicrophonePermission)
                         Text(store.t("settings.audioPlaybackHelp"))

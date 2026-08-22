@@ -52,10 +52,11 @@ app needs Camera permission. This permission is used to read the iPhone screen
 source, not to capture a Mac webcam.
 
 USB iPhone capture may expose an audio track through the same local AVFoundation
-source and iOS routes device audio into that system capture route. StupidMirror
-only attaches and plays this track on the Mac when the user enables device audio.
-macOS requires Microphone permission for that optional audio track. The app asks
-for Camera or Microphone access only after an explicit user action.
+source. StupidMirror disables that muxed audio port by default so iOS keeps
+playback on the iPhone speaker. It only enables, attaches, and plays the track
+on the Mac when the user turns on device audio. macOS requires Microphone
+permission for that optional audio track. The app asks for Camera or Microphone
+access only after an explicit user action.
 
 ## User Responsibility
 

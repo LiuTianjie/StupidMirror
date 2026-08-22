@@ -347,6 +347,14 @@ private struct MirrorWindowChromeBar: View {
                 Spacer()
 
                 HStack(spacing: 8) {
+                    ChromeIconButton(
+                        systemName: store.audioPlaybackEnabled ? "speaker.wave.2.fill" : "speaker.slash",
+                        help: store.t("settings.audioPlaybackHelp")
+                    ) {
+                        store.audioPlaybackToggle.wrappedValue.toggle()
+                    }
+                    .disabled(store.isRequestingMicrophonePermission)
+
                     ChromeIconButton(systemName: "chevron.backward", help: store.t("mirror.back")) {
                         store.pressBack(for: session)
                     }
