@@ -60,7 +60,11 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             }
             self.captureSession.startRunning()
             if let input = self.deviceInput {
-                IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: input)
+                IOSUSBAudioRouting.pinPhoneSpeaker(
+                    input: input,
+                    session: self.captureSession,
+                    deviceUniqueID: input.device.uniqueID
+                )
             }
             if self.hasCompleted {
                 self.tearDownOnQueue()
@@ -79,15 +83,13 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
+            IOSUSBAudioRouting.setAudioPortsEnabled(false, on: input)
             guard captureSession.canAddInput(input) else {
                 throw ThumbnailCaptureError.cannotAddInput
             }
-            captureSession.addInput(input)
             deviceInput = input
-            // A one-shot thumbnail still opens the muxed iPhone source. Leave
-            // its audio port off so plugging in a phone does not mute speakers.
-            IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: input)
-
+            // A one-shot thumbnail still opens the muxed iPhone source. Wire
+            // video only so plugging in a phone does not mute speakers.
             output.alwaysDiscardsLateVideoFrames = true
             output.videoSettings = [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
@@ -96,7 +98,13 @@ final class ThumbnailCapture: NSObject, AVCaptureVideoDataOutputSampleBufferDele
             guard captureSession.canAddOutput(output) else {
                 throw ThumbnailCaptureError.cannotAddOutput
             }
-            captureSession.addOutput(output)
+            guard IOSUSBAudioRouting.addVideoOnlyGraph(
+                input: input,
+                videoOutput: output,
+                to: captureSession
+            ) else {
+                throw ThumbnailCaptureError.cannotAddInput
+            }
             configured = true
         } catch {
             output.setSampleBufferDelegate(nil, queue: nil)

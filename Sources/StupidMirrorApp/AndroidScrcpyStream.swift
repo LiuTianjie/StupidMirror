@@ -13,6 +13,7 @@ final class AndroidScrcpyStream: @unchecked Sendable {
         let serverPath: String
         let serverVersion: String
         let audioEnabled: Bool
+        var duplicateDeviceAudio = false
         var maxSize = 2_160
         var maxFPS = 60
         var videoBitRate = 12_000_000
@@ -231,11 +232,10 @@ final class AndroidScrcpyStream: @unchecked Sendable {
             "max_size=\(configuration.maxSize)",
             "max_fps=\(configuration.maxFPS)"
         ]
-        if configuration.audioEnabled {
-            arguments.append(contentsOf: ["audio=true", "audio_codec=raw"])
-        } else {
-            arguments.append("audio=false")
-        }
+        arguments.append(contentsOf: Self.serverAudioArguments(
+            audioEnabled: configuration.audioEnabled,
+            duplicateDeviceAudio: configuration.duplicateDeviceAudio
+        ))
         process.arguments = arguments
         let output = Pipe()
         process.standardOutput = output
@@ -529,6 +529,24 @@ final class AndroidScrcpyStream: @unchecked Sendable {
         let upper = UInt64(uint32BE(data, offset: offset))
         let lower = UInt64(uint32BE(data, offset: offset + 4))
         return upper << 32 | lower
+    }
+
+    /// Android 13+ can capture playback and keep the speaker. Older versions
+    /// mute the phone when output audio is captured.
+    nonisolated static func shouldDuplicateDeviceAudio(sdkVersion: Int?) -> Bool {
+        (sdkVersion ?? 0) >= 33
+    }
+
+    nonisolated static func serverAudioArguments(
+        audioEnabled: Bool,
+        duplicateDeviceAudio: Bool
+    ) -> [String] {
+        guard audioEnabled else { return ["audio=false"] }
+        var arguments = ["audio=true", "audio_codec=raw"]
+        if duplicateDeviceAudio {
+            arguments.append(contentsOf: ["audio_source=playback", "audio_dup=true"])
+        }
+        return arguments
     }
 
     private static func commandError(_ result: AndroidADBService.CommandResult) -> String {

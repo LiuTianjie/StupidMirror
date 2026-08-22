@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import CoreMedia
 import CoreMediaIO
 import Foundation
 
@@ -160,11 +161,12 @@ enum AVFoundationMirrorBackend {
 
 /// USB iPhone screens are CoreMediaIO muxed devices (video + audio).
 ///
-/// iOS treats an enabled audio port as a live USB playback destination and
-/// mutes the phone speaker. Omitting `AVCaptureAudioDataOutput` is not enough:
-/// the default-enabled port still claims the route and the samples are
-/// discarded. Video-only mirroring must disable those ports; Mac playback
-/// enables them and actually consumes the buffers.
+/// iOS treats an enabled or auto-connected audio port as a live USB playback
+/// destination and mutes the phone speaker. Omitting `AVCaptureAudioDataOutput`
+/// is not enough: `addInput` still forms audio connections from the default-
+/// enabled ports. Video-only mirroring must disable those ports, connect only
+/// video, and stop leftover CoreMediaIO audio streams. Mac playback enables
+/// the ports and actually consumes the buffers.
 enum IOSUSBAudioRouting {
     static func shouldEnableMuxedAudioPorts(
         playbackEnabled: Bool,
@@ -174,17 +176,259 @@ enum IOSUSBAudioRouting {
     }
 
     static func setMuxedAudioPortsEnabled(_ enabled: Bool, on input: AVCaptureDeviceInput) {
-        for port in input.ports where port.mediaType == .audio {
+        setAudioPortsEnabled(enabled, on: input)
+    }
+
+    static func setAudioPortsEnabled(_ enabled: Bool, on input: AVCaptureDeviceInput) {
+        for port in audioPorts(on: input) {
             port.isEnabled = enabled
         }
     }
 
     static func muxedAudioPortsAreEnabled(on input: AVCaptureDeviceInput) -> Bool {
-        input.ports.contains { $0.mediaType == .audio && $0.isEnabled }
+        audioPortsAreEnabled(on: input)
+    }
+
+    static func audioPortsAreEnabled(on input: AVCaptureDeviceInput) -> Bool {
+        audioPorts(on: input).contains { $0.isEnabled }
     }
 
     static func hasMuxedAudioPorts(on input: AVCaptureDeviceInput) -> Bool {
-        input.ports.contains { $0.mediaType == .audio }
+        hasAudioPorts(on: input)
+    }
+
+    static func hasAudioPorts(on input: AVCaptureDeviceInput) -> Bool {
+        !audioPorts(on: input).isEmpty
+    }
+
+    static func audioPorts(on input: AVCaptureDeviceInput) -> [AVCaptureInput.Port] {
+        input.ports.filter { $0.mediaType == .audio }
+    }
+
+    static func muxedPorts(on input: AVCaptureDeviceInput) -> [AVCaptureInput.Port] {
+        input.ports.filter { $0.mediaType == .muxed }
+    }
+
+    static func videoPorts(on input: AVCaptureDeviceInput) -> [AVCaptureInput.Port] {
+        let video = input.ports.filter { $0.mediaType == .video }
+        if !video.isEmpty { return video }
+        return muxedPorts(on: input)
+    }
+
+    static func disableAudioConnections(in session: AVCaptureSession) {
+        for connection in session.connections where isAudioConnection(connection) {
+            connection.isEnabled = false
+        }
+    }
+
+    static func hasEnabledAudioConnection(in session: AVCaptureSession) -> Bool {
+        session.connections.contains { $0.isEnabled && isAudioConnection($0) }
+    }
+
+    static func isAudioConnection(_ connection: AVCaptureConnection) -> Bool {
+        // A muxed video connection can expose audioChannels without being the
+        // USB playback client. Only treat real audio outputs / audio ports.
+        if connection.output is AVCaptureVideoDataOutput {
+            return false
+        }
+        return connection.output is AVCaptureAudioDataOutput
+            || connection.inputPorts.contains(where: { $0.mediaType == .audio })
+    }
+
+    /// Adds the muxed iPhone input without letting AVFoundation auto-wire
+    /// audio. Falls back to `addInput` only if a manual video connection
+    /// cannot be formed, then immediately disables leftover audio.
+    @discardableResult
+    static func addVideoOnlyGraph(
+        input: AVCaptureDeviceInput,
+        videoOutput: AVCaptureVideoDataOutput,
+        to session: AVCaptureSession
+    ) -> Bool {
+        setAudioPortsEnabled(false, on: input)
+        guard session.canAddInput(input), session.canAddOutput(videoOutput) else {
+            return false
+        }
+
+        session.addInputWithNoConnections(input)
+        session.addOutputWithNoConnections(videoOutput)
+        let ports = videoPorts(on: input)
+        if !ports.isEmpty {
+            let connection = AVCaptureConnection(inputPorts: ports, output: videoOutput)
+            if session.canAddConnection(connection) {
+                session.addConnection(connection)
+                pinPhoneSpeaker(input: input, session: session, deviceUniqueID: input.device.uniqueID)
+                return true
+            }
+        }
+
+        session.removeOutput(videoOutput)
+        session.removeInput(input)
+        session.addInput(input)
+        session.addOutput(videoOutput)
+        pinPhoneSpeaker(input: input, session: session, deviceUniqueID: input.device.uniqueID)
+        return true
+    }
+
+    static func pinPhoneSpeaker(
+        input: AVCaptureDeviceInput,
+        session: AVCaptureSession,
+        deviceUniqueID: String
+    ) {
+        setAudioPortsEnabled(false, on: input)
+        disableAudioConnections(in: session)
+        suppressCoreMediaIOAudioStreams(forDeviceUniqueID: deviceUniqueID)
+    }
+
+    /// CoreMediaIO can keep an audio stream running after AVFoundation has
+    /// disabled the port. Stopping those streams is what lets iOS take the
+    /// speaker back while video stays up.
+    static func suppressCoreMediaIOAudioStreams(forDeviceUniqueID uniqueID: String) {
+        guard let deviceID = cmioDeviceID(matching: uniqueID) else { return }
+        for streamID in cmioStreams(on: deviceID) where cmioStreamIsAudio(streamID) {
+            _ = CMIODeviceStopStream(deviceID, streamID)
+        }
+    }
+
+    private static func cmioMainElement() -> CMIOObjectPropertyElement {
+        if #available(macOS 12.0, *) {
+            CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        } else {
+            CMIOObjectPropertyElement(kCMIOObjectPropertyElementMaster)
+        }
+    }
+
+    private static func cmioDeviceID(matching uniqueID: String) -> CMIOObjectID? {
+        var address = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: cmioMainElement()
+        )
+        var dataSize: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &dataSize
+        ) == noErr, dataSize > 0 else {
+            return nil
+        }
+        let count = Int(dataSize) / MemoryLayout<CMIOObjectID>.size
+        var devices = [CMIOObjectID](repeating: 0, count: count)
+        var dataUsed: UInt32 = 0
+        guard CMIOObjectGetPropertyData(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &address,
+            0,
+            nil,
+            dataSize,
+            &dataUsed,
+            &devices
+        ) == noErr else {
+            return nil
+        }
+        return devices.first { cmioDeviceUID($0) == uniqueID }
+    }
+
+    private static func cmioDeviceUID(_ deviceID: CMIOObjectID) -> String? {
+        cmioString(deviceID, selector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceUID))
+    }
+
+    private static func cmioStreams(on deviceID: CMIOObjectID) -> [CMIOStreamID] {
+        var address = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyStreams),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeWildcard),
+            mElement: cmioMainElement()
+        )
+        var dataSize: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else {
+            return []
+        }
+        let count = Int(dataSize) / MemoryLayout<CMIOStreamID>.size
+        var streams = [CMIOStreamID](repeating: 0, count: count)
+        var dataUsed: UInt32 = 0
+        guard CMIOObjectGetPropertyData(
+            deviceID,
+            &address,
+            0,
+            nil,
+            dataSize,
+            &dataUsed,
+            &streams
+        ) == noErr else {
+            return []
+        }
+        return streams
+    }
+
+    private static func cmioStreamIsAudio(_ streamID: CMIOStreamID) -> Bool {
+        var address = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOStreamPropertyFormatDescription),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: cmioMainElement()
+        )
+        guard CMIOObjectHasProperty(streamID, &address) else { return false }
+        var dataSize: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(streamID, &address, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else {
+            return false
+        }
+        let data = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(dataSize),
+            alignment: MemoryLayout<CMFormatDescription>.alignment
+        )
+        defer { data.deallocate() }
+        var dataUsed: UInt32 = 0
+        guard CMIOObjectGetPropertyData(
+            streamID,
+            &address,
+            0,
+            nil,
+            dataSize,
+            &dataUsed,
+            data
+        ) == noErr else {
+            return false
+        }
+        let description = data.load(as: CMFormatDescription.self)
+        return CMFormatDescriptionGetMediaType(description) == kCMMediaType_Audio
+    }
+
+    private static func cmioString(
+        _ object: CMIOObjectID,
+        selector: CMIOObjectPropertySelector
+    ) -> String? {
+        var address = CMIOObjectPropertyAddress(
+            mSelector: selector,
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: cmioMainElement()
+        )
+        guard CMIOObjectHasProperty(object, &address) else { return nil }
+        var dataSize: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(object, &address, 0, nil, &dataSize) == noErr,
+              dataSize > 0 else {
+            return nil
+        }
+        let data = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(dataSize),
+            alignment: MemoryLayout<CFString>.alignment
+        )
+        defer { data.deallocate() }
+        var dataUsed: UInt32 = 0
+        guard CMIOObjectGetPropertyData(
+            object,
+            &address,
+            0,
+            nil,
+            dataSize,
+            &dataUsed,
+            data
+        ) == noErr else {
+            return nil
+        }
+        let cfString = data.load(as: CFString.self)
+        return cfString as String
     }
 }
 

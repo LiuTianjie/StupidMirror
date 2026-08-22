@@ -131,6 +131,37 @@ final class DeviceDiscoveryTests: XCTestCase {
         ))
     }
 
+    func testAndroidAudioDuplicationRequiresAndroid13() {
+        XCTAssertFalse(AndroidScrcpyStream.shouldDuplicateDeviceAudio(sdkVersion: nil))
+        XCTAssertFalse(AndroidScrcpyStream.shouldDuplicateDeviceAudio(sdkVersion: 32))
+        XCTAssertTrue(AndroidScrcpyStream.shouldDuplicateDeviceAudio(sdkVersion: 33))
+        XCTAssertTrue(AndroidScrcpyStream.shouldDuplicateDeviceAudio(sdkVersion: 36))
+    }
+
+    func testAndroidServerKeepsDeviceSpeakerUnlessMacPlaybackIsOn() {
+        XCTAssertEqual(
+            AndroidScrcpyStream.serverAudioArguments(
+                audioEnabled: false,
+                duplicateDeviceAudio: true
+            ),
+            ["audio=false"]
+        )
+        XCTAssertEqual(
+            AndroidScrcpyStream.serverAudioArguments(
+                audioEnabled: true,
+                duplicateDeviceAudio: false
+            ),
+            ["audio=true", "audio_codec=raw"]
+        )
+        XCTAssertEqual(
+            AndroidScrcpyStream.serverAudioArguments(
+                audioEnabled: true,
+                duplicateDeviceAudio: true
+            ),
+            ["audio=true", "audio_codec=raw", "audio_source=playback", "audio_dup=true"]
+        )
+    }
+
     func testDeviceInfoParserReadsOneProcessPayload() {
         let parsed = DeviceMetadataService.parseInfo(
             """

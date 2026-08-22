@@ -177,9 +177,14 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 if !captureSession.isRunning {
                     captureSession.startRunning()
                 }
-                // startRunning can resurrect muxed audio ports; pin the
-                // speaker-vs-Mac choice after the session is live.
+                // startRunning can resurrect muxed audio ports and iOS audio
+                // streams; pin the speaker-vs-Mac choice after the session
+                // is live, and stop leftover CoreMediaIO audio if we want
+                // the phone speaker.
                 applyAudioEnabledOnSessionQueue()
+                if !audioEnabled, let primaryDeviceInput {
+                    pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
+                }
                 guard captureSession.isRunning else {
                     throw MirrorError.cannotStartSession
                 }
@@ -417,14 +422,14 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
+            // Disable before the session sees the input. addInput would
+            // otherwise auto-connect the default-enabled audio ports and iOS
+            // would hand the speaker to USB immediately.
+            IOSUSBAudioRouting.setAudioPortsEnabled(false, on: input)
             guard captureSession.canAddInput(input) else {
                 throw MirrorError.cannotAddInput
             }
-            captureSession.addInput(input)
             primaryDeviceInput = input
-            // Disable before startRunning. An enabled muxed audio port is
-            // enough for iOS to steal the speaker, even without an audio output.
-            IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: input)
 
             // A lightweight data output lets us read each frame's real pixel
             // dimensions and render through our own display layer instead of
@@ -437,7 +442,13 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             guard captureSession.canAddOutput(videoOutput) else {
                 throw MirrorError.cannotAddVideoOutput
             }
-            captureSession.addOutput(videoOutput)
+            guard IOSUSBAudioRouting.addVideoOnlyGraph(
+                input: input,
+                videoOutput: videoOutput,
+                to: captureSession
+            ) else {
+                throw MirrorError.cannotAddInput
+            }
             configured = true
         } catch {
             videoOutput.setSampleBufferDelegate(nil, queue: nil)
@@ -457,47 +468,90 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         guard let primaryDeviceInput else { return }
 
         let wantsMacPlayback = audioEnabled && !iosMacPlaybackUnavailable
-        let hasSampleOutput = captureSession.outputs.contains { $0 === audioOutput }
-        let muxedAudioEnabled = IOSUSBAudioRouting.muxedAudioPortsAreEnabled(on: primaryDeviceInput)
-        let hasDedicatedInput = dedicatedIOSAudioInput != nil
-        let graphMatches = wantsMacPlayback
-            ? hasSampleOutput && (muxedAudioEnabled || hasDedicatedInput)
-            : !hasSampleOutput && !hasDedicatedInput && !muxedAudioEnabled
-        if graphMatches {
-            if !wantsMacPlayback {
-                IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: primaryDeviceInput)
-                setLiveUSBAudioArmed(false)
-                deviceAudioPlayer.stop()
-            }
-            return
-        }
-
-        let shouldRestart = captureSession.isRunning
-        if shouldRestart {
-            captureSession.stopRunning()
-        }
-
-        captureSession.beginConfiguration()
         if wantsMacPlayback {
+            if usbMacPlaybackGraphIsReady(primaryDeviceInput: primaryDeviceInput) {
+                setLiveUSBAudioArmed(true)
+                return
+            }
+
+            let shouldRestart = captureSession.isRunning
+            if shouldRestart {
+                captureSession.stopRunning()
+            }
+
+            captureSession.beginConfiguration()
             if !attachIOSMacPlaybackIfPossible(primaryDeviceInput: primaryDeviceInput) {
                 detachIOSMacPlayback(primaryDeviceInput: primaryDeviceInput)
                 iosMacPlaybackUnavailable = true
             }
-        } else {
+            captureSession.commitConfiguration()
+
+            if shouldRestart {
+                captureSession.startRunning()
+            }
+
+            if audioEnabled && !iosMacPlaybackUnavailable {
+                setLiveUSBAudioArmed(true)
+            } else {
+                pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
+            }
+            return
+        }
+
+        // iOS keeps USB as the playback destination until the muxed audio
+        // stream is actually gone. Disabling a port on a live session is not
+        // enough after Mac playback (or an implicit addInput connection) has
+        // already claimed the route — rebuild video-only so the speaker
+        // comes back.
+        if usbSessionHasAudioClaim(primaryDeviceInput: primaryDeviceInput) {
+            rebuildUSBVideoOnlySession()
+            return
+        }
+        pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
+    }
+
+    private func usbMacPlaybackGraphIsReady(primaryDeviceInput: AVCaptureDeviceInput) -> Bool {
+        let hasSampleOutput = captureSession.outputs.contains { $0 === audioOutput }
+        let audioPortsEnabled = IOSUSBAudioRouting.audioPortsAreEnabled(on: primaryDeviceInput)
+        let hasDedicatedInput = dedicatedIOSAudioInput != nil
+        return hasSampleOutput && (audioPortsEnabled || hasDedicatedInput)
+    }
+
+    private func usbSessionHasAudioClaim(primaryDeviceInput: AVCaptureDeviceInput) -> Bool {
+        captureSession.outputs.contains { $0 === audioOutput }
+            || dedicatedIOSAudioInput != nil
+            || IOSUSBAudioRouting.audioPortsAreEnabled(on: primaryDeviceInput)
+            || IOSUSBAudioRouting.hasEnabledAudioConnection(in: captureSession)
+    }
+
+    private func pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: AVCaptureDeviceInput) {
+        IOSUSBAudioRouting.pinPhoneSpeaker(
+            input: primaryDeviceInput,
+            session: captureSession,
+            deviceUniqueID: primaryDeviceInput.device.uniqueID
+        )
+        setLiveUSBAudioArmed(false)
+        deviceAudioPlayer.stop()
+    }
+
+    private func rebuildUSBVideoOnlySession() {
+        let shouldRestart = captureSession.isRunning || configured
+        if let primaryDeviceInput {
             detachIOSMacPlayback(primaryDeviceInput: primaryDeviceInput)
         }
-        captureSession.commitConfiguration()
-
-        if shouldRestart {
+        tearDownOnSessionQueue()
+        guard shouldRestart else { return }
+        // iOS only drops the USB playback route after the muxed audio
+        // client is gone for a beat. Reopening immediately keeps the mute.
+        Thread.sleep(forTimeInterval: 0.25)
+        do {
+            try configureIfNeeded()
+            guard let primaryDeviceInput else { return }
+            pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
             captureSession.startRunning()
-        }
-
-        if audioEnabled && !iosMacPlaybackUnavailable {
-            setLiveUSBAudioArmed(true)
-        } else {
-            IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: primaryDeviceInput)
-            setLiveUSBAudioArmed(false)
-            deviceAudioPlayer.stop()
+            pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
+        } catch {
+            return
         }
     }
 
@@ -509,11 +563,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @discardableResult
     private func attachIOSMacPlaybackIfPossible(primaryDeviceInput: AVCaptureDeviceInput) -> Bool {
-        if IOSUSBAudioRouting.hasMuxedAudioPorts(on: primaryDeviceInput) {
+        if IOSUSBAudioRouting.hasAudioPorts(on: primaryDeviceInput)
+            || !IOSUSBAudioRouting.muxedPorts(on: primaryDeviceInput).isEmpty {
             // The muxed screen track is the phone's routed playback. The
             // separate "iPhone Mic" device is the microphone and stays silent
             // while a video or game is playing.
-            IOSUSBAudioRouting.setMuxedAudioPortsEnabled(true, on: primaryDeviceInput)
+            IOSUSBAudioRouting.setAudioPortsEnabled(true, on: primaryDeviceInput)
         } else if dedicatedIOSAudioInput == nil {
             guard let screenDevice = device,
                   let audioDevice = matchingIOSAudioDevice(for: screenDevice),
@@ -525,14 +580,30 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             dedicatedIOSAudioInput = audioInput
         }
 
-        return attachIOSMacPlaybackViaSampleBuffers()
+        return attachIOSMacPlaybackViaSampleBuffers(primaryDeviceInput: primaryDeviceInput)
     }
 
-    private func attachIOSMacPlaybackViaSampleBuffers() -> Bool {
+    private func attachIOSMacPlaybackViaSampleBuffers(primaryDeviceInput: AVCaptureDeviceInput) -> Bool {
         if !captureSession.outputs.contains(where: { $0 === audioOutput }) {
             guard captureSession.canAddOutput(audioOutput) else { return false }
             audioOutput.setSampleBufferDelegate(self, queue: audioCallbackQueue)
-            captureSession.addOutput(audioOutput)
+            captureSession.addOutputWithNoConnections(audioOutput)
+            let ports = IOSUSBAudioRouting.audioPorts(on: primaryDeviceInput)
+            let connectPorts = ports.isEmpty
+                ? IOSUSBAudioRouting.muxedPorts(on: primaryDeviceInput)
+                : ports
+            if !connectPorts.isEmpty {
+                let connection = AVCaptureConnection(inputPorts: connectPorts, output: audioOutput)
+                if captureSession.canAddConnection(connection) {
+                    captureSession.addConnection(connection)
+                } else {
+                    captureSession.removeOutput(audioOutput)
+                    captureSession.addOutput(audioOutput)
+                }
+            } else if dedicatedIOSAudioInput != nil {
+                captureSession.removeOutput(audioOutput)
+                captureSession.addOutput(audioOutput)
+            }
         }
         for connection in audioOutput.connections {
             connection.isEnabled = true
@@ -541,7 +612,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 channel.volume = 1.0
             }
         }
-        return captureSession.outputs.contains { $0 === audioOutput }
+        return !audioOutput.connections.isEmpty
     }
 
     private func detachIOSMacPlayback(primaryDeviceInput: AVCaptureDeviceInput) {
@@ -555,7 +626,11 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             captureSession.removeInput(dedicatedIOSAudioInput)
             self.dedicatedIOSAudioInput = nil
         }
-        IOSUSBAudioRouting.setMuxedAudioPortsEnabled(false, on: primaryDeviceInput)
+        IOSUSBAudioRouting.pinPhoneSpeaker(
+            input: primaryDeviceInput,
+            session: captureSession,
+            deviceUniqueID: primaryDeviceInput.device.uniqueID
+        )
     }
 
     private func matchingIOSAudioDevice(for screenDevice: AVCaptureDevice) -> AVCaptureDevice? {
@@ -640,7 +715,10 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 adbPath: adbPath,
                 serverPath: server.path,
                 serverVersion: server.version,
-                audioEnabled: audioEnabled
+                audioEnabled: audioEnabled,
+                duplicateDeviceAudio: AndroidScrcpyStream.shouldDuplicateDeviceAudio(
+                    sdkVersion: androidDevice.sdkVersion
+                )
             ),
             onFrame: { [weak self] sampleBuffer in
                 self?.receiveWirelessSampleBuffer(sampleBuffer, generation: generation)
