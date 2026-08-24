@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.23 - 2026-08-25
+
+- Discover wired iPhone identifiers through Apple's bundled `devicectl`, so
+  USB control no longer requires users to install `libimobiledevice` with
+  Homebrew. Keep the legacy tools only as an optional compatibility path.
+
 ## 0.2.22 - 2026-08-25
 
 - Keep iPhone control on the USB path when a wired mirror session retains

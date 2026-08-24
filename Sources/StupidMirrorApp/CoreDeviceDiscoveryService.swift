@@ -89,8 +89,22 @@ enum CoreDeviceDiscoveryService {
         FileManager.default.isExecutableFile(atPath: "/usr/bin/xcrun")
     }
 
+    static func discoverUSBDeviceMetadata() -> [DeviceMetadata] {
+        guard let data = deviceListData() else { return [] }
+        let devices = parseUSBDevices(data)
+        logger.info("Discovered \(devices.count) wired iPhone(s) through CoreDevice")
+        return devices
+    }
+
     static func discoverWirelessDevices() -> WirelessDiscoveryOutcome {
-        guard isAvailable else { return .unavailable }
+        guard let data = deviceListData() else { return .unavailable }
+        let devices = parseWirelessDevices(data)
+        logger.info("Discovered \(devices.count) wireless iPhone(s)")
+        return .available(devices)
+    }
+
+    private static func deviceListData() -> Data? {
+        guard isAvailable else { return nil }
 
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("StupidMirror-CoreDevice-\(UUID().uuidString).json")
@@ -112,16 +126,37 @@ enum CoreDeviceDiscoveryService {
             process.waitUntilExit()
         } catch {
             logger.error("Failed to launch devicectl: \(error.localizedDescription, privacy: .public)")
-            return .unavailable
+            return nil
         }
         guard process.terminationStatus == 0,
               let data = try? Data(contentsOf: outputURL) else {
             logger.error("devicectl discovery failed with status \(process.terminationStatus)")
-            return .unavailable
+            return nil
         }
-        let devices = parseWirelessDevices(data)
-        logger.info("Discovered \(devices.count) wireless iPhone(s)")
-        return .available(devices)
+        return data
+    }
+
+    nonisolated static func parseUSBDevices(_ data: Data) -> [DeviceMetadata] {
+        guard let payload = try? JSONDecoder().decode(CoreDevicePayload.self, from: data) else {
+            return []
+        }
+        return payload.result.devices.compactMap { device in
+            guard device.hardwareProperties.platform == "iOS",
+                  device.hardwareProperties.deviceType == "iPhone",
+                  device.hardwareProperties.reality == "physical",
+                  device.connectionProperties.pairingState == "paired",
+                  device.connectionProperties.transportType == "wired",
+                  let udid = device.hardwareProperties.udid?.nonEmpty,
+                  let name = device.deviceProperties.name?.nonEmpty else {
+                return nil
+            }
+            return DeviceMetadata(
+                udid: udid,
+                name: name,
+                productType: device.hardwareProperties.productType?.nonEmpty ?? "iOS Device",
+                osVersion: device.deviceProperties.osVersionNumber?.nonEmpty ?? ""
+            )
+        }
     }
 
     nonisolated static func parseWirelessDevices(_ data: Data) -> [WirelessDeviceMetadata] {

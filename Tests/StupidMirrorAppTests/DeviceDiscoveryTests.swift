@@ -278,6 +278,62 @@ final class DeviceDiscoveryTests: XCTestCase {
         ])
     }
 
+    func testCoreDeviceParserProvidesWiredMetadataWithoutLibimobiledevice() throws {
+        let data = try XCTUnwrap(
+            """
+            {
+              "result": {
+                "devices": [
+                  {
+                    "connectionProperties": {
+                      "pairingState": "paired",
+                      "transportType": "wired",
+                      "tunnelState": "disconnected"
+                    },
+                    "deviceProperties": {
+                      "name": "iPhone Air",
+                      "osVersionNumber": "27.0"
+                    },
+                    "hardwareProperties": {
+                      "deviceType": "iPhone",
+                      "platform": "iOS",
+                      "productType": "iPhone18,4",
+                      "reality": "physical",
+                      "udid": "wired-udid"
+                    }
+                  },
+                  {
+                    "connectionProperties": {
+                      "pairingState": "paired",
+                      "transportType": "localNetwork"
+                    },
+                    "deviceProperties": {"name": "Wireless iPhone"},
+                    "hardwareProperties": {
+                      "deviceType": "iPhone",
+                      "platform": "iOS",
+                      "reality": "physical",
+                      "udid": "wireless-udid"
+                    }
+                  }
+                ]
+              }
+            }
+            """.data(using: .utf8)
+        )
+
+        XCTAssertEqual(
+            CoreDeviceDiscoveryService.parseUSBDevices(data),
+            [
+                DeviceMetadata(
+                    udid: "wired-udid",
+                    name: "iPhone Air",
+                    productType: "iPhone18,4",
+                    osVersion: "27.0"
+                )
+            ]
+        )
+    }
+
     func testUSBIdentityPrefersMetadataThenCacheThenExistingUDID() {
         let metadata = DeviceMetadata(
             udid: "metadata-udid",

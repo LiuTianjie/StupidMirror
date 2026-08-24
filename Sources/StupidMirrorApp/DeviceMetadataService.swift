@@ -3,16 +3,20 @@ import Foundation
 
 enum DeviceMetadataService {
     static var isAvailable: Bool {
+        CoreDeviceDiscoveryService.isAvailable || isLegacyToolAvailable
+    }
+
+    private static var isLegacyToolAvailable: Bool {
         executablePath(named: "idevice_id") != nil && executablePath(named: "ideviceinfo") != nil
     }
 
     static func connectedDevices() -> [DeviceMetadata] {
         guard let ideviceID = executablePath(named: "idevice_id"),
               let udids = run(ideviceID, arguments: ["-l"]) else {
-            return []
+            return CoreDeviceDiscoveryService.discoverUSBDeviceMetadata()
         }
 
-        return udids
+        let legacyDevices: [DeviceMetadata] = udids
             .split(whereSeparator: \.isNewline)
             .compactMap { rawUDID in
                 let udid = String(rawUDID)
@@ -23,6 +27,9 @@ enum DeviceMetadataService {
                 let osVersion = info["ProductVersion"] ?? ""
                 return DeviceMetadata(udid: udid, name: name, productType: productType, osVersion: osVersion)
             }
+        return legacyDevices.isEmpty
+            ? CoreDeviceDiscoveryService.discoverUSBDeviceMetadata()
+            : legacyDevices
     }
 
     static func bestMatch(for captureDevice: String, modelID: String, candidates: [DeviceMetadata]) -> DeviceMetadata? {
