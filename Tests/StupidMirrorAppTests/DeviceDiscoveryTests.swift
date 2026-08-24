@@ -463,6 +463,11 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertEqual(device.endpointURLs(port: 9200).first?.absoluteString, "http://198.18.0.1:9200")
     }
 
+    func testUSBControlDoesNotResolveRetainedWirelessTransport() {
+        XCTAssertFalse(DeviceGalleryStore.shouldResolveWirelessControl(for: .usb))
+        XCTAssertTrue(DeviceGalleryStore.shouldResolveWirelessControl(for: .wireless))
+    }
+
     @MainActor
     func testWirelessSessionCanAcceptDynamicEndpointRefreshWithoutReplacingOwners() {
         let original = WirelessDeviceMetadata(

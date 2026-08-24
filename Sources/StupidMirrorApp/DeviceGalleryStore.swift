@@ -1786,12 +1786,14 @@ final class DeviceGalleryStore: ObservableObject {
         for session: DeviceSession
     ) async throws -> AppiumControlConfiguration {
         let configuration = controlConfiguration(for: session)
-        guard let wirelessWDA = session.wirelessWDA else {
+        guard Self.shouldResolveWirelessControl(for: session.transport),
+              let wirelessWDA = session.wirelessWDA else {
             return configuration
         }
-        // A live WDA, including one left running after a USB switch, must be
-        // attached. Probing and falling through to install replaces the runner
-        // that is currently producing the mirror stream.
+        // A live wireless WDA must be attached. Probing and falling through to
+        // install replaces the runner that is currently producing the mirror
+        // stream. USB sessions deliberately ignore retained wireless metadata
+        // and let Appium connect through the cable.
         if session.mirrorSession.state == .running,
            let activeEndpoint = wirelessWDA.activeEndpoint {
             return attachingControlConfiguration(configuration, endpoint: activeEndpoint)
@@ -1807,6 +1809,12 @@ final class DeviceGalleryStore: ObservableObject {
             configuration: configuration
         )
         return attachingControlConfiguration(configuration, endpoint: endpoint)
+    }
+
+    nonisolated static func shouldResolveWirelessControl(
+        for transport: DeviceTransport
+    ) -> Bool {
+        transport == .wireless
     }
 
     private func attachingControlConfiguration(

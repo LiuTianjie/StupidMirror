@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.22 - 2026-08-25
+
+- Keep iPhone control on the USB path when a wired mirror session retains
+  metadata from an earlier wireless connection, instead of reporting that the
+  device is unavailable over Wi-Fi.
+
 ## 0.2.13 - 2026-08-12
 
 - Keep the Camera permission action visible while an Android or wireless device
