@@ -245,6 +245,23 @@ final class DeviceGalleryStore: ObservableObject {
         sessions.filter { $0.device.connectionState == .connected }
     }
 
+    func canAttemptConnection(_ session: DeviceSession) -> Bool {
+        Self.canAttemptConnection(
+            connectionState: session.device.connectionState,
+            transport: session.transport,
+            wirelessCandidateAvailable: session.wirelessDevice?.canAttemptConnection == true
+        )
+    }
+
+    nonisolated static func canAttemptConnection(
+        connectionState: DeviceConnectionState,
+        transport: DeviceTransport,
+        wirelessCandidateAvailable: Bool
+    ) -> Bool {
+        connectionState == .connected
+            || (transport == .wireless && wirelessCandidateAvailable)
+    }
+
     var reconnectingSessions: [DeviceSession] {
         sessions.filter { $0.device.connectionState == .disconnected }
     }
@@ -786,13 +803,26 @@ final class DeviceGalleryStore: ObservableObject {
         case let .available(wirelessDevices):
             for wirelessDevice in wirelessDevices where !claimedIDs.contains(wirelessDevice.udid) {
                 guard !isRemovedDevice(wirelessDevice.udid) else { continue }
+                let matchingSession = remaining.first {
+                    $0.matchesDiscovery(
+                        id: wirelessDevice.udid,
+                        udid: wirelessDevice.udid,
+                        captureUniqueID: nil
+                    )
+                }
+                let connectionDesired = desiredMirrorIDs.contains(wirelessDevice.udid)
+                    || (matchingSession.map { desiredMirrorIDs.contains($0.id) } ?? false)
                 let identity = DeviceIdentity(
                     id: wirelessDevice.udid,
                     udid: wirelessDevice.udid,
                     name: wirelessDevice.name,
                     productType: wirelessDevice.productType,
                     osVersion: wirelessDevice.osVersion,
-                    connectionState: wirelessDevice.isTunnelConnected ? .connected : .unavailable,
+                    connectionState: Self.wirelessConnectionState(
+                        tunnelConnected: wirelessDevice.isTunnelConnected,
+                        connectionDesired: connectionDesired,
+                        hasActiveEndpoint: matchingSession?.wirelessWDA?.activeEndpoint != nil
+                    ),
                     trustState: .trusted
                 )
                 guard claimedIDs.insert(identity.id).inserted else { continue }
@@ -1113,6 +1143,16 @@ final class DeviceGalleryStore: ObservableObject {
         existing.transport == .wireless && existing.device.udid == discovered.udid
     }
 
+    nonisolated static func wirelessConnectionState(
+        tunnelConnected: Bool,
+        connectionDesired: Bool,
+        hasActiveEndpoint: Bool
+    ) -> DeviceConnectionState {
+        tunnelConnected || connectionDesired || hasActiveEndpoint
+            ? .connected
+            : .unavailable
+    }
+
     private func retire(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
         pendingActivationMirrorIDs.remove(session.id)
@@ -1146,11 +1186,32 @@ final class DeviceGalleryStore: ObservableObject {
         removedDeviceIDs.contains(id)
     }
 
+    private func beginConnectionAttemptIfNeeded(for requested: DeviceSession) -> DeviceSession? {
+        guard let index = sessions.firstIndex(where: { $0.id == requested.id }),
+              canAttemptConnection(sessions[index]) else { return nil }
+        if sessions[index].isIOSWireless,
+           sessions[index].device.connectionState != .connected {
+            sessions[index].device.connectionState = .connected
+            sessions[index].controlSession.updateDevice(sessions[index].device)
+        }
+        return sessions[index]
+    }
+
+    private func markWirelessConnection(
+        _ state: DeviceConnectionState,
+        sessionID: String
+    ) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
+              sessions[index].isIOSWireless else { return }
+        sessions[index].device.connectionState = state
+        sessions[index].controlSession.updateDevice(sessions[index].device)
+    }
+
     func start(_ session: DeviceSession) {
-        guard session.device.connectionState == .connected,
+        guard let session = beginConnectionAttemptIfNeeded(for: session),
               session.platform == .android
-                || session.transport == .wireless
-                || permissionStatus == .authorized else { return }
+                  || session.transport == .wireless
+                  || permissionStatus == .authorized else { return }
         select(session)
         requestMirrorStarts([session.id])
     }
@@ -1340,8 +1401,9 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func performAuthorizedStarts(_ sessionIDs: Set<String>) {
         guard !isShuttingDown else { return }
-        for session in sessions where sessionIDs.contains(session.id)
-            && session.device.connectionState == .connected {
+        for sessionID in sessionIDs {
+            guard let requested = sessions.first(where: { $0.id == sessionID }),
+                  let session = beginConnectionAttemptIfNeeded(for: requested) else { continue }
             guard session.platform == .android
                     || session.transport == .wireless
                     || permissionStatus == .authorized else { continue }
@@ -1449,10 +1511,13 @@ final class DeviceGalleryStore: ObservableObject {
                       self.sessions.contains(where: {
                           $0.id == sessionID && $0.mirrorSession === mirrorSession
                       }) else { return }
+                self.markWirelessConnection(.connected, sessionID: sessionID)
                 mirrorSession.connectWirelessVideo(host: resolvedEndpoint.videoHost)
             } catch is CancellationError {
                 return
             } catch {
+                self.desiredMirrorIDs.remove(sessionID)
+                self.markWirelessConnection(.unavailable, sessionID: sessionID)
                 let localizedMessage = self.wirelessWDAErrorMessage(error)
                 mirrorSession.failWirelessStart(localizedMessage)
                 if error as? WirelessWDAError == .localNetworkDenied {
@@ -1478,7 +1543,7 @@ final class DeviceGalleryStore: ObservableObject {
         case .deviceUnavailable, .launchFailed, .timedOut:
             true
         case .missingSigningTeam, .missingRuntime, .firstUSBSetupRequired,
-             .deviceLocked, .localNetworkDenied, .buildFailed:
+             .deviceLocked, .localNetworkDenied, .iphoneLocalNetworkDenied, .buildFailed:
             false
         }
     }
@@ -1494,6 +1559,7 @@ final class DeviceGalleryStore: ObservableObject {
         case .buildFailed: "wireless.error.buildFailed"
         case .launchFailed: "wireless.error.launchFailed"
         case .localNetworkDenied: "wireless.error.localNetworkDenied"
+        case .iphoneLocalNetworkDenied: "wireless.error.iphoneLocalNetworkDenied"
         case .deviceLocked: "wireless.error.deviceLocked"
         case .deviceUnavailable: "wireless.error.deviceUnavailable"
         case .timedOut: "wireless.error.timedOut"
@@ -1533,7 +1599,7 @@ final class DeviceGalleryStore: ObservableObject {
         configuration: AppiumControlConfiguration? = nil
     ) {
         guard !isShuttingDown,
-              session.device.connectionState == .connected,
+              canAttemptConnection(session),
               session.device.udid?.isEmpty == false,
               !session.controlSession.isReady,
               session.controlSession.isConnecting else {
@@ -1561,7 +1627,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     func connectControl(for session: DeviceSession) {
         guard !isShuttingDown,
-              session.device.connectionState == .connected else { return }
+              let session = beginConnectionAttemptIfNeeded(for: session) else { return }
         guard canStartControl(for: session) else {
             statusMessage = t("status.activationControlRequired")
             showActivation(for: [])
@@ -1614,11 +1680,14 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func connectControlForAutomation(for session: DeviceSession) async throws {
+        guard let session = beginConnectionAttemptIfNeeded(for: session) else {
+            throw DeviceAutomationError.deviceUnavailable
+        }
         guard canStartControl(for: session) else {
             showActivation(for: [])
             throw DeviceAutomationError.activationRequired
         }
-        guard !isShuttingDown, session.device.connectionState == .connected else {
+        guard !isShuttingDown else {
             throw DeviceAutomationError.deviceUnavailable
         }
         guard session.device.udid?.isEmpty == false else {
@@ -1673,7 +1742,8 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func startMirrorForAutomation(for session: DeviceSession) async throws {
-        guard !isShuttingDown, session.device.connectionState == .connected else {
+        guard !isShuttingDown,
+              let session = beginConnectionAttemptIfNeeded(for: session) else {
             throw DeviceAutomationError.deviceUnavailable
         }
         if session.mirrorSession.state == .running { return }

@@ -40,7 +40,7 @@ struct StandaloneMirrorWindowView: View {
             Button(mirrorSession.state == .running ? store.t("mirror.pause") : store.t("mirror.start")) {
                 mirrorSession.state == .running ? store.stop(session) : store.start(session)
             }
-            .disabled(session.device.connectionState != .connected)
+            .disabled(!store.canAttemptConnection(session))
 
             Divider()
 
@@ -50,7 +50,7 @@ struct StandaloneMirrorWindowView: View {
                 controlSession.isReady ? store.stopControl(for: session) : store.connectControl(for: session)
             }
             .disabled(
-                session.device.connectionState != .connected
+                !store.canAttemptConnection(session)
                     || (store.canUseControl && session.device.udid == nil)
             )
 
@@ -236,7 +236,7 @@ struct StandaloneMirrorWindowView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
                 if session.isIOSWireless
-                    && session.device.connectionState == .connected {
+                    && store.canAttemptConnection(session) {
                     Button(store.t("wireless.start.retry")) {
                         store.start(session)
                     }

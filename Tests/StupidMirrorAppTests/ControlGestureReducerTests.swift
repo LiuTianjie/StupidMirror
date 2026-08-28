@@ -1,5 +1,6 @@
 @testable import StupidMirrorApp
 import CoreGraphics
+import Foundation
 import XCTest
 
 final class ControlGestureReducerTests: XCTestCase {
@@ -105,8 +106,110 @@ final class ControlGestureReducerTests: XCTestCase {
         XCTAssertNil(reducer.flushScroll(precise: true))
     }
 
-    func testControlSessionKeepsIdleConnectionAliveLongEnoughForRealUse() {
-        XCTAssertGreaterThanOrEqual(AppiumControlConfiguration().newCommandTimeoutSeconds, 300)
+    func testControlSessionKeepAliveRunsBeforeAppiumCanExpireTheSession() {
+        let configuration = AppiumControlConfiguration()
+
+        XCTAssertGreaterThan(configuration.keepAliveIntervalSeconds, 0)
+        XCTAssertLessThan(
+            configuration.keepAliveIntervalSeconds,
+            TimeInterval(configuration.newCommandTimeoutSeconds)
+        )
+    }
+
+    @MainActor
+    func testIdleControlSessionSendsKeepAliveAndStopsWhenDisconnected() async throws {
+        let stub = AppiumKeepAliveStub(mode: .healthy)
+        let session = AppiumControlSession(
+            device: androidDevice(),
+            httpClientFactory: { baseURL, platform in
+                AppiumHTTPClient(
+                    baseURL: baseURL,
+                    platform: platform,
+                    dataLoader: { request in try await stub.response(for: request) }
+                )
+            }
+        )
+        var configuration = AppiumControlConfiguration(platform: .android)
+        configuration.keepAliveIntervalSeconds = 0.02
+        session.installWarmSessionForTesting(
+            serverURL: "http://appium.test:4723",
+            bundleID: "",
+            configuration: configuration,
+            screenSize: DeviceScreenSize(width: 1080, height: 2400)
+        )
+
+        try await waitUntil { await stub.keepAliveRequestCount >= 1 }
+        session.disconnectKeepingAgentWarm()
+        let countAfterDisconnect = await stub.keepAliveRequestCount
+        try await Task.sleep(for: .milliseconds(80))
+
+        let finalCount = await stub.keepAliveRequestCount
+        XCTAssertEqual(finalCount, countAfterDisconnect)
+    }
+
+    @MainActor
+    func testDeadIdleSessionReconnectsAutomatically() async throws {
+        let stub = AppiumKeepAliveStub(mode: .expireWarmSession)
+        let session = AppiumControlSession(
+            device: androidDevice(),
+            httpClientFactory: { baseURL, platform in
+                AppiumHTTPClient(
+                    baseURL: baseURL,
+                    platform: platform,
+                    dataLoader: { request in try await stub.response(for: request) }
+                )
+            }
+        )
+        var configuration = AppiumControlConfiguration(platform: .android)
+        configuration.keepAliveIntervalSeconds = 0.02
+        session.installWarmSessionForTesting(
+            serverURL: "http://appium.test:4723",
+            bundleID: "",
+            configuration: configuration,
+            screenSize: DeviceScreenSize(width: 1080, height: 2400)
+        )
+
+        try await waitUntil {
+            await stub.createdSessionCount == 1 && session.isReady
+        }
+
+        let createdSessionCount = await stub.createdSessionCount
+        let actionRequestCount = await stub.actionRequestCount
+        XCTAssertEqual(createdSessionCount, 1)
+        XCTAssertEqual(actionRequestCount, 0)
+        session.disconnectKeepingAgentWarm()
+    }
+
+    @MainActor
+    func testActionThatFindsDeadSessionReconnectsWithoutReplay() async throws {
+        let stub = AppiumKeepAliveStub(mode: .expireWarmAction)
+        let session = AppiumControlSession(
+            device: androidDevice(),
+            httpClientFactory: { baseURL, platform in
+                AppiumHTTPClient(
+                    baseURL: baseURL,
+                    platform: platform,
+                    dataLoader: { request in try await stub.response(for: request) }
+                )
+            }
+        )
+        var configuration = AppiumControlConfiguration(platform: .android)
+        configuration.keepAliveIntervalSeconds = 10
+        session.installWarmSessionForTesting(
+            serverURL: "http://appium.test:4723",
+            bundleID: "",
+            configuration: configuration,
+            screenSize: DeviceScreenSize(width: 1080, height: 2400)
+        )
+
+        session.tapNormalized(x: 0.5, y: 0.5, serverURL: "http://appium.test:4723")
+        try await waitUntil {
+            await stub.createdSessionCount == 1 && session.isReady
+        }
+
+        let actionRequestCount = await stub.actionRequestCount
+        XCTAssertEqual(actionRequestCount, 1)
+        session.disconnectKeepingAgentWarm()
     }
 
     func testControlSessionPrefersInstalledWDAByDefault() {
@@ -338,9 +441,39 @@ final class ControlGestureReducerTests: XCTestCase {
 
     func testActionFailureInvalidatesDeadSessionsButNotOrdinaryBadInput() {
         XCTAssertTrue(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(404, #"{"value":{"message":"invalid session id"}}"#)))
+        XCTAssertTrue(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(404, #"{"value":{"message":"A session is either terminated or not started"}}"#)))
         XCTAssertTrue(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(500, #"{"value":{"message":"socket hang up while talking to WDA"}}"#)))
 
         XCTAssertFalse(AppiumError.shouldInvalidateActiveSession(afterActionError: AppiumError.httpStatus(400, #"{"value":{"message":"bad argument: x must be a number"}}"#)))
+    }
+
+    private func androidDevice() -> DeviceIdentity {
+        DeviceIdentity(
+            id: "test-android",
+            udid: "RFCY10DHQ3P",
+            platform: .android,
+            name: "Test Android",
+            productType: "Android",
+            osVersion: "16",
+            connectionState: .connected,
+            trustState: .trusted
+        )
+    }
+
+    @MainActor
+    private func waitUntil(
+        timeout: Duration = .seconds(1),
+        condition: @escaping @MainActor () async -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !(await condition()) {
+            if clock.now >= deadline {
+                XCTFail("Timed out waiting for asynchronous control-session state")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
     }
 
     func testAppiumDragUsesOneShortW3CGestureWithoutHalfSecondHold() throws {
@@ -398,5 +531,90 @@ final class ControlGestureReducerTests: XCTestCase {
         )
 
         XCTAssertEqual(capabilities["appium:bundleId"] as? String, "com.example.App")
+    }
+}
+
+private actor AppiumKeepAliveStub {
+    enum Mode: Sendable, Equatable {
+        case healthy
+        case expireWarmSession
+        case expireWarmAction
+    }
+
+    let mode: Mode
+    private(set) var keepAliveRequestCount = 0
+    private(set) var createdSessionCount = 0
+    private(set) var actionRequestCount = 0
+
+    init(mode: Mode) {
+        self.mode = mode
+    }
+
+    func response(for request: URLRequest) throws -> (Data, URLResponse) {
+        let url = try XCTUnwrap(request.url)
+        let path = url.path
+        let method = request.httpMethod ?? "GET"
+
+        if path.contains("/session/warm-test-session/window/") {
+            keepAliveRequestCount += 1
+            if mode == .expireWarmSession {
+                return jsonResponse(
+                    url: url,
+                    status: 404,
+                    object: ["value": ["message": "A session is either terminated or not started"]]
+                )
+            }
+            return windowResponse(url: url)
+        }
+        if path == "/status" {
+            return jsonResponse(url: url, object: ["value": ["ready": true]])
+        }
+        if path == "/session", method == "POST" {
+            createdSessionCount += 1
+            return jsonResponse(
+                url: url,
+                object: ["value": ["sessionId": "replacement-session"]]
+            )
+        }
+        if path.hasSuffix("/actions") {
+            actionRequestCount += 1
+            if mode == .expireWarmAction, path.contains("warm-test-session") {
+                return jsonResponse(
+                    url: url,
+                    status: 404,
+                    object: ["value": ["message": "A session is either terminated or not started"]]
+                )
+            }
+            return jsonResponse(url: url, object: ["value": NSNull()])
+        }
+        if path.contains("/session/replacement-session/window/") {
+            return windowResponse(url: url)
+        }
+        if path.hasSuffix("/appium/settings") {
+            return jsonResponse(url: url, object: ["value": NSNull()])
+        }
+        return jsonResponse(url: url, object: ["value": NSNull()])
+    }
+
+    private func windowResponse(url: URL) -> (Data, URLResponse) {
+        jsonResponse(
+            url: url,
+            object: ["value": ["width": 1080, "height": 2400]]
+        )
+    }
+
+    private func jsonResponse(
+        url: URL,
+        status: Int = 200,
+        object: [String: Any]
+    ) -> (Data, URLResponse) {
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        let response = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        return (data, response)
     }
 }

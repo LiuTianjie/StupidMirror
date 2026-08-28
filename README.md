@@ -145,10 +145,12 @@ then keep the Mac and iPhone on the same local network. The first setup for each
 iPhone must be completed over USB: open the independent Wireless Setup Guide,
 which checks the connected device and Apple development account before signing
 and caching the screen agent. This does not connect or enable iPhone control.
-Later wireless sessions wake the Xcode-paired device with `devicectl`, start the
-cached XCUITest runner, and read WDA through the Apple CoreDevice hostname
-returned by `devicectl`. The iPhone-side Bonjour permission prompt is therefore
-not treated as a required startup gate.
+The guide then installs and launches the runner while USB is still connected,
+waits for the iPhone-side Local Network prompt, and verifies WDA through the
+iPhone's reported LAN address. Later wireless sessions keep the `devicectl`
+launch channel alive and reuse that verified LAN path for both video and
+control. A successful guide therefore covers the same route used after USB is
+disconnected.
 Wireless audio is not currently available.
 
 If permission is denied:

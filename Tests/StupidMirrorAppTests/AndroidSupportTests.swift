@@ -106,6 +106,49 @@ final class AndroidSupportTests: XCTestCase {
         XCTAssertEqual(normalized.height, 160.0 / 2340.0, accuracy: 0.0001)
     }
 
+    @MainActor
+    func testLiveAndroidControlKeepAliveSurvivesSessionTimeout() async throws {
+        guard let serial = ProcessInfo.processInfo.environment["STUPIDMIRROR_TEST_ANDROID_SERIAL"],
+              !serial.isEmpty else {
+            throw XCTSkip("Set STUPIDMIRROR_TEST_ANDROID_SERIAL to run the real-device control keep-alive check.")
+        }
+        let session = AppiumControlSession(device: DeviceIdentity(
+            id: serial,
+            udid: serial,
+            platform: .android,
+            name: "Live Android",
+            productType: "Android",
+            osVersion: nil,
+            connectionState: .connected,
+            trustState: .trusted
+        ))
+        var configuration = AppiumControlConfiguration(platform: .android)
+        configuration.newCommandTimeoutSeconds = 3
+        configuration.keepAliveIntervalSeconds = 1
+        session.prepare(
+            serverURL: "http://127.0.0.1:4723",
+            bundleID: "",
+            configuration: configuration
+        )
+
+        let deadline = Date().addingTimeInterval(45)
+        while !session.isReady, session.isConnecting, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        guard session.isReady else {
+            let message = session.statusMessage
+            await session.shutdown(serverURL: "http://127.0.0.1:4723")
+            XCTFail("Android control did not become ready: \(message)")
+            return
+        }
+
+        try await Task.sleep(for: .seconds(6))
+        let stayedAlive = await session.verifyReadySession(serverURL: "http://127.0.0.1:4723")
+        await session.shutdown(serverURL: "http://127.0.0.1:4723")
+
+        XCTAssertTrue(stayedAlive, "The Android session expired despite control keep-alive.")
+    }
+
     func testLiveAndroidScrcpyWhenDeviceSerialIsProvided() async throws {
         guard let serial = ProcessInfo.processInfo.environment["STUPIDMIRROR_TEST_ANDROID_SERIAL"],
               !serial.isEmpty else {

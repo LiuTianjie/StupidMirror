@@ -35,6 +35,14 @@ struct WirelessDeviceMetadata: Hashable, Sendable {
         tunnelState == "connected" && !endpointHosts.isEmpty
     }
 
+    /// A paired CoreDevice may report `disconnected` until the first explicit
+    /// device command wakes it and establishes the local-network channel.
+    /// Keep that state attemptable; `unavailable` is the terminal discovery
+    /// state that should not start a connection attempt.
+    var canAttemptConnection: Bool {
+        tunnelState != "unavailable" && !endpointHosts.isEmpty
+    }
+
     var endpointHosts: [String] {
         Self.uniqueHosts([tunnelIPAddress].compactMap { $0?.nonEmpty } + hostnames)
     }

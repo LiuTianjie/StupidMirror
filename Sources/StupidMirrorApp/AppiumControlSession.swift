@@ -23,6 +23,7 @@ struct AppiumControlConfiguration: Hashable, Sendable {
     var sessionStartupTimeoutSeconds: TimeInterval = 125
     var preinstalledWDAStartupTimeoutSeconds: TimeInterval = 15
     var newCommandTimeoutSeconds: Int = 300
+    var keepAliveIntervalSeconds: TimeInterval = 60
     var allowProvisioningDeviceRegistration: Bool = true
     var directDeviceHost: String = ""
     var platformVersion: String = ""
@@ -133,12 +134,20 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     private var connectionRequest: ConnectionRequest?
     private var cleanupTask: Task<Void, Never>?
     private var actionPumpTask: Task<Void, Never>?
+    private var keepAliveTask: Task<Void, Never>?
     private var warmDisconnectedAt: Date?
     private var pendingActions = ControlActionBuffer()
     private var generation: UInt64 = 0
+    private let httpClientFactory: @Sendable (String, DevicePlatform) -> AppiumHTTPClient
 
-    init(device: DeviceIdentity) {
+    init(
+        device: DeviceIdentity,
+        httpClientFactory: @escaping @Sendable (String, DevicePlatform) -> AppiumHTTPClient = {
+            AppiumHTTPClient(baseURL: $0, platform: $1)
+        }
+    ) {
         self.device = device
+        self.httpClientFactory = httpClientFactory
     }
 
     func updateDevice(_ device: DeviceIdentity) {
@@ -169,17 +178,24 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
     /// fresh session can be created immediately.
     func verifyReadySession(serverURL: String) async -> Bool {
         guard let sessionID, isReady else { return false }
-        let client = AppiumHTTPClient(
-            baseURL: sessionServerURL ?? serverURL,
-            platform: device.platform
-        )
+        let client = httpClientFactory(sessionServerURL ?? serverURL, device.platform)
         do {
             screenSize = try await client.windowSize(sessionID: sessionID)
+            if let request = connectionRequest {
+                startKeepAlive(
+                    sessionID: sessionID,
+                    serverURL: request.serverURL,
+                    request: request,
+                    generation: generation
+                )
+            }
             return true
         } catch {
             generation &+= 1
             actionPumpTask?.cancel()
             actionPumpTask = nil
+            keepAliveTask?.cancel()
+            keepAliveTask = nil
             pendingActions.removeAll()
             self.sessionID = nil
             sessionServerURL = nil
@@ -235,6 +251,12 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         sessionServerURL = request.serverURL
         self.screenSize = screenSize
         state = .ready
+        startKeepAlive(
+            sessionID: "warm-test-session",
+            serverURL: request.serverURL,
+            request: request,
+            generation: generation
+        )
     }
     #endif
 
@@ -266,6 +288,14 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             statusMessage = screenSize.map {
                 "Control ready: \(Int($0.width)) x \(Int($0.height))"
             } ?? "Control ready"
+            if let sessionID {
+                startKeepAlive(
+                    sessionID: sessionID,
+                    serverURL: request.serverURL,
+                    request: request,
+                    generation: generation
+                )
+            }
             return
         }
 
@@ -274,6 +304,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         let previousCleanup = cleanupTask
         let previousPump = actionPumpTask
         previousPump?.cancel()
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
         let previousSessionID = sessionID
         let previousServerURL = sessionServerURL
 
@@ -309,7 +341,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
 
             guard let self, self.generation == taskGeneration else { return }
             var createdSessionID: String?
-            let client = AppiumHTTPClient(baseURL: request.serverURL, platform: self.device.platform)
+            let client = self.httpClientFactory(request.serverURL, self.device.platform)
             do {
                 self.setProgress(
                     "Checking local Appium service...",
@@ -352,6 +384,12 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 self.connectionPhase = nil
                 self.connectionStartedAt = nil
                 self.statusMessage = "Control ready: \(Int(size.width)) x \(Int(size.height))"
+                self.startKeepAlive(
+                    sessionID: sessionID,
+                    serverURL: request.serverURL,
+                    request: request,
+                    generation: taskGeneration
+                )
                 createdSessionID = nil
             } catch is CancellationError {
                 if self.generation == taskGeneration {
@@ -488,6 +526,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         generation &+= 1
         actionPumpTask?.cancel()
         actionPumpTask = nil
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
         pendingActions.removeAll()
         warmDisconnectedAt = Date()
         state = .unavailable
@@ -521,6 +561,14 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         statusMessage = screenSize.map {
             "Control ready: \(Int($0.width)) x \(Int($0.height))"
         } ?? "Control ready"
+        if let sessionID {
+            startKeepAlive(
+                sessionID: sessionID,
+                serverURL: request.serverURL,
+                request: request,
+                generation: generation
+            )
+        }
         return true
     }
 
@@ -765,10 +813,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
             throw AppiumError.controlNotReady
         }
         return (
-            AppiumHTTPClient(
-                baseURL: sessionServerURL ?? serverURL,
-                platform: device.platform
-            ),
+            httpClientFactory(sessionServerURL ?? serverURL, device.platform),
             sessionID,
             screenSize
         )
@@ -783,7 +828,7 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         guard actionPumpTask == nil else { return }
         actionPumpTask = Task { [weak self] in
             guard let self else { return }
-            let client = AppiumHTTPClient(baseURL: serverURL, platform: self.device.platform)
+            let client = self.httpClientFactory(serverURL, self.device.platform)
             while true {
                 guard !Task.isCancelled else { break }
                 guard self.generation == taskGeneration, self.sessionID == sessionID else { break }
@@ -828,11 +873,21 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                         let message = AppiumError.controlFailureMessage(for: error)
                         self.statusMessage = message
                         if AppiumError.shouldInvalidateActiveSession(afterActionError: error) {
+                            let request = self.connectionRequest
+                            self.keepAliveTask?.cancel()
+                            self.keepAliveTask = nil
                             self.sessionID = nil
                             self.sessionServerURL = nil
                             self.screenSize = nil
                             self.pendingActions.removeAll()
                             self.state = .failed(message)
+                            if let request {
+                                self.prepare(
+                                    serverURL: request.serverURL,
+                                    bundleID: request.bundleID,
+                                    configuration: request.configuration
+                                )
+                            }
                         }
                     }
                 }
@@ -846,6 +901,77 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                         generation: taskGeneration
                     )
                 }
+            }
+        }
+    }
+
+    /// Sends a lightweight session-scoped command before Appium's
+    /// `newCommandTimeout` can reap an otherwise healthy control session.
+    /// A definitively dead session is rebuilt in place; the action that found
+    /// it dead is intentionally not replayed because taps are not idempotent.
+    private func startKeepAlive(
+        sessionID: String,
+        serverURL: String,
+        request: ConnectionRequest,
+        generation taskGeneration: UInt64
+    ) {
+        keepAliveTask?.cancel()
+        let interval = request.configuration.keepAliveIntervalSeconds
+        guard interval > 0 else {
+            keepAliveTask = nil
+            return
+        }
+        let sleepNanoseconds = UInt64(min(interval, 86_400) * 1_000_000_000)
+        keepAliveTask = Task { [weak self] in
+            guard let self else { return }
+            let client = self.httpClientFactory(serverURL, self.device.platform)
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: sleepNanoseconds)
+                } catch {
+                    break
+                }
+                guard !Task.isCancelled,
+                      self.generation == taskGeneration,
+                      self.sessionID == sessionID,
+                      self.isReady else {
+                    break
+                }
+                do {
+                    let size = try await client.windowSize(sessionID: sessionID)
+                    guard self.generation == taskGeneration,
+                          self.sessionID == sessionID else {
+                        break
+                    }
+                    self.screenSize = size
+                } catch {
+                    guard !Task.isCancelled,
+                          self.generation == taskGeneration,
+                          self.sessionID == sessionID else {
+                        break
+                    }
+                    guard AppiumError.shouldInvalidateActiveSession(afterActionError: error) else {
+                        continue
+                    }
+                    let message = AppiumError.controlFailureMessage(for: error)
+                    self.sessionID = nil
+                    self.sessionServerURL = nil
+                    self.screenSize = nil
+                    self.pendingActions.removeAll()
+                    self.keepAliveTask = nil
+                    self.state = .failed(message)
+                    self.statusMessage = message
+                    self.prepare(
+                        serverURL: request.serverURL,
+                        bundleID: request.bundleID,
+                        configuration: request.configuration
+                    )
+                    break
+                }
+            }
+            if self.generation == taskGeneration,
+               self.keepAliveTask?.isCancelled == true {
+                self.keepAliveTask = nil
             }
         }
     }
@@ -866,6 +992,8 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
         previousConnection?.cancel()
         let previousPump = actionPumpTask
         previousPump?.cancel()
+        keepAliveTask?.cancel()
+        keepAliveTask = nil
         let previousCleanup = cleanupTask
         let activeSessionID = sessionID
         let activeServerURL = sessionServerURL ?? AppiumHTTPClient.normalizedBaseURLString(serverURL)
@@ -2006,6 +2134,10 @@ enum AppiumError: LocalizedError {
         return haystack.contains("invalid session")
             || haystack.contains("no such driver")
             || haystack.contains("session does not exist")
+            || haystack.contains("session is either terminated or not started")
+            || haystack.contains("session was terminated")
+            || haystack.contains("session not found")
+            || haystack.contains("no active session")
             || haystack.contains("connection was refused")
             || haystack.contains("econnrefused")
             || haystack.contains("socket hang up")

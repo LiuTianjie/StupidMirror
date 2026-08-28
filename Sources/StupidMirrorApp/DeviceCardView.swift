@@ -45,7 +45,7 @@ struct DeviceRowView: View {
         .opacity(isConnected ? 1 : 0.6)
         .contextMenu {
             Button(store.t("card.openMirror")) { store.start(session) }
-                .disabled(!isConnected)
+                .disabled(!store.canAttemptConnection(session))
             Button(store.t("card.stopMirror")) { store.stop(session) }
             Divider()
             Button(store.t("card.refreshThumbnail")) { store.refreshThumbnail(for: session) }
@@ -487,7 +487,7 @@ struct DeviceActionBar: View {
                 )
             }
             .controlSize(.small)
-            .disabled(!isConnected || (store.canUseControl && session.device.udid == nil))
+            .disabled(!store.canAttemptConnection(session) || (store.canUseControl && session.device.udid == nil))
             .help(store.t(store.canUseControl ? "detail.controlHelp" : "detail.controlActivationHelp"))
 
             Button {
@@ -531,7 +531,7 @@ struct DeviceActionBar: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .tint(isLive ? Theme.Palette.danger : Theme.Palette.accent)
-            .disabled(!isConnected)
+            .disabled(!store.canAttemptConnection(session))
 
             Menu {
                 Button(store.t("device.remove"), role: .destructive) {

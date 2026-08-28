@@ -504,7 +504,7 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertTrue(session.matchesDiscovery(id: "later-udid", udid: "later-udid", captureUniqueID: "capture-unique"))
     }
 
-    func testWirelessTunnelMustBeConnectedBeforeItIsUsable() {
+    func testPairedDisconnectedWirelessDeviceCanBeActivelyConnected() {
         let device = WirelessDeviceMetadata(
             udid: "device",
             name: "iPhone",
@@ -516,7 +516,63 @@ final class DeviceDiscoveryTests: XCTestCase {
         )
 
         XCTAssertFalse(device.isTunnelConnected)
+        XCTAssertTrue(device.canAttemptConnection)
         XCTAssertEqual(device.endpointURLs(port: 9200).first?.absoluteString, "http://198.18.0.1:9200")
+    }
+
+    func testUnavailableWirelessDeviceCannotStartAConnectionAttempt() {
+        let device = WirelessDeviceMetadata(
+            udid: "device",
+            name: "iPhone",
+            productType: "iPhone18,4",
+            osVersion: "26.5",
+            hostname: "device.coredevice.local",
+            tunnelState: "unavailable"
+        )
+
+        XCTAssertFalse(device.canAttemptConnection)
+        XCTAssertFalse(DeviceGalleryStore.canAttemptConnection(
+            connectionState: .unavailable,
+            transport: .wireless,
+            wirelessCandidateAvailable: false
+        ))
+        XCTAssertTrue(DeviceGalleryStore.canAttemptConnection(
+            connectionState: .unavailable,
+            transport: .wireless,
+            wirelessCandidateAvailable: true
+        ))
+        XCTAssertFalse(DeviceGalleryStore.canAttemptConnection(
+            connectionState: .unavailable,
+            transport: .usb,
+            wirelessCandidateAvailable: true
+        ))
+    }
+
+    func testDesiredWirelessConnectionStaysConnectedAcrossDisconnectedTunnelPoll() {
+        XCTAssertEqual(
+            DeviceGalleryStore.wirelessConnectionState(
+                tunnelConnected: false,
+                connectionDesired: true,
+                hasActiveEndpoint: false
+            ),
+            .connected
+        )
+        XCTAssertEqual(
+            DeviceGalleryStore.wirelessConnectionState(
+                tunnelConnected: false,
+                connectionDesired: false,
+                hasActiveEndpoint: true
+            ),
+            .connected
+        )
+        XCTAssertEqual(
+            DeviceGalleryStore.wirelessConnectionState(
+                tunnelConnected: false,
+                connectionDesired: false,
+                hasActiveEndpoint: false
+            ),
+            .unavailable
+        )
     }
 
     func testUSBControlDoesNotResolveRetainedWirelessTransport() {
@@ -684,6 +740,19 @@ final class DeviceDiscoveryTests: XCTestCase {
             59_076
         )
         XCTAssertNil(WirelessWDAService.processIdentifier(fromDevicectlJSON: Data("{}".utf8)))
+    }
+
+    func testWirelessWDAReadsLANURLFromRunnerConsoleOutput() {
+        let output = """
+        Launched application.
+        ServerURLHere->http://192.168.31.135:8100<-ServerURLHere
+        """
+
+        XCTAssertEqual(
+            WirelessWDAService.serverURL(fromConsoleOutput: output)?.absoluteString,
+            "http://192.168.31.135:8100"
+        )
+        XCTAssertNil(WirelessWDAService.serverURL(fromConsoleOutput: "ServerURLHere->http://partial"))
     }
 
 }
