@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.24 - 2026-08-28
+
+- Add a screenshot button to the standalone mirror window that copies the
+  latest mirrored device frame directly to the macOS clipboard.
+
 ## 0.2.23 - 2026-08-25
 
 - Discover wired iPhone identifiers through Apple's bundled `devicectl`, so

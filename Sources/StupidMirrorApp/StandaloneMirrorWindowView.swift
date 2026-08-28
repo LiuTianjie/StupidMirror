@@ -325,6 +325,8 @@ private struct MirrorWindowChromeBar: View {
     let isVisible: Bool
     let showChrome: () -> Void
     let scheduleHideChrome: () -> Void
+    @State private var screenshotCopied = false
+    @State private var screenshotFeedbackTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -347,6 +349,14 @@ private struct MirrorWindowChromeBar: View {
                 Spacer()
 
                 HStack(spacing: 8) {
+                    ChromeIconButton(
+                        systemName: screenshotCopied ? "checkmark" : "camera",
+                        help: store.t(screenshotCopied ? "mirror.screenshotCopied" : "mirror.copyScreenshot")
+                    ) {
+                        copyScreenshotToClipboard()
+                    }
+                    .disabled(session.mirrorSession.state != .running)
+
                     ChromeIconButton(
                         systemName: store.audioPlaybackEnabled ? "speaker.wave.2.fill" : "speaker.slash",
                         help: store.t("settings.audioPlaybackHelp")
@@ -380,6 +390,41 @@ private struct MirrorWindowChromeBar: View {
         .onHover { inside in
             inside ? showChrome() : scheduleHideChrome()
         }
+        .onDisappear {
+            screenshotFeedbackTask?.cancel()
+        }
+    }
+
+    private func copyScreenshotToClipboard() {
+        guard let snapshot = session.mirrorSession.latestFrameStore.pngSnapshot(),
+              let pngData = snapshot.pngData else {
+            NSSound.beep()
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setData(pngData, forType: .png) else {
+            NSSound.beep()
+            return
+        }
+
+        if let image = NSImage(data: pngData),
+           let tiffData = image.tiffRepresentation {
+            pasteboard.setData(tiffData, forType: .tiff)
+        }
+
+        screenshotFeedbackTask?.cancel()
+        withAnimation(.easeOut(duration: 0.12)) {
+            screenshotCopied = true
+        }
+        screenshotFeedbackTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.12)) {
+                screenshotCopied = false
+            }
+        }
     }
 }
 
@@ -399,6 +444,7 @@ private struct ChromeIconButton: View {
         .foregroundStyle(.primary.opacity(0.72))
         .background(.black.opacity(0.001))
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 

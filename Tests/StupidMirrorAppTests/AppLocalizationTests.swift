@@ -93,6 +93,8 @@ final class AppLocalizationTests: XCTestCase {
             "device.remove",
             "device.remove.message",
             "mirror.reconnectingBody",
+            "mirror.copyScreenshot",
+            "mirror.screenshotCopied",
             "mirror.pasteClipboard",
             "connection.disconnected",
             "mirror.state.running",
