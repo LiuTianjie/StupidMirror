@@ -407,6 +407,16 @@ button {
   box-shadow: 0 18px 50px rgba(71, 230, 255, 0.34);
 }
 
+.button-purchase {
+  color: var(--ink);
+  background: var(--lime);
+  box-shadow: 0 13px 40px rgba(196, 255, 99, 0.16);
+}
+
+.button-purchase:hover {
+  box-shadow: 0 18px 50px rgba(196, 255, 99, 0.3);
+}
+
 .button-ghost {
   border-color: rgba(255, 255, 255, 0.18);
   color: var(--white);

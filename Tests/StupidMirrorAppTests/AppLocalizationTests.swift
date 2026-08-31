@@ -73,6 +73,7 @@ final class AppLocalizationTests: XCTestCase {
             "license.badge.unactivated",
             "license.badge.help",
             "license.purchase.help",
+            "license.purchase.online",
             "license.status.unlicensed",
             "license.status.licensed",
             "license.error.storage",

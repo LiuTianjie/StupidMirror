@@ -18,6 +18,7 @@ const chineseText = new Map([
   ["StupidMirror.", "StupidMirror。"],
   ["Mirror a real iPhone over USB or Wi-Fi. Then let local OCR, Accessibility, and MCP make it operable by you and your AI agent.", "USB 或无线，把真实 iPhone 放到 Mac 上。再通过本地 OCR、访问树与 MCP，把它交给你和 AI 一起操作。"],
   ["Download for macOS", "下载 macOS 版"],
+  ["Buy activation code", "购买激活码"],
   ["View source", "GitHub 源码"],
   ["It is a mirror,", "它是一面镜子，"],
   ["and a device operations console.", "也是一套设备操作台。"],

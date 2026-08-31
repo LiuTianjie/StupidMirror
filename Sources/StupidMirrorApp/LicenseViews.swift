@@ -102,14 +102,19 @@ struct LicenseActivationView: View {
 
     private var purchaseQRCode: some View {
         HStack(spacing: Theme.Spacing.md) {
-            if let image = Self.xiaohongshuQRCodeImage {
-                Image(nsImage: image)
-                    .resizable()
-                    .interpolation(.none)
-                    .scaledToFit()
-                    .frame(width: 132, height: 132)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 10))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            VStack(spacing: 8) {
+                if let image = Self.xiaohongshuQRCodeImage {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.none)
+                        .scaledToFit()
+                        .frame(width: 132, height: 132)
+                        .background(.white, in: RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                Link(store.t("license.purchase.online"), destination: Self.onlinePurchaseURL)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(store.t("license.purchase.title"))
@@ -123,6 +128,8 @@ struct LicenseActivationView: View {
         .padding(12)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
     }
+
+    private static let onlinePurchaseURL = URL(string: "https://pay.ldxp.cn/item/exords")!
 
     private static let xiaohongshuQRCodeImage: NSImage? = {
         guard

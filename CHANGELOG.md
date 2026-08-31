@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.26 - 2026-08-31
+
+- Add a direct online purchase link below the Xiaohongshu QR code in the
+  activation window.
+- Add the same activation-code purchase entry to the GitHub Pages landing page
+  and refresh its public download link for this release.
+
 ## 0.2.24 - 2026-08-28
 
 - Add a screenshot button to the standalone mirror window that copies the
