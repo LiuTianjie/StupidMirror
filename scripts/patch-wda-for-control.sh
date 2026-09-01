@@ -49,9 +49,24 @@ patch_local_network_service() {
     echo "WDA runner source not found. Install the Appium XCUITest driver first." >&2
     return
   fi
-  if grep -q 'STUPIDMIRROR_LOCAL_NETWORK_SERVICE' "$runner_source_path"; then
-    echo "WDA local-network service patch already installed."
+  # Guard on the consent probe, not the older service patch: machines patched
+  # by a previous release already have the service block and must still get the
+  # consent probe added.
+  if grep -q 'STUPIDMIRROR_LOCAL_NETWORK_CONSENT' "$runner_source_path"; then
+    echo "WDA local-network consent patch already installed."
     return
+  fi
+  if grep -q 'STUPIDMIRROR_LOCAL_NETWORK_SERVICE' "$runner_source_path"; then
+    echo "Upgrading older WDA local-network patch to include the consent probe."
+    local pristine
+    pristine="$(dirname "$runner_source_path")/UITestingUITests.m.stupidmirror-orig"
+    if [ -f "$pristine" ]; then
+      cat "$pristine" > "$runner_source_path"
+    else
+      echo "No pristine runner source to restore; reinstall the XCUITest driver if this patch fails." >&2
+    fi
+  else
+    cp "$runner_source_path" "$(dirname "$runner_source_path")/UITestingUITests.m.stupidmirror-orig"
   fi
 
   local tmp_path
@@ -71,6 +86,7 @@ patch_local_network_service() {
     }
     in_test_runner && /^\{$/ {
       print
+      print "  [self stupidMirrorRequestLocalNetworkConsent];"
       print "  self.stupidMirrorLocalNetworkBrowser = [[NSNetServiceBrowser alloc] init];"
       print "  [self.stupidMirrorLocalNetworkBrowser searchForServicesOfType:@\"_stupidmirror._tcp.\" inDomain:@\"local.\"];"
       print "  NSInteger stupidMirrorPort = [NSProcessInfo.processInfo.environment[@\"USE_PORT\"] integerValue];"
@@ -84,11 +100,78 @@ patch_local_network_service() {
       in_test_runner = 0
       next
     }
+    /^#pragma mark - FBWebServerDelegate$/ {
+      print "// STUPIDMIRROR_LOCAL_NETWORK_CONSENT"
+      print "// iOS only presents the Local Network consent alert after a process"
+      print "// actually attempts local-network access. WDA never does: it just"
+      print "// listens and waits for the Mac to dial in. Without a prompt the grant"
+      print "// is never made, and every inbound SYN to the WDA HTTP/MJPEG ports is"
+      print "// silently dropped while a non-listening port on the same device still"
+      print "// answers with RST. Publishing a Bonjour service is not enough either."
+      print "//"
+      print "// So make one deliberate outbound attempt. It is expected to fail"
+      print "// (errno 65 / NSURLErrorNotConnectedToInternet are how the system"
+      print "// disguises a denial), and failing is fine: the attempt is what causes"
+      print "// iOS to ask the user. Once granted, the decision is keyed to the"
+      print "// runner bundle id and persists across relaunches and reinstalls, so"
+      print "// later sessions pay nothing for this."
+      print "//"
+      print "// STUPIDMIRROR_CONSENT_HOST is set by the Mac to its own LAN address"
+      print "// during first-time USB setup. The port is intentionally one nothing"
+      print "// listens on, so this never disturbs a real service."
+      print "- (void)stupidMirrorRequestLocalNetworkConsent"
+      print "{"
+      print "  NSString *host = NSProcessInfo.processInfo.environment[@\"STUPIDMIRROR_CONSENT_HOST\"];"
+      print "  if (host.length == 0) { return; }"
+      print "  NSString *portValue = NSProcessInfo.processInfo.environment[@\"STUPIDMIRROR_CONSENT_PORT\"];"
+      print "  int port = portValue.length > 0 ? portValue.intValue : 47811;"
+      print "  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{"
+      print "    int fd = socket(AF_INET, SOCK_STREAM, 0);"
+      print "    if (fd < 0) { return; }"
+      print "    struct sockaddr_in addr;"
+      print "    memset(&addr, 0, sizeof(addr));"
+      print "    addr.sin_family = AF_INET;"
+      print "    addr.sin_port = htons((uint16_t)port);"
+      print "    if (inet_pton(AF_INET, host.UTF8String, &addr.sin_addr) == 1) {"
+      print "      struct timeval tv = { .tv_sec = 3, .tv_usec = 0 };"
+      print "      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));"
+      print "      int rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));"
+      print "      [FBLogger logFmt:@\"StupidMirror local-network consent probe rc=%d errno=%d\", rc, rc == 0 ? 0 : errno];"
+      print "    }"
+      print "    close(fd);"
+      print "  });"
+      print "}"
+      print ""
+      print
+      next
+    }
     { print }
   ' "$runner_source_path" > "$tmp_path"
 
   cat "$tmp_path" > "$runner_source_path"
   rm -f "$tmp_path"
+
+  # The probe needs BSD socket headers and FBLogger, which the stock runner
+  # source does not import.
+  local header_tmp
+  header_tmp="$(mktemp)"
+  awk '
+    /^#import <XCTest\/XCTest.h>$/ {
+      print
+      print ""
+      print "// STUPIDMIRROR_LOCAL_NETWORK_CONSENT headers"
+      print "#import <arpa/inet.h>"
+      print "#import <netinet/in.h>"
+      print "#import <sys/socket.h>"
+      print "#import <unistd.h>"
+      print "#import <WebDriverAgentLib/FBLogger.h>"
+      next
+    }
+    { print }
+  ' "$runner_source_path" > "$header_tmp"
+  cat "$header_tmp" > "$runner_source_path"
+  rm -f "$header_tmp"
+
   echo "Installed WDA local-network service patch: $runner_source_path"
 }
 

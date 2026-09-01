@@ -1351,6 +1351,11 @@ final class DeviceGalleryStore: ObservableObject {
         for session in activeSessions {
             session.mirrorSession.dispose()
             session.wirelessWDA?.stop()
+            // App shutdown is the one place the shared runner must actually be
+            // terminated, so no devicectl console outlives the app.
+            if let udid = session.device.udid, !udid.isEmpty, session.transport == .wireless {
+                WirelessWDAService.terminateSharedRunner(udid: udid)
+            }
         }
         for session in activeSessions {
             await session.controlSession.shutdown(serverURL: serverURL)

@@ -76,7 +76,7 @@ final class WirelessWDAService: @unchecked Sendable {
         "XCTestCore.framework"
     ]
 
-    private final class RemoteProcess: @unchecked Sendable {
+    final class RemoteProcess: @unchecked Sendable {
         let udid: String
         let consoleProcess: Process
         let outputPipe: Pipe
@@ -107,6 +107,18 @@ final class WirelessWDAService: @unchecked Sendable {
 
     private struct CommandFailure: Error {
         let output: String
+    }
+
+    /// Lets a termination handler installed before the `RemoteProcess` exists
+    /// reach it once it does.
+    private final class RemoteProcessBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: RemoteProcess?
+
+        var value: RemoteProcess? {
+            get { lock.withLock { stored } }
+            set { lock.withLock { stored = newValue } }
+        }
     }
 
     private final class ConsoleLaunchMonitor: @unchecked Sendable {
@@ -151,9 +163,65 @@ final class WirelessWDAService: @unchecked Sendable {
         }
     }
 
-    static let installedLaunchReadyTimeout: Duration = .seconds(45)
-    static let extraReadyTimeout: Duration = .seconds(30)
-    static let existingProcessReadyTimeout: Duration = .seconds(45)
+    /// One live `devicectl process launch` per device, shared across every
+    /// caller in this process.
+    ///
+    /// Launching passes `--terminate-existing`, so two launches for the same
+    /// bundle ID kill each other's runner. The loser's console never prints
+    /// `ServerURLHere`, its wait times out, and the caller concludes the runner
+    /// is broken and reinstalls it — which is slow and fixes nothing, because
+    /// the runner was fine. Mirroring, control, and retries all reach this code
+    /// for the same UDID, so the collision is routine rather than exotic.
+    ///
+    /// Keeping one registered launch per UDID removes the race: later callers
+    /// reuse the running agent instead of restarting it.
+    final class LaunchRegistry: @unchecked Sendable {
+        static let shared = LaunchRegistry()
+
+        private let lock = NSLock()
+        private var processes: [String: RemoteProcess] = [:]
+
+        /// Returns the live launch for this device, dropping it if it has exited.
+        func existing(udid: String) -> RemoteProcess? {
+            lock.withLock {
+                guard let process = processes[udid] else { return nil }
+                guard process.consoleProcess.isRunning else {
+                    processes[udid] = nil
+                    return nil
+                }
+                return process
+            }
+        }
+
+        /// Publishes a launch, returning any already-registered live launch so
+        /// the caller can discard its own and adopt the winner.
+        func register(_ process: RemoteProcess, udid: String) -> RemoteProcess? {
+            let incumbent: RemoteProcess? = lock.withLock {
+                if let current = processes[udid], current.consoleProcess.isRunning {
+                    return current
+                }
+                processes[udid] = process
+                return nil
+            }
+            return incumbent
+        }
+
+        func remove(udid: String, if process: RemoteProcess) {
+            lock.withLock {
+                if processes[udid] === process { processes[udid] = nil }
+            }
+        }
+    }
+
+    // A runner that has printed its LAN URL has already bound its socket, so
+    // /status normally answers within a second or two. Waiting a minute past
+    // that only stretches the two failures we can actually hit — the agent is
+    // not running, or iOS is refusing inbound connections — and neither gets
+    // better with time. Keep enough headroom for a slow first launch, then fail
+    // fast with an error that names the real cause.
+    static let installedLaunchReadyTimeout: Duration = .seconds(12)
+    static let extraReadyTimeout: Duration = .seconds(8)
+    static let existingProcessReadyTimeout: Duration = .seconds(12)
 
     private let lock = NSLock()
     private var remoteProcess: RemoteProcess?
@@ -319,7 +387,7 @@ final class WirelessWDAService: @unchecked Sendable {
             launched = nil
         }
 
-        if launched != nil {
+        if let launched {
             await progress(.waitingForAgent)
             if let endpoint = await waitForReadyWithoutReinstalling(probeURLs(for: device)) {
                 remember(endpoint)
@@ -328,7 +396,9 @@ final class WirelessWDAService: @unchecked Sendable {
             }
             // A launched runner that has not answered /status is still starting.
             // Reinstalling it kills the process the video plane is waiting on.
-            throw WirelessWDAError.iphoneLocalNetworkDenied
+            throw await Self.unreachableAgentError(
+                host: launched.serverURL.host ?? device.preferredEndpointHost
+            )
         }
 
         await progress(.preparingAgent)
@@ -354,7 +424,76 @@ final class WirelessWDAService: @unchecked Sendable {
             await progress(.connectingVideo)
             return endpoint
         }
-        throw WirelessWDAError.iphoneLocalNetworkDenied
+        throw await Self.unreachableAgentError(
+            host: installed.serverURL.host ?? device.preferredEndpointHost
+        )
+    }
+
+    /// Distinguishes "the agent is not listening" from "iOS is refusing inbound
+    /// connections to it".
+    ///
+    /// A listening socket that iOS is blocking swallows the SYN, so the connect
+    /// times out. A port with no listener answers with RST, which surfaces as a
+    /// refused connection. Reporting both as a local-network denial sends users
+    /// to a Settings toggle that is not the problem; reporting both as a launch
+    /// failure hides the toggle that is.
+    private static func unreachableAgentError(host: String) async -> WirelessWDAError {
+        switch await probeConnectability(host: host, port: 8_100) {
+        case .refused:
+            .launchFailed
+        case .timedOut:
+            .iphoneLocalNetworkDenied
+        case .connected:
+            // Reachable but not answering /status yet: still starting up.
+            .timedOut
+        }
+    }
+
+    private enum Connectability: Sendable {
+        case connected
+        case refused
+        case timedOut
+    }
+
+    private static func probeConnectability(
+        host: String,
+        port: UInt16
+    ) async -> Connectability {
+        await withCheckedContinuation { continuation in
+            let connection = NWConnection(
+                host: NWEndpoint.Host(host),
+                port: NWEndpoint.Port(rawValue: port)!,
+                using: .tcp
+            )
+            let completion = ConnectabilityProbeCompletion(
+                connection: connection,
+                continuation: continuation
+            )
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    completion.finish(.connected)
+                case let .failed(error):
+                    // ECONNREFUSED means the host answered: nothing is listening.
+                    if case let .posix(code) = error, code == .ECONNREFUSED {
+                        completion.finish(.refused)
+                    } else {
+                        completion.finish(.timedOut)
+                    }
+                case .cancelled:
+                    completion.finish(.timedOut)
+                case .waiting, .setup, .preparing:
+                    break
+                @unknown default:
+                    completion.finish(.timedOut)
+                }
+            }
+            let queue = DispatchQueue(label: "stupidmirror.wireless.connectability-probe")
+            connection.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + 6) {
+                completion.finish(.timedOut)
+            }
+        }
     }
 
     private func waitForReadyWithoutReinstalling(_ baseURLs: [URL]) async -> WirelessWDAEndpoint? {
@@ -394,16 +533,26 @@ final class WirelessWDAService: @unchecked Sendable {
         return components.url
     }
 
+    /// Releases this session's reference to the shared runner.
+    ///
+    /// The launch is registered per device and may be shared with another
+    /// session, so stopping one mirror must not terminate a runner the others
+    /// are still streaming from. `LaunchRegistry` drops the entry when the
+    /// process actually exits.
     func stop() {
-        let running = lock.withLock { () -> RemoteProcess? in
-            defer { remoteProcess = nil }
+        lock.withLock {
+            remoteProcess = nil
             cachedEndpoint = nil
-            return remoteProcess
         }
-        guard let running else { return }
-        DispatchQueue.global(qos: .utility).async {
-            running.stop()
-        }
+    }
+
+    /// Terminates the shared runner for a device. Only for app shutdown, where
+    /// leaving an orphaned `devicectl` console behind would keep the agent
+    /// running after the last mirror closed.
+    static func terminateSharedRunner(udid: String) {
+        guard let running = LaunchRegistry.shared.existing(udid: udid) else { return }
+        LaunchRegistry.shared.remove(udid: udid, if: running)
+        DispatchQueue.global(qos: .utility).async { running.stop() }
     }
 
     private func remember(_ endpoint: WirelessWDAEndpoint) {
@@ -605,7 +754,26 @@ final class WirelessWDAService: @unchecked Sendable {
         }
     }
 
+    /// Reuses the registered launch for this device when one is alive, so
+    /// concurrent callers never terminate each other's runner.
     private static func launchInstalledRunner(udid: String, bundleID: String) throws -> RemoteProcess {
+        if let existing = LaunchRegistry.shared.existing(udid: udid) {
+            logger.info("Reusing the running wireless agent launch for \(udid, privacy: .public)")
+            return existing
+        }
+        let launched = try startRunnerProcess(udid: udid, bundleID: bundleID)
+        guard let incumbent = LaunchRegistry.shared.register(launched, udid: udid) else {
+            return launched
+        }
+        // Another caller won the race while this launch was starting. Adopt the
+        // incumbent and retire this one, rather than leaving two launches that
+        // would terminate each other on the next attempt.
+        logger.info("Discarding a duplicate wireless agent launch for \(udid, privacy: .public)")
+        DispatchQueue.global(qos: .utility).async { launched.stop() }
+        return incumbent
+    }
+
+    private static func startRunnerProcess(udid: String, bundleID: String) throws -> RemoteProcess {
         let environment = [
             "USE_PORT": "8100",
             "WDA_PRODUCT_BUNDLE_IDENTIFIER": runnerBundleIdentifier(for: bundleID),
@@ -638,8 +806,12 @@ final class WirelessWDAService: @unchecked Sendable {
         pipe.fileHandleForReading.readabilityHandler = { handle in
             monitor.append(handle.availableData)
         }
+        let launchedProcess = RemoteProcessBox()
         process.terminationHandler = { _ in
             monitor.markFinished()
+            if let launched = launchedProcess.value {
+                LaunchRegistry.shared.remove(udid: udid, if: launched)
+            }
         }
         do {
             try process.run()
@@ -663,12 +835,14 @@ final class WirelessWDAService: @unchecked Sendable {
             logger.error("Launching wireless WDA did not report its LAN URL: \(output, privacy: .public)")
             throw WirelessWDAError.launchFailed
         }
-        return RemoteProcess(
+        let remote = RemoteProcess(
             udid: udid,
             consoleProcess: process,
             outputPipe: pipe,
             serverURL: serverURL
         )
+        launchedProcess.value = remote
+        return remote
     }
 
     @discardableResult
@@ -860,6 +1034,27 @@ private actor WirelessWDAEnsureGate {
         inFlight[udid] = task
         defer { inFlight[udid] = nil }
         return try await task.value
+    }
+}
+
+private final class ConnectabilityProbeCompletion<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private let connection: NWConnection
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(connection: NWConnection, continuation: CheckedContinuation<Value, Never>) {
+        self.connection = connection
+        self.continuation = continuation
+    }
+
+    func finish(_ value: Value) {
+        let pending = lock.withLock { () -> CheckedContinuation<Value, Never>? in
+            defer { continuation = nil }
+            return continuation
+        }
+        guard let pending else { return }
+        connection.cancel()
+        pending.resume(returning: value)
     }
 }
 
