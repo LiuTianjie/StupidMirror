@@ -1352,7 +1352,7 @@ final class DeviceGalleryStore: ObservableObject {
             session.mirrorSession.dispose()
             session.wirelessWDA?.stop()
             // App shutdown is the one place the shared runner must actually be
-            // terminated, so no devicectl console outlives the app.
+            // terminated, so the agent does not keep running after the app exits.
             if let udid = session.device.udid, !udid.isEmpty, session.transport == .wireless {
                 WirelessWDAService.terminateSharedRunner(udid: udid)
             }
@@ -1549,7 +1549,7 @@ final class DeviceGalleryStore: ObservableObject {
             true
         case .missingSigningTeam, .missingRuntime, .firstUSBSetupRequired,
              .deviceLocked, .localNetworkDenied, .iphoneLocalNetworkDenied,
-             .buildFailed, .agentBackgroundingUnsupported:
+             .buildFailed, .agentBackgroundingUnsupported, .missingInstallation:
             // Retrying a backgrounding failure just repeats the 30s device-side
             // timeout: the OS refuses this launch path, not this attempt.
             false
@@ -1566,6 +1566,7 @@ final class DeviceGalleryStore: ObservableObject {
         case .firstUSBSetupRequired: "wireless.error.firstUSBSetupRequired"
         case .buildFailed: "wireless.error.buildFailed"
         case .launchFailed: "wireless.error.launchFailed"
+        case .missingInstallation: "wireless.error.missingInstallation"
         case .localNetworkDenied: "wireless.error.localNetworkDenied"
         case .iphoneLocalNetworkDenied: "wireless.error.iphoneLocalNetworkDenied"
         case .deviceLocked: "wireless.error.deviceLocked"
@@ -1865,22 +1866,18 @@ final class DeviceGalleryStore: ObservableObject {
         for session: DeviceSession
     ) async throws -> AppiumControlConfiguration {
         let configuration = controlConfiguration(for: session)
+        // Wired or wireless: if the installed runner is already answering,
+        // attach to it. Asking Appium to start a session without a URL falls
+        // through to xcodebuild and reinstalls an agent that was never missing.
+        if let endpoint = await existingReadyControlEndpoint(
+            for: session,
+            configuration: configuration
+        ) {
+            return attachingControlConfiguration(configuration, endpoint: endpoint)
+        }
         guard Self.shouldResolveWirelessControl(for: session.transport),
-              let wirelessWDA = session.wirelessWDA else {
-            return configuration
-        }
-        // A live wireless WDA must be attached. Probing and falling through to
-        // install replaces the runner that is currently producing the mirror
-        // stream. USB sessions deliberately ignore retained wireless metadata
-        // and let Appium connect through the cable.
-        if session.mirrorSession.state == .running,
-           let activeEndpoint = wirelessWDA.activeEndpoint {
-            return attachingControlConfiguration(configuration, endpoint: activeEndpoint)
-        }
-        if let activeEndpoint = wirelessWDA.activeEndpoint {
-            return attachingControlConfiguration(configuration, endpoint: activeEndpoint)
-        }
-        guard let wirelessDevice = session.wirelessDevice else {
+              let wirelessWDA = session.wirelessWDA,
+              let wirelessDevice = session.wirelessDevice else {
             return configuration
         }
         let endpoint = try await wirelessWDA.ensureRunning(
@@ -1888,6 +1885,40 @@ final class DeviceGalleryStore: ObservableObject {
             configuration: configuration
         )
         return attachingControlConfiguration(configuration, endpoint: endpoint)
+    }
+
+    private func existingReadyControlEndpoint(
+        for session: DeviceSession,
+        configuration: AppiumControlConfiguration
+    ) async -> WirelessWDAEndpoint? {
+        var urls: [URL] = []
+        if let active = session.wirelessWDA?.activeEndpoint {
+            urls.append(active.controlURL)
+            if let video = WirelessWDAService.controlURL(host: active.videoHost) {
+                urls.append(video)
+            }
+        }
+        if let wireless = session.wirelessDevice {
+            urls.append(contentsOf: wireless.endpointURLs(port: 8_100))
+        }
+        if let udid = session.device.udid, !udid.isEmpty {
+            let isolated = configuration.isolated(forDeviceUDID: udid)
+            if let local = URL(string: "http://127.0.0.1:\(isolated.wdaLocalPort)") {
+                urls.append(local)
+            }
+        }
+        if let defaultLocal = URL(string: "http://127.0.0.1:8100") {
+            urls.append(defaultLocal)
+        }
+        var seen = Set<URL>()
+        let unique = urls.filter { seen.insert($0).inserted }
+        if let ready = await WirelessWDAService.firstReadyEndpoint(unique) {
+            return ready
+        }
+        guard let udid = session.device.udid, !udid.isEmpty else { return nil }
+        return await WirelessWDAService.firstReadyEndpoint(
+            WirelessWDAService.detailsProbeURLs(udid: udid)
+        )
     }
 
     nonisolated static func shouldResolveWirelessControl(

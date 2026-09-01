@@ -147,10 +147,10 @@ which checks the connected device and Apple development account before signing
 and caching the screen agent. This does not connect or enable iPhone control.
 The guide then installs and launches the runner while USB is still connected,
 waits for the iPhone-side Local Network prompt, and verifies WDA through the
-iPhone's reported LAN address. Later wireless sessions keep the `devicectl`
-launch channel alive and reuse that verified LAN path for both video and
-control. A successful guide therefore covers the same route used after USB is
-disconnected.
+iPhone's reported LAN address. Later wireless sessions launch that same runner
+without keeping a Mac `devicectl --console` session attached, and reuse the
+verified LAN path for both video and control. A successful guide therefore
+covers the same route used after USB is unplugged.
 Wireless audio is not currently available.
 
 If permission is denied:

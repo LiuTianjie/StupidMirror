@@ -10,6 +10,7 @@ enum WirelessWDAError: LocalizedError, Equatable {
     case firstUSBSetupRequired
     case buildFailed
     case launchFailed
+    case missingInstallation
     case localNetworkDenied
     case iphoneLocalNetworkDenied
     case deviceLocked
@@ -29,6 +30,8 @@ enum WirelessWDAError: LocalizedError, Equatable {
             "WebDriverAgent could not be prepared for this iPhone."
         case .launchFailed:
             "WebDriverAgent could not be launched over Wi-Fi."
+        case .missingInstallation:
+            "WebDriverAgent is not installed on this iPhone."
         case .localNetworkDenied:
             "Local network access is disabled for StupidMirror."
         case .iphoneLocalNetworkDenied:
@@ -61,12 +64,12 @@ struct WirelessWDAEndpoint: Equatable, Sendable {
 }
 
 /// Launches a USB-prepared WebDriverAgent with Apple's public CoreDevice CLI,
-/// then reads WDA through the iPhone's verified LAN address. CoreDevice's
-/// command tunnel is intentionally kept alive while the runner is active, but
-/// its `*.coredevice.local` names are not assumed to be general-purpose HTTP
-/// endpoints. iOS 17 and newer cannot launch the legacy embedded XCTest
-/// framework bundle directly, so a signed compatibility copy is installed
-/// before the first wireless launch.
+/// then reads WDA through the iPhone's verified LAN address. The launch is
+/// detached: `devicectl --console` is not used, because that flag waits for
+/// the app to exit and forwards a dropped CoreDevice tunnel (or any signal
+/// to the Mac command) into a kill of the runner. iOS 17 and newer cannot
+/// launch the legacy embedded XCTest framework bundle directly, so a signed
+/// compatibility copy is installed before the first wireless launch.
 final class WirelessWDAService: @unchecked Sendable {
     private static let logger = Logger(subsystem: "com.stupidmirror.app", category: "WirelessWDA")
     private static let runnerName = "WebDriverAgentRunner-Runner.app"
@@ -79,32 +82,23 @@ final class WirelessWDAService: @unchecked Sendable {
         "XCTestCore.framework"
     ]
 
+    /// A runner started on the iPhone. It is not owned by a Mac `devicectl`
+    /// process: attaching `--console` made every wireless tunnel blip look
+    /// like a WebDriverAgent crash.
     final class RemoteProcess: @unchecked Sendable {
         let udid: String
-        let consoleProcess: Process
-        let outputPipe: Pipe
-        let serverURL: URL
+        let pid: Int?
+        let serverURL: URL?
 
-        init(
-            udid: String,
-            consoleProcess: Process,
-            outputPipe: Pipe,
-            serverURL: URL
-        ) {
+        init(udid: String, pid: Int?, serverURL: URL?) {
             self.udid = udid
-            self.consoleProcess = consoleProcess
-            self.outputPipe = outputPipe
+            self.pid = pid
             self.serverURL = serverURL
         }
 
         func stop() {
-            guard consoleProcess.isRunning else {
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                return
-            }
-            consoleProcess.interrupt()
-            consoleProcess.waitUntilExit()
-            outputPipe.fileHandleForReading.readabilityHandler = nil
+            // Detached launches outlive the Mac command. App shutdown uses
+            // `terminateSharedRunner` with the recorded PID.
         }
     }
 
@@ -112,106 +106,47 @@ final class WirelessWDAService: @unchecked Sendable {
         let output: String
     }
 
-    /// Lets a termination handler installed before the `RemoteProcess` exists
-    /// reach it once it does.
-    private final class RemoteProcessBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored: RemoteProcess?
-
-        var value: RemoteProcess? {
-            get { lock.withLock { stored } }
-            set { lock.withLock { stored = newValue } }
-        }
-    }
-
-    private final class ConsoleLaunchMonitor: @unchecked Sendable {
-        private let condition = NSCondition()
-        private var output = ""
-        private var serverURL: URL?
-        private var finished = false
-
-        func append(_ data: Data) {
-            condition.lock()
-            if data.isEmpty {
-                finished = true
-            } else if serverURL == nil,
-                      let chunk = String(data: data, encoding: .utf8) {
-                output.append(chunk)
-                if output.utf8.count > 65_536 {
-                    output = String(output.suffix(65_536))
-                }
-                serverURL = WirelessWDAService.serverURL(fromConsoleOutput: output)
-            }
-            condition.broadcast()
-            condition.unlock()
-        }
-
-        func markFinished() {
-            condition.lock()
-            finished = true
-            condition.broadcast()
-            condition.unlock()
-        }
-
-        func waitForServerURL(timeout: TimeInterval) -> URL? {
-            let deadline = Date().addingTimeInterval(timeout)
-            condition.lock()
-            defer { condition.unlock() }
-            while serverURL == nil, !finished, condition.wait(until: deadline) {}
-            return serverURL
-        }
-
-        var capturedOutput: String {
-            condition.withLock { output }
-        }
-    }
-
-    /// One live `devicectl process launch` per device, shared across every
-    /// caller in this process.
+    /// Serializes `devicectl process launch --terminate-existing` per device
+    /// and remembers the last PID so shutdown can stop the runner without a
+    /// console session.
     ///
-    /// Launching passes `--terminate-existing`, so two launches for the same
-    /// bundle ID kill each other's runner. The loser's console never prints
-    /// `ServerURLHere`, its wait times out, and the caller concludes the runner
-    /// is broken and reinstalls it — which is slow and fixes nothing, because
-    /// the runner was fine. Mirroring, control, and retries all reach this code
-    /// for the same UDID, so the collision is routine rather than exotic.
-    ///
-    /// Keeping one registered launch per UDID removes the race: later callers
-    /// reuse the running agent instead of restarting it.
+    /// Launching still passes `--terminate-existing`, so two overlapping
+    /// launches for the same bundle ID would kill each other. Mirroring,
+    /// control, and retries all reach this code for the same UDID. Holding
+    /// one exclusive launch per UDID removes that race. Readiness is the
+    /// iPhone's `/status`, not a Mac process still being alive.
     final class LaunchRegistry: @unchecked Sendable {
         static let shared = LaunchRegistry()
 
         private let lock = NSLock()
-        private var processes: [String: RemoteProcess] = [:]
+        private var exclusiveLocks: [String: NSLock] = [:]
+        private var pids: [String: Int] = [:]
 
-        /// Returns the live launch for this device, dropping it if it has exited.
-        func existing(udid: String) -> RemoteProcess? {
-            lock.withLock {
-                guard let process = processes[udid] else { return nil }
-                guard process.consoleProcess.isRunning else {
-                    processes[udid] = nil
-                    return nil
-                }
-                return process
+        func withExclusiveLaunch<T>(udid: String, body: () throws -> T) rethrows -> T {
+            let udidLock: NSLock = lock.withLock {
+                if let existing = exclusiveLocks[udid] { return existing }
+                let created = NSLock()
+                exclusiveLocks[udid] = created
+                return created
             }
+            udidLock.lock()
+            defer { udidLock.unlock() }
+            return try body()
         }
 
-        /// Publishes a launch, returning any already-registered live launch so
-        /// the caller can discard its own and adopt the winner.
-        func register(_ process: RemoteProcess, udid: String) -> RemoteProcess? {
-            let incumbent: RemoteProcess? = lock.withLock {
-                if let current = processes[udid], current.consoleProcess.isRunning {
-                    return current
-                }
-                processes[udid] = process
-                return nil
-            }
-            return incumbent
+        func remember(pid: Int, udid: String) {
+            lock.withLock { pids[udid] = pid }
         }
 
-        func remove(udid: String, if process: RemoteProcess) {
+        func pid(for udid: String) -> Int? {
+            lock.withLock { pids[udid] }
+        }
+
+        func takePid(_ udid: String) -> Int? {
             lock.withLock {
-                if processes[udid] === process { processes[udid] = nil }
+                let pid = pids[udid]
+                pids[udid] = nil
+                return pid
             }
         }
     }
@@ -224,7 +159,6 @@ final class WirelessWDAService: @unchecked Sendable {
     // fast with an error that names the real cause.
     static let installedLaunchReadyTimeout: Duration = .seconds(12)
     static let extraReadyTimeout: Duration = .seconds(8)
-    static let existingProcessReadyTimeout: Duration = .seconds(12)
 
     private let lock = NSLock()
     private var remoteProcess: RemoteProcess?
@@ -301,18 +235,21 @@ final class WirelessWDAService: @unchecked Sendable {
             )
             return try installAndLaunch(runner: runner, udid: udid, bundleID: bundleID)
         }.value
-        defer {
-            DispatchQueue.global(qos: .utility).async {
-                launched.stop()
-            }
-        }
-        // The runner has already printed its LAN URL by now, so /status answers
-        // in milliseconds when it answers at all. A long wait here only delays
-        // naming the real cause.
-        guard await waitUntilReady([launched.serverURL], timeout: .seconds(15)) != nil else {
+        // Probe CoreDevice's tunnel address first so we can read WDA's reported
+        // LAN IP from /status, then require that LAN IP to answer. Passing only
+        // through the tunnel would not prove wireless mirroring will work after
+        // USB is unplugged.
+        let probeURLs = detailsProbeURLs(udid: udid)
+        guard let endpoint = await waitUntilReady(probeURLs, timeout: .seconds(15)) else {
             throw await unreachableAgentError(
-                host: launched.serverURL.host ?? ""
+                host: probeURLs.first?.host ?? launched.serverURL?.host ?? ""
             )
+        }
+        if let lanURL = controlURL(host: endpoint.videoHost),
+           !probeURLs.contains(lanURL) {
+            guard await waitUntilReady([lanURL], timeout: .seconds(8)) != nil else {
+                throw WirelessWDAError.iphoneLocalNetworkDenied
+            }
         }
     }
 
@@ -364,18 +301,6 @@ final class WirelessWDAService: @unchecked Sendable {
             return endpoint
         }
 
-        if lock.withLock({ remoteProcess }) != nil {
-            await progress(.waitingForAgent)
-            if let endpoint = await Self.waitUntilReady(
-                probeURLs(for: device),
-                timeout: Self.existingProcessReadyTimeout
-            ) {
-                remember(endpoint)
-                await progress(.connectingVideo)
-                return endpoint
-            }
-        }
-
         let isolated = configuration.isolated(forDeviceUDID: device.udid)
         let team = isolated.xcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !team.isEmpty else { throw WirelessWDAError.missingSigningTeam }
@@ -408,7 +333,7 @@ final class WirelessWDAService: @unchecked Sendable {
             // A launched runner that has not answered /status is still starting.
             // Reinstalling it kills the process the video plane is waiting on.
             throw await Self.unreachableAgentError(
-                host: launched.serverURL.host ?? device.preferredEndpointHost
+                host: launched.serverURL?.host ?? device.preferredEndpointHost
             )
         }
 
@@ -436,7 +361,7 @@ final class WirelessWDAService: @unchecked Sendable {
             return endpoint
         }
         throw await Self.unreachableAgentError(
-            host: installed.serverURL.host ?? device.preferredEndpointHost
+            host: installed.serverURL?.host ?? device.preferredEndpointHost
         )
     }
 
@@ -510,12 +435,14 @@ final class WirelessWDAService: @unchecked Sendable {
     }
 
     /// Whether a failed launch could plausibly be fixed by reinstalling the
-    /// runner. Only a genuinely broken or missing installation qualifies.
+    /// runner. Only a genuinely missing installation qualifies — a runner that
+    /// is installed but not answering must be launched, not replaced.
     nonisolated static func isWorthReinstalling(_ error: WirelessWDAError) -> Bool {
         switch error {
-        case .launchFailed, .firstUSBSetupRequired, .buildFailed, .timedOut:
+        case .missingInstallation, .firstUSBSetupRequired:
             true
-        case .deviceLocked, .deviceUnavailable, .agentBackgroundingUnsupported,
+        case .launchFailed, .buildFailed, .timedOut,
+             .deviceLocked, .deviceUnavailable, .agentBackgroundingUnsupported,
              .localNetworkDenied, .iphoneLocalNetworkDenied,
              .missingSigningTeam, .missingRuntime:
             false
@@ -531,9 +458,9 @@ final class WirelessWDAService: @unchecked Sendable {
 
     private func probeURLs(for device: WirelessDeviceMetadata) -> [URL] {
         var urls = Self.candidateBaseURLs(for: device)
-        if let launched = lock.withLock({ remoteProcess }),
-           !urls.contains(launched.serverURL) {
-            urls.insert(launched.serverURL, at: 0)
+        if let launchedURL = lock.withLock({ remoteProcess?.serverURL }),
+           !urls.contains(launchedURL) {
+            urls.insert(launchedURL, at: 0)
         }
         if let cached = lock.withLock({ cachedEndpoint }) {
             if !urls.contains(cached.controlURL) {
@@ -561,10 +488,9 @@ final class WirelessWDAService: @unchecked Sendable {
 
     /// Releases this session's reference to the shared runner.
     ///
-    /// The launch is registered per device and may be shared with another
-    /// session, so stopping one mirror must not terminate a runner the others
-    /// are still streaming from. `LaunchRegistry` drops the entry when the
-    /// process actually exits.
+    /// The runner is not owned by this session: stopping one mirror must not
+    /// terminate a process another session is still streaming from. App
+    /// shutdown uses `terminateSharedRunner`.
     func stop() {
         lock.withLock {
             remoteProcess = nil
@@ -572,13 +498,21 @@ final class WirelessWDAService: @unchecked Sendable {
         }
     }
 
-    /// Terminates the shared runner for a device. Only for app shutdown, where
-    /// leaving an orphaned `devicectl` console behind would keep the agent
-    /// running after the last mirror closed.
+    /// Terminates the shared runner for a device. Only for app shutdown, so
+    /// the agent does not keep running after the last mirror closed.
     static func terminateSharedRunner(udid: String) {
-        guard let running = LaunchRegistry.shared.existing(udid: udid) else { return }
-        LaunchRegistry.shared.remove(udid: udid, if: running)
-        DispatchQueue.global(qos: .utility).async { running.stop() }
+        guard let pid = LaunchRegistry.shared.takePid(udid) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            _ = try? run(
+                "/usr/bin/xcrun",
+                arguments: [
+                    "devicectl", "device", "process", "terminate",
+                    "--device", udid,
+                    "--pid", "\(pid)",
+                    "--timeout", "10"
+                ]
+            )
+        }
     }
 
     private func remember(_ endpoint: WirelessWDAEndpoint) {
@@ -603,6 +537,20 @@ final class WirelessWDAService: @unchecked Sendable {
             || output.localizedCaseInsensitiveContains("Timed out waiting for all destinations")
             || output.localizedCaseInsensitiveContains("destination is not ready")
             || output.localizedCaseInsensitiveContains("device was not found")
+    }
+
+    /// The installed runner is gone from the iPhone. Reinstalling from this
+    /// Mac's cache can fix that; relaunching cannot.
+    nonisolated static func outputIndicatesMissingInstallation(_ output: String) -> Bool {
+        let haystack = output.lowercased()
+        return haystack.contains("is not installed")
+            || haystack.contains("not installed on this device")
+            || haystack.contains("unable to find application")
+            || haystack.contains("could not find application")
+            || haystack.contains("failed to find the application")
+            || haystack.contains("no app with bundle")
+            || (haystack.contains("bundle identifier") && haystack.contains("not found"))
+            || haystack.contains("failed to get the identifier for the app to be installed")
     }
 
     /// Detects the iOS 27 regression where a runner launched through `devicectl`
@@ -800,27 +748,71 @@ final class WirelessWDAService: @unchecked Sendable {
         }
     }
 
-    /// Reuses the registered launch for this device when one is alive, so
-    /// concurrent callers never terminate each other's runner.
+    /// Serializes `--terminate-existing` launches for this device so concurrent
+    /// callers never kill each other's runner.
     private static func launchInstalledRunner(udid: String, bundleID: String) throws -> RemoteProcess {
-        if let existing = LaunchRegistry.shared.existing(udid: udid) {
-            logger.info("Reusing the running wireless agent launch for \(udid, privacy: .public)")
-            return existing
+        try LaunchRegistry.shared.withExclusiveLaunch(udid: udid) {
+            try startRunnerProcess(udid: udid, bundleID: bundleID)
         }
-        let launched = try startRunnerProcess(udid: udid, bundleID: bundleID)
-        guard let incumbent = LaunchRegistry.shared.register(launched, udid: udid) else {
-            return launched
-        }
-        // Another caller won the race while this launch was starting. Adopt the
-        // incumbent and retire this one, rather than leaving two launches that
-        // would terminate each other on the next attempt.
-        logger.info("Discarding a duplicate wireless agent launch for \(udid, privacy: .public)")
-        DispatchQueue.global(qos: .utility).async { launched.stop() }
-        return incumbent
     }
 
+    /// Starts the already-installed runner as a normal app and returns once
+    /// `devicectl` reports the launch. Readiness is `/status`, not stdout:
+    /// attaching `--console` kept the Mac command alive only until the
+    /// wireless tunnel blipped, then CoreDevice forwarded that hangup into a
+    /// kill of WebDriverAgent.
     private static func startRunnerProcess(udid: String, bundleID: String) throws -> RemoteProcess {
-        let environment = [
+        let environment = launchEnvironment(bundleID: bundleID)
+        let environmentData = try JSONSerialization.data(withJSONObject: environment)
+        guard let environmentJSON = String(data: environmentData, encoding: .utf8) else {
+            throw WirelessWDAError.launchFailed
+        }
+        let jsonURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StupidMirror-WDA-Launch-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: jsonURL) }
+        let arguments = processLaunchArguments(
+            udid: udid,
+            bundleID: bundleID,
+            environmentJSON: environmentJSON,
+            jsonOutputPath: jsonURL.path
+        )
+        do {
+            _ = try run("/usr/bin/xcrun", arguments: arguments)
+        } catch let failure as CommandFailure {
+            if outputIndicatesLockedDevice(failure.output) {
+                throw WirelessWDAError.deviceLocked
+            }
+            if outputIndicatesUnavailableDevice(failure.output) {
+                throw WirelessWDAError.deviceUnavailable
+            }
+            if outputIndicatesBackgroundingFailure(failure.output) {
+                logger.error("Wireless WDA could not background on this iOS version: \(failure.output, privacy: .public)")
+                throw WirelessWDAError.agentBackgroundingUnsupported
+            }
+            if outputIndicatesMissingInstallation(failure.output) {
+                logger.error("Wireless WDA is not installed on the iPhone: \(failure.output, privacy: .public)")
+                throw WirelessWDAError.missingInstallation
+            }
+            logger.error("Launching wireless WDA failed: \(failure.output, privacy: .public)")
+            throw WirelessWDAError.launchFailed
+        } catch let error as WirelessWDAError {
+            throw error
+        } catch {
+            throw WirelessWDAError.launchFailed
+        }
+        let jsonData = (try? Data(contentsOf: jsonURL)) ?? Data()
+        let pid = processIdentifier(fromDevicectlJSON: jsonData)
+        if let pid {
+            LaunchRegistry.shared.remember(pid: pid, udid: udid)
+            logger.info("Launched wireless agent pid \(pid, privacy: .public) for \(udid, privacy: .public)")
+        } else {
+            logger.info("Launched wireless agent for \(udid, privacy: .public) without a reported pid")
+        }
+        return RemoteProcess(udid: udid, pid: pid, serverURL: nil)
+    }
+
+    nonisolated static func launchEnvironment(bundleID: String) -> [String: String] {
+        [
             "USE_PORT": "8100",
             "WDA_PRODUCT_BUNDLE_IDENTIFIER": runnerBundleIdentifier(for: bundleID),
             "MJPEG_SERVER_PORT": "9100",
@@ -829,80 +821,76 @@ final class WirelessWDAService: @unchecked Sendable {
             "STUPIDMIRROR_H264_SOURCE_QUALITY": "80",
             "STUPIDMIRROR_H264_BITRATE": "8000000"
         ]
-        let environmentData = try JSONSerialization.data(withJSONObject: environment)
-        guard let environmentJSON = String(data: environmentData, encoding: .utf8) else {
-            throw WirelessWDAError.launchFailed
-        }
-        let process = Process()
-        let pipe = Pipe()
-        let monitor = ConsoleLaunchMonitor()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-        process.arguments = [
+    }
+
+    /// Arguments for a detached `devicectl device process launch`.
+    ///
+    /// `--console` is intentionally omitted: that flag waits for the app to
+    /// exit and forwards catchable signals (including a dropped CoreDevice
+    /// tunnel) to the runner. Appium's own `devicectl` launch does the same.
+    nonisolated static func processLaunchArguments(
+        udid: String,
+        bundleID: String,
+        environmentJSON: String,
+        jsonOutputPath: String
+    ) -> [String] {
+        [
             "devicectl", "device", "process", "launch",
             "--device", udid,
             "--terminate-existing",
-            "--console",
             "--environment-variables", environmentJSON,
-            "--timeout", "2147483647",
+            "--timeout", "60",
+            "--json-output", jsonOutputPath,
             runnerBundleIdentifier(for: bundleID)
         ]
-        process.standardInput = FileHandle.nullDevice
-        process.standardOutput = pipe
-        process.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            monitor.append(handle.availableData)
+    }
+
+    nonisolated static func hosts(fromDeviceDetailsJSON data: Data) -> [String] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return []
         }
-        let launchedProcess = RemoteProcessBox()
-        process.terminationHandler = { _ in
-            monitor.markFinished()
-            if let launched = launchedProcess.value {
-                LaunchRegistry.shared.remove(udid: udid, if: launched)
+        let connection = (root["result"] as? [String: Any])?["connectionProperties"] as? [String: Any]
+        var hosts: [String] = []
+        if let ip = (connection?["tunnelIPAddress"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !ip.isEmpty {
+            hosts.append(ip)
+        }
+        for key in ["localHostnames", "potentialHostnames"] {
+            if let names = connection?[key] as? [String] {
+                hosts.append(contentsOf: names)
             }
         }
+        var seen = Set<String>()
+        return hosts.compactMap { host in
+            let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let key = trimmed.lowercased()
+            guard seen.insert(key).inserted else { return nil }
+            return trimmed
+        }
+    }
+
+    static func detailsProbeURLs(udid: String) -> [URL] {
+        let jsonURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StupidMirror-WDA-Details-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: jsonURL) }
         do {
-            try process.run()
+            _ = try run(
+                "/usr/bin/xcrun",
+                arguments: [
+                    "devicectl", "device", "info", "details",
+                    "--device", udid,
+                    "--json-output", jsonURL.path,
+                    "--timeout", "15"
+                ]
+            )
         } catch {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            throw WirelessWDAError.launchFailed
+            logger.error("Could not read CoreDevice details for \(udid, privacy: .public)")
+            return []
         }
-        // XCTest gives the runner 30.0s to enter the background, so its verdict
-        // lands just after that and the process exits a second later. Waiting
-        // only 30s raced it and lost, discarding the one line that explains the
-        // failure. The monitor also returns as soon as the process exits, so a
-        // longer ceiling costs nothing: a healthy runner prints its URL in 2-3s,
-        // and a failing one is diagnosed at ~32s instead of being misreported
-        // and then reinstalled for another 30s.
-        guard let serverURL = monitor.waitForServerURL(timeout: 45) else {
-            if process.isRunning {
-                process.interrupt()
-                process.waitUntilExit()
-            }
-            pipe.fileHandleForReading.readabilityHandler = nil
-            let output = monitor.capturedOutput
-            // Check backgrounding first: the device reports it while still
-            // unlocked and reachable, so the broader checks below would
-            // misattribute it.
-            if outputIndicatesBackgroundingFailure(output) {
-                logger.error("Wireless WDA could not background on this iOS version: \(output, privacy: .public)")
-                throw WirelessWDAError.agentBackgroundingUnsupported
-            }
-            if outputIndicatesLockedDevice(output) {
-                throw WirelessWDAError.deviceLocked
-            }
-            if outputIndicatesUnavailableDevice(output) {
-                throw WirelessWDAError.deviceUnavailable
-            }
-            logger.error("Launching wireless WDA did not report its LAN URL: \(output, privacy: .public)")
-            throw WirelessWDAError.launchFailed
-        }
-        let remote = RemoteProcess(
-            udid: udid,
-            consoleProcess: process,
-            outputPipe: pipe,
-            serverURL: serverURL
-        )
-        launchedProcess.value = remote
-        return remote
+        guard let data = try? Data(contentsOf: jsonURL) else { return [] }
+        return hosts(fromDeviceDetailsJSON: data).compactMap(controlURL(host:))
     }
 
     @discardableResult
@@ -934,7 +922,7 @@ final class WirelessWDAService: @unchecked Sendable {
         return FileManager.default.fileExists(atPath: config.path) ? config : nil
     }
 
-    private static func run(
+    nonisolated private static func run(
         _ executable: String,
         arguments: [String],
         environment: [String: String] = [:]
@@ -1023,7 +1011,7 @@ final class WirelessWDAService: @unchecked Sendable {
         return WirelessWDAEndpoint(controlURL: baseURL, videoHost: videoHost)
     }
 
-    private static func firstReadyEndpoint(
+    static func firstReadyEndpoint(
         _ baseURLs: [URL]
     ) async -> WirelessWDAEndpoint? {
         await withTaskGroup(of: WirelessWDAEndpoint?.self) { group in

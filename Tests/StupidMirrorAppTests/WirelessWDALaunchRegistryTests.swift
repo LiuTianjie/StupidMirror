@@ -2,132 +2,78 @@ import Foundation
 import XCTest
 @testable import StupidMirrorApp
 
-/// The launch registry exists to stop concurrent callers from terminating each
-/// other's WebDriverAgent runner.
-///
-/// `devicectl device process launch` is invoked with `--terminate-existing`, so
-/// a second launch for the same bundle ID kills the first one's runner. The
-/// loser's console never prints `ServerURLHere`, its readiness wait times out,
-/// and the caller concludes the agent is broken and reinstalls it — a slow
-/// no-op, because the agent was never at fault. Mirroring, control, and retries
-/// all launch for the same UDID, so this collision is routine.
+/// The launch registry serializes `--terminate-existing` launches per device
+/// and remembers the last PID so shutdown can stop a detached runner.
 final class WirelessWDALaunchRegistryTests: XCTestCase {
-    private func makeProcess(udid: String, running: Bool) throws -> WirelessWDAService.RemoteProcess {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        if running {
-            // Long-lived so `isRunning` stays true for the assertions below.
-            process.arguments = ["-c", "sleep 30"]
-        } else {
-            process.arguments = ["-c", "exit 0"]
-        }
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        if !running {
-            process.waitUntilExit()
-        }
-        return WirelessWDAService.RemoteProcess(
-            udid: udid,
-            consoleProcess: process,
-            outputPipe: Pipe(),
-            serverURL: URL(string: "http://192.0.2.1:8100")!
-        )
-    }
-
-    func testRegistersAndReturnsTheLiveLaunchForADevice() throws {
+    func testExclusiveLaunchRunsTheBody() throws {
         let registry = WirelessWDAService.LaunchRegistry()
-        let udid = "00008150-TEST-REGISTER"
-        let launch = try makeProcess(udid: udid, running: true)
-        defer { launch.consoleProcess.terminate() }
-
-        XCTAssertNil(registry.existing(udid: udid))
-        XCTAssertNil(registry.register(launch, udid: udid))
-        XCTAssertTrue(registry.existing(udid: udid) === launch)
+        let udid = "00008150-TEST-EXCLUSIVE"
+        let result = registry.withExclusiveLaunch(udid: udid) { 7 }
+        XCTAssertEqual(result, 7)
     }
 
-    func testASecondLaunchReusesTheIncumbentInsteadOfReplacingIt() throws {
-        let registry = WirelessWDAService.LaunchRegistry()
-        let udid = "00008150-TEST-REUSE"
-        let first = try makeProcess(udid: udid, running: true)
-        let second = try makeProcess(udid: udid, running: true)
-        defer {
-            first.consoleProcess.terminate()
-            second.consoleProcess.terminate()
-        }
-
-        XCTAssertNil(registry.register(first, udid: udid))
-
-        // The incumbent is handed back so the caller retires its own launch
-        // rather than leaving two that would terminate each other.
-        let incumbent = registry.register(second, udid: udid)
-        XCTAssertTrue(incumbent === first)
-        XCTAssertTrue(registry.existing(udid: udid) === first)
-    }
-
-    func testAnExitedLaunchIsNotReused() throws {
-        let registry = WirelessWDAService.LaunchRegistry()
-        let udid = "00008150-TEST-DEAD"
-        let dead = try makeProcess(udid: udid, running: false)
-
-        XCTAssertNil(registry.register(dead, udid: udid))
-        XCTAssertNil(
-            registry.existing(udid: udid),
-            "A launch whose console has exited must not be handed to a new caller"
-        )
-    }
-
-    func testADeadIncumbentIsReplacedByAFreshLaunch() throws {
-        let registry = WirelessWDAService.LaunchRegistry()
-        let udid = "00008150-TEST-REPLACE"
-        let dead = try makeProcess(udid: udid, running: false)
-        let fresh = try makeProcess(udid: udid, running: true)
-        defer { fresh.consoleProcess.terminate() }
-
-        XCTAssertNil(registry.register(dead, udid: udid))
-        XCTAssertNil(registry.register(fresh, udid: udid))
-        XCTAssertTrue(registry.existing(udid: udid) === fresh)
-    }
-
-    func testRemoveOnlyDropsTheMatchingLaunch() throws {
-        let registry = WirelessWDAService.LaunchRegistry()
-        let udid = "00008150-TEST-REMOVE"
-        let current = try makeProcess(udid: udid, running: true)
-        let stale = try makeProcess(udid: udid, running: true)
-        defer {
-            current.consoleProcess.terminate()
-            stale.consoleProcess.terminate()
-        }
-
-        XCTAssertNil(registry.register(current, udid: udid))
-
-        // A superseded launch's termination handler must not evict the launch
-        // that replaced it.
-        registry.remove(udid: udid, if: stale)
-        XCTAssertTrue(registry.existing(udid: udid) === current)
-
-        registry.remove(udid: udid, if: current)
-        XCTAssertNil(registry.existing(udid: udid))
-    }
-
-    func testLaunchesAreTrackedPerDevice() throws {
+    func testPidsAreTrackedPerDeviceAndTakenOnShutdown() {
         let registry = WirelessWDAService.LaunchRegistry()
         let firstUDID = "00008150-TEST-DEVICE-A"
         let secondUDID = "00008130-TEST-DEVICE-B"
-        let first = try makeProcess(udid: firstUDID, running: true)
-        let second = try makeProcess(udid: secondUDID, running: true)
-        defer {
-            first.consoleProcess.terminate()
-            second.consoleProcess.terminate()
-        }
 
-        XCTAssertNil(registry.register(first, udid: firstUDID))
-        XCTAssertNil(
-            registry.register(second, udid: secondUDID),
-            "A launch for a different device is not an incumbent"
+        registry.remember(pid: 11, udid: firstUDID)
+        registry.remember(pid: 22, udid: secondUDID)
+        XCTAssertEqual(registry.pid(for: firstUDID), 11)
+        XCTAssertEqual(registry.pid(for: secondUDID), 22)
+
+        XCTAssertEqual(registry.takePid(firstUDID), 11)
+        XCTAssertNil(registry.pid(for: firstUDID))
+        XCTAssertEqual(registry.pid(for: secondUDID), 22)
+    }
+
+    func testALaterPidReplacesThePreviousOne() {
+        let registry = WirelessWDAService.LaunchRegistry()
+        let udid = "00008150-TEST-REPLACE"
+        registry.remember(pid: 1, udid: udid)
+        registry.remember(pid: 2, udid: udid)
+        XCTAssertEqual(registry.pid(for: udid), 2)
+        XCTAssertEqual(registry.takePid(udid), 2)
+        XCTAssertNil(registry.takePid(udid))
+    }
+}
+
+final class WirelessWDADetachedLaunchTests: XCTestCase {
+    func testProcessLaunchArgumentsDoNotAttachAConsoleSession() {
+        let arguments = WirelessWDAService.processLaunchArguments(
+            udid: "00008150-TEST-LAUNCH",
+            bundleID: "com.stupidmirror.wda.team",
+            environmentJSON: #"{"USE_PORT":"8100"}"#,
+            jsonOutputPath: "/tmp/wda-launch.json"
         )
-        XCTAssertTrue(registry.existing(udid: firstUDID) === first)
-        XCTAssertTrue(registry.existing(udid: secondUDID) === second)
+        XCTAssertFalse(arguments.contains("--console"))
+        XCTAssertTrue(arguments.contains("--terminate-existing"))
+        XCTAssertTrue(arguments.contains("--json-output"))
+        XCTAssertEqual(
+            arguments.last,
+            "com.stupidmirror.wda.team.xctrunner"
+        )
+        XCTAssertFalse(arguments.contains("2147483647"))
+    }
+
+    func testDeviceDetailsHostsPreferTheTunnelAddress() throws {
+        let data = try XCTUnwrap(
+            """
+            {"result":{"connectionProperties":{
+              "tunnelIPAddress":"fd81:2749:b042::1",
+              "localHostnames":["iPhone-Air.coredevice.local","iPhone-Air.coredevice.local"],
+              "potentialHostnames":["00008150-001C2C1E26D8401C.coredevice.local"]
+            }}}
+            """.data(using: .utf8)
+        )
+        XCTAssertEqual(
+            WirelessWDAService.hosts(fromDeviceDetailsJSON: data),
+            [
+                "fd81:2749:b042::1",
+                "iPhone-Air.coredevice.local",
+                "00008150-001C2C1E26D8401C.coredevice.local"
+            ]
+        )
     }
 }
 
@@ -180,10 +126,8 @@ final class WirelessWDABackgroundingFailureTests: XCTestCase {
 final class WirelessWDAReinstallPolicyTests: XCTestCase {
     func testOnlyABrokenInstallationJustifiesReinstalling() {
         for error in [
-            WirelessWDAError.launchFailed,
-            .firstUSBSetupRequired,
-            .buildFailed,
-            .timedOut
+            WirelessWDAError.missingInstallation,
+            .firstUSBSetupRequired
         ] {
             XCTAssertTrue(
                 WirelessWDAService.isWorthReinstalling(error),
@@ -196,6 +140,9 @@ final class WirelessWDAReinstallPolicyTests: XCTestCase {
         for error in [
             // The OS refuses this launch path; a fresh copy behaves identically.
             WirelessWDAError.agentBackgroundingUnsupported,
+            .launchFailed,
+            .timedOut,
+            .buildFailed,
             .deviceLocked,
             .deviceUnavailable,
             .localNetworkDenied,
@@ -208,5 +155,23 @@ final class WirelessWDAReinstallPolicyTests: XCTestCase {
                 "\(error) must not trigger a pointless reinstall"
             )
         }
+    }
+
+    func testMissingInstallationIsDetectedFromDevicectlOutput() {
+        XCTAssertTrue(
+            WirelessWDAService.outputIndicatesMissingInstallation(
+                "The application with bundle identifier com.stupidmirror.wda.team.xctrunner is not installed on this device."
+            )
+        )
+        XCTAssertFalse(
+            WirelessWDAService.outputIndicatesMissingInstallation(
+                "Failed to background test runner within 30.0s."
+            )
+        )
+        XCTAssertFalse(
+            WirelessWDAService.outputIndicatesMissingInstallation(
+                "connect ECONNREFUSED 192.168.1.8:8100"
+            )
+        )
     }
 }

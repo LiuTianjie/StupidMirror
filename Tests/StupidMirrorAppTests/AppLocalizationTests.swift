@@ -51,6 +51,7 @@ final class AppLocalizationTests: XCTestCase {
             "status.wirelessLocalNetworkDenied",
             "wireless.error.firstUSBSetupRequired",
             "wireless.error.launchFailed",
+            "wireless.error.missingInstallation",
             "wireless.error.iphoneLocalNetworkDenied",
             "wireless.error.timedOut",
             "wireless.start.checkingAgent",

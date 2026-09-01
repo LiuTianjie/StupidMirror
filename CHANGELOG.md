@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.28 - 2026-09-01
+
+- Stop tying the wireless screen agent to a Mac `devicectl --console` session.
+  That flag waits for the app to exit and forwards a dropped CoreDevice tunnel
+  into a kill of WebDriverAgent — the agent would work for a while, vanish,
+  then get relaunched or reinstalled. Launch is now detached; readiness is
+  `/status` on the device's own addresses, including the CoreDevice tunnel
+  used to learn the LAN IP.
+- Reuse an already-installed agent on both USB and Wi-Fi. Control attaches to a
+  runner that is already answering, wireless only reinstalls when the app is
+  actually missing, and a refused connection or timeout no longer falls through
+  to xcodebuild.
+
 ## 0.2.27 - 2026-09-01
 
 - Stop concurrent wireless agent launches from terminating each other. Launching

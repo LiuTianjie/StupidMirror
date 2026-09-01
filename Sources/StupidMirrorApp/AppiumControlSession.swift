@@ -443,6 +443,19 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                 configuration: configuration
             )
         }
+        if !configuration.webDriverAgentURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            setProgress(
+                "Connecting to the running WebDriverAgent...",
+                phase: .reusingAgent,
+                generation: generation
+            )
+            return try await startSession(
+                client: client,
+                udid: udid,
+                bundleID: bundleID,
+                configuration: configuration
+            )
+        }
         if configuration.preferInstalledWDA {
             do {
                 let installedConfiguration = configuration.preinstalledProbeConfiguration
@@ -2110,21 +2123,16 @@ enum AppiumError: LocalizedError {
             || haystack.contains("code signing") {
             return false
         }
-        return haystack.contains("usepreinstalledwda")
-            || haystack.contains("preinstalled")
-            || haystack.contains("not installed")
-            || haystack.contains("is not installed")
-            || haystack.contains("does not exist")
-            || haystack.contains("not found")
-            || haystack.contains("not supported")
-            || haystack.contains("could not launch")
-            || haystack.contains("failed to launch")
-            || haystack.contains("connection was refused")
-            || haystack.contains("econnrefused")
-            || haystack.contains("did not become ready")
-            || haystack.contains("wda is not listening")
-            || haystack.contains("timed out while starting webdriveragent")
-            || haystack.contains("devicectl")
+        // Only a genuinely missing runner should fall through to xcodebuild
+        // install. A refused connection, timeout, or failed launch means the
+        // installed agent is not running — relaunch it, do not replace it.
+        return haystack.contains("is not installed")
+            || haystack.contains("not installed on this device")
+            || haystack.contains("unable to find application")
+            || haystack.contains("could not find application")
+            || haystack.contains("failed to find the application")
+            || haystack.contains("no app with bundle")
+            || haystack.contains("webdriveragentrunner is not installed")
     }
 
     static func shouldInvalidateActiveSession(afterActionError error: Error) -> Bool {
