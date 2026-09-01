@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.29 - 2026-09-02
+
+- Restore USB control on iOS 27. A preinstalled runner started through
+  `devicectl` never stays up on that version, so control now falls back to the
+  cached `xcodebuild test-without-building` session instead of stopping with
+  "Failed to start the preinstalled WebDriverAgent".
+- Start wireless mirroring on iOS 27 with that same cached XCTest session,
+  and raise the 10-minute default test time allowance so the never-ending
+  screen agent is not killed after it is already showing video.
+
 ## 0.2.28 - 2026-09-01
 
 - Stop tying the wireless screen agent to a Mac `devicectl --console` session.

@@ -39,6 +39,57 @@ final class WirelessWDALaunchRegistryTests: XCTestCase {
 }
 
 final class WirelessWDADetachedLaunchTests: XCTestCase {
+    func testIOS27UsesAnXCTestSessionInsteadOfARawLaunch() {
+        XCTAssertTrue(WirelessWDAService.needsXCTestSession(osVersion: "27.0"))
+        XCTAssertTrue(WirelessWDAService.needsXCTestSession(osVersion: "27.1"))
+        XCTAssertFalse(WirelessWDAService.needsXCTestSession(osVersion: "26.2"))
+        XCTAssertFalse(WirelessWDAService.needsXCTestSession(osVersion: "18.5"))
+    }
+
+    func testXcodebuildTestArgumentsUseTheCachedRunWithoutRebuilding() {
+        let arguments = WirelessWDAService.xcodebuildTestArguments(
+            udid: "00008150-TEST",
+            xctestrunPath: "/tmp/WDA.xctestrun",
+            derivedDataPath: "/tmp/WDA-Derived"
+        )
+        XCTAssertTrue(arguments.contains("test-without-building"))
+        XCTAssertFalse(arguments.contains("--console"))
+        XCTAssertFalse(arguments.contains("build-for-testing"))
+        XCTAssertEqual(arguments.last, "/tmp/WDA-Derived")
+    }
+
+    func testPatchedXCTestRunRaisesTheExecutionTimeAllowance() throws {
+        let original = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StupidMirror-WDA-original.xctestrun")
+        let plist: [String: Any] = [
+            "WebDriverAgentRunner": [
+                "EnvironmentVariables": ["USE_PORT": ""],
+                "DefaultTestExecutionTimeAllowance": 600
+            ]
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+        try data.write(to: original)
+        defer { try? FileManager.default.removeItem(at: original) }
+
+        let patched = try WirelessWDAService.patchedXCTestRun(
+            from: original,
+            environment: ["USE_PORT": "8100", "STUPIDMIRROR_H264_PORT": "9200"]
+        )
+        defer { try? FileManager.default.removeItem(at: patched) }
+        let parsed = try XCTUnwrap(
+            PropertyListSerialization.propertyList(
+                from: Data(contentsOf: patched),
+                format: nil
+            ) as? [String: Any]
+        )
+        let test = try XCTUnwrap(parsed["WebDriverAgentRunner"] as? [String: Any])
+        let env = try XCTUnwrap(test["EnvironmentVariables"] as? [String: Any])
+        XCTAssertEqual(env["USE_PORT"] as? String, "8100")
+        XCTAssertEqual(env["STUPIDMIRROR_H264_PORT"] as? String, "9200")
+        XCTAssertEqual((test["DefaultTestExecutionTimeAllowance"] as? NSNumber)?.intValue, 604_800)
+        XCTAssertEqual(test["TestTimeoutsEnabled"] as? Bool, false)
+    }
+
     func testProcessLaunchArgumentsDoNotAttachAConsoleSession() {
         let arguments = WirelessWDAService.processLaunchArguments(
             udid: "00008150-TEST-LAUNCH",

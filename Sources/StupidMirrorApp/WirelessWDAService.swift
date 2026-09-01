@@ -82,23 +82,25 @@ final class WirelessWDAService: @unchecked Sendable {
         "XCTestCore.framework"
     ]
 
-    /// A runner started on the iPhone. It is not owned by a Mac `devicectl`
-    /// process: attaching `--console` made every wireless tunnel blip look
-    /// like a WebDriverAgent crash.
+    /// A runner started on the iPhone. On iOS 27+ the Mac-side XCTest session
+    /// (`xcodebuild test-without-building`) is what keeps it alive; a raw
+    /// `devicectl` launch is killed by XCTest before it can serve HTTP.
     final class RemoteProcess: @unchecked Sendable {
         let udid: String
         let pid: Int?
         let serverURL: URL?
+        let sessionProcess: Process?
 
-        init(udid: String, pid: Int?, serverURL: URL?) {
+        init(udid: String, pid: Int?, serverURL: URL?, sessionProcess: Process? = nil) {
             self.udid = udid
             self.pid = pid
             self.serverURL = serverURL
+            self.sessionProcess = sessionProcess
         }
 
         func stop() {
-            // Detached launches outlive the Mac command. App shutdown uses
-            // `terminateSharedRunner` with the recorded PID.
+            // Shared sessions outlive one mirror. App shutdown uses
+            // `terminateSharedRunner`.
         }
     }
 
@@ -121,6 +123,7 @@ final class WirelessWDAService: @unchecked Sendable {
         private let lock = NSLock()
         private var exclusiveLocks: [String: NSLock] = [:]
         private var pids: [String: Int] = [:]
+        private var sessionProcesses: [String: Process] = [:]
 
         func withExclusiveLaunch<T>(udid: String, body: () throws -> T) rethrows -> T {
             let udidLock: NSLock = lock.withLock {
@@ -149,6 +152,54 @@ final class WirelessWDAService: @unchecked Sendable {
                 return pid
             }
         }
+
+        func remember(session process: Process, udid: String) {
+            let previous: Process? = lock.withLock {
+                let old = sessionProcesses[udid]
+                sessionProcesses[udid] = process
+                return old === process ? nil : old
+            }
+            if let previous, previous.isRunning {
+                previous.interrupt()
+            }
+        }
+
+        func runningSession(udid: String) -> Process? {
+            lock.withLock {
+                guard let process = sessionProcesses[udid], process.isRunning else {
+                    sessionProcesses[udid] = nil
+                    return nil
+                }
+                return process
+            }
+        }
+
+        func takeSession(_ udid: String) -> Process? {
+            lock.withLock {
+                let process = sessionProcesses[udid]
+                sessionProcesses[udid] = nil
+                return process
+            }
+        }
+    }
+
+    private final class TextAccumulator: @unchecked Sendable {
+        private let lock = NSLock()
+        private var text = ""
+
+        func append(_ data: Data) {
+            guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
+            lock.lock()
+            text.append(chunk)
+            if text.utf8.count > 65_536 {
+                text = String(text.suffix(65_536))
+            }
+            lock.unlock()
+        }
+
+        var value: String {
+            lock.withLock { text }
+        }
     }
 
     // A runner that has printed its LAN URL has already bound its socket, so
@@ -159,6 +210,7 @@ final class WirelessWDAService: @unchecked Sendable {
     // fast with an error that names the real cause.
     static let installedLaunchReadyTimeout: Duration = .seconds(12)
     static let extraReadyTimeout: Duration = .seconds(8)
+    static let xcodebuildReadyTimeout: Duration = .seconds(45)
 
     private let lock = NSLock()
     private var remoteProcess: RemoteProcess?
@@ -308,6 +360,29 @@ final class WirelessWDAService: @unchecked Sendable {
         guard !bundleID.isEmpty else { throw WirelessWDAError.missingSigningTeam }
 
         await progress(.launchingInstalledAgent)
+        if Self.needsXCTestSession(osVersion: device.osVersion) {
+            let session = try await Task.detached(priority: .userInitiated, operation: {
+                try Self.startXcodebuildSession(
+                    udid: device.udid,
+                    bundleID: bundleID,
+                    derivedDataPath: isolated.derivedDataPath
+                )
+            }).value
+            lock.withLock { remoteProcess = session }
+            await progress(.waitingForAgent)
+            if let endpoint = await Self.waitUntilReady(
+                probeURLs(for: device),
+                timeout: Self.xcodebuildReadyTimeout
+            ) {
+                remember(endpoint)
+                await progress(.connectingVideo)
+                return endpoint
+            }
+            throw await Self.unreachableAgentError(
+                host: device.preferredEndpointHost
+            )
+        }
+
         let launched: RemoteProcess?
         do {
             launched = try await Task.detached(priority: .userInitiated, operation: {
@@ -501,17 +576,25 @@ final class WirelessWDAService: @unchecked Sendable {
     /// Terminates the shared runner for a device. Only for app shutdown, so
     /// the agent does not keep running after the last mirror closed.
     static func terminateSharedRunner(udid: String) {
-        guard let pid = LaunchRegistry.shared.takePid(udid) else { return }
+        let session = LaunchRegistry.shared.takeSession(udid)
+        let pid = LaunchRegistry.shared.takePid(udid)
+        guard session != nil || pid != nil else { return }
         DispatchQueue.global(qos: .utility).async {
-            _ = try? run(
-                "/usr/bin/xcrun",
-                arguments: [
-                    "devicectl", "device", "process", "terminate",
-                    "--device", udid,
-                    "--pid", "\(pid)",
-                    "--timeout", "10"
-                ]
-            )
+            if let session, session.isRunning {
+                session.interrupt()
+                session.waitUntilExit()
+            }
+            if let pid {
+                _ = try? run(
+                    "/usr/bin/xcrun",
+                    arguments: [
+                        "devicectl", "device", "process", "terminate",
+                        "--device", udid,
+                        "--pid", "\(pid)",
+                        "--timeout", "10"
+                    ]
+                )
+            }
         }
     }
 
@@ -809,6 +892,154 @@ final class WirelessWDAService: @unchecked Sendable {
             logger.info("Launched wireless agent for \(udid, privacy: .public) without a reported pid")
         }
         return RemoteProcess(udid: udid, pid: pid, serverURL: nil)
+    }
+
+    /// iOS 27+ kills a raw `devicectl` XCTest launch before HTTP starts.
+    /// `xcodebuild test-without-building` performs the testmanagerd handshake
+    /// that Appium uses on USB, and is the only launch that stays up.
+    nonisolated static func needsXCTestSession(osVersion: String) -> Bool {
+        let major = osVersion.split(separator: ".").first.flatMap { Int($0) } ?? 0
+        return major >= 27
+    }
+
+    private static func startXcodebuildSession(
+        udid: String,
+        bundleID: String,
+        derivedDataPath: String
+    ) throws -> RemoteProcess {
+        try LaunchRegistry.shared.withExclusiveLaunch(udid: udid) {
+            if let existing = LaunchRegistry.shared.runningSession(udid: udid) {
+                logger.info("Reusing the running XCTest session for \(udid, privacy: .public)")
+                return RemoteProcess(
+                    udid: udid,
+                    pid: LaunchRegistry.shared.pid(for: udid),
+                    serverURL: nil,
+                    sessionProcess: existing
+                )
+            }
+            guard let xctestrun = xctestrunURL(derivedDataPath: derivedDataPath) else {
+                throw WirelessWDAError.firstUSBSetupRequired
+            }
+            let patched = try patchedXCTestRun(
+                from: xctestrun,
+                environment: launchEnvironment(bundleID: bundleID)
+            )
+            let process = Process()
+            let pipe = Pipe()
+            let output = TextAccumulator()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+            process.arguments = xcodebuildTestArguments(
+                udid: udid,
+                xctestrunPath: patched.path,
+                derivedDataPath: derivedDataPath
+            )
+            process.environment = ProcessInfo.processInfo.environment
+                .merging(launchEnvironment(bundleID: bundleID)) { _, new in new }
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = pipe
+            process.standardError = pipe
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                output.append(handle.availableData)
+            }
+            do {
+                try process.run()
+            } catch {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                throw WirelessWDAError.launchFailed
+            }
+            LaunchRegistry.shared.remember(session: process, udid: udid)
+            // xcodebuild either stays up for the test session or dies in a few
+            // seconds with a usable error. A healthy run is still starting here.
+            let deadline = Date().addingTimeInterval(4)
+            while Date() < deadline, process.isRunning {
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            if !process.isRunning {
+                pipe.fileHandleForReading.readabilityHandler = nil
+                let captured = output.value
+                if outputIndicatesLockedDevice(captured) {
+                    throw WirelessWDAError.deviceLocked
+                }
+                if outputIndicatesUnavailableDevice(captured) {
+                    throw WirelessWDAError.deviceUnavailable
+                }
+                if outputIndicatesBackgroundingFailure(captured) {
+                    throw WirelessWDAError.agentBackgroundingUnsupported
+                }
+                logger.error("xcodebuild XCTest session exited: \(captured, privacy: .public)")
+                throw WirelessWDAError.launchFailed
+            }
+            return RemoteProcess(
+                udid: udid,
+                pid: nil,
+                serverURL: nil,
+                sessionProcess: process
+            )
+        }
+    }
+
+    nonisolated static func xctestrunURL(derivedDataPath: String) -> URL? {
+        let products = URL(fileURLWithPath: derivedDataPath, isDirectory: true)
+            .appendingPathComponent("Build/Products", isDirectory: true)
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: products,
+            includingPropertiesForKeys: nil
+        ) else {
+            return nil
+        }
+        let runs = contents.filter { $0.pathExtension == "xctestrun" }
+        return runs.first { $0.lastPathComponent.localizedCaseInsensitiveContains("iphoneos") }
+            ?? runs.first
+    }
+
+    nonisolated static func xcodebuildTestArguments(
+        udid: String,
+        xctestrunPath: String,
+        derivedDataPath: String
+    ) -> [String] {
+        [
+            "xcodebuild", "test-without-building",
+            "-xctestrun", xctestrunPath,
+            "-destination", "id=\(udid)",
+            "-derivedDataPath", derivedDataPath
+        ]
+    }
+
+    /// Copies an xctestrun so the never-ending WDA test is not killed at the
+    /// default 600s allowance, and so H.264/SRT ports are set.
+    nonisolated static func patchedXCTestRun(
+        from source: URL,
+        environment: [String: String]
+    ) throws -> URL {
+        let data = try Data(contentsOf: source)
+        var format = PropertyListSerialization.PropertyListFormat.xml
+        guard var root = try PropertyListSerialization.propertyList(
+            from: data,
+            options: [.mutableContainersAndLeaves],
+            format: &format
+        ) as? [String: Any] else {
+            throw WirelessWDAError.firstUSBSetupRequired
+        }
+        for key in Array(root.keys) {
+            guard var test = root[key] as? [String: Any] else { continue }
+            var env = (test["EnvironmentVariables"] as? [String: Any]) ?? [:]
+            for (name, value) in environment {
+                env[name] = value
+            }
+            test["EnvironmentVariables"] = env
+            test["DefaultTestExecutionTimeAllowance"] = 604_800
+            test["TestTimeoutsEnabled"] = false
+            root[key] = test
+        }
+        let patched = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StupidMirror-WDA-\(UUID().uuidString).xctestrun")
+        let output = try PropertyListSerialization.data(
+            fromPropertyList: root,
+            format: .xml,
+            options: 0
+        )
+        try output.write(to: patched, options: .atomic)
+        return patched
     }
 
     nonisolated static func launchEnvironment(bundleID: String) -> [String: String] {

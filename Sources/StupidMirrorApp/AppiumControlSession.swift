@@ -475,9 +475,14 @@ final class AppiumControlSession: ObservableObject, @unchecked Sendable {
                     throw error
                 }
                 try Task.checkCancellation()
+                // iOS 27 cannot keep a raw preinstalled runner alive. The
+                // cached xcodebuild path starts the same installed agent
+                // through testmanagerd; it is not a source rebuild.
                 setProgress(
-                    "Installed WebDriverAgent is not reusable; installing control agent...",
-                    phase: .installingAgent,
+                    configuration.usePrebuiltWDA
+                        ? "Starting the cached WebDriverAgent…"
+                        : "Installed WebDriverAgent is not reusable; installing control agent...",
+                    phase: configuration.usePrebuiltWDA ? .reusingAgent : .installingAgent,
                     generation: generation
                 )
             }
@@ -2123,9 +2128,10 @@ enum AppiumError: LocalizedError {
             || haystack.contains("code signing") {
             return false
         }
-        // Only a genuinely missing runner should fall through to xcodebuild
-        // install. A refused connection, timeout, or failed launch means the
-        // installed agent is not running — relaunch it, do not replace it.
+        // Fall through to the cached xcodebuild launch when the preinstalled
+        // runner is missing, or when iOS refuses to keep a raw `devicectl`
+        // launch alive. Do not treat a refused connection to an already
+        // attached URL as "not installed".
         return haystack.contains("is not installed")
             || haystack.contains("not installed on this device")
             || haystack.contains("unable to find application")
@@ -2133,6 +2139,9 @@ enum AppiumError: LocalizedError {
             || haystack.contains("failed to find the application")
             || haystack.contains("no app with bundle")
             || haystack.contains("webdriveragentrunner is not installed")
+            || haystack.contains("failed to start the preinstalled")
+            || haystack.contains("unable to launch webdriveragent")
+            || haystack.contains("timed out while starting webdriveragent")
     }
 
     static func shouldInvalidateActiveSession(afterActionError error: Error) -> Bool {
