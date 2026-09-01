@@ -306,8 +306,13 @@ final class WirelessWDAService: @unchecked Sendable {
                 launched.stop()
             }
         }
-        guard await waitUntilReady([launched.serverURL], timeout: .seconds(90)) != nil else {
-            throw WirelessWDAError.iphoneLocalNetworkDenied
+        // The runner has already printed its LAN URL by now, so /status answers
+        // in milliseconds when it answers at all. A long wait here only delays
+        // naming the real cause.
+        guard await waitUntilReady([launched.serverURL], timeout: .seconds(15)) != nil else {
+            throw await unreachableAgentError(
+                host: launched.serverURL.host ?? ""
+            )
         }
     }
 
@@ -384,7 +389,10 @@ final class WirelessWDAService: @unchecked Sendable {
                 try Self.launchInstalledRunner(udid: device.udid, bundleID: bundleID)
             }).value
             lock.withLock { remoteProcess = launched }
-        } catch let error as WirelessWDAError where error == .deviceLocked || error == .deviceUnavailable {
+        } catch let error as WirelessWDAError where !Self.isWorthReinstalling(error) {
+            // Reinstalling cannot fix a locked device, an unreachable one, or an
+            // OS that refuses this launch path — it just repeats the same wait
+            // after a slow install.
             throw error
         } catch {
             launched = nil
@@ -441,14 +449,16 @@ final class WirelessWDAService: @unchecked Sendable {
     /// to a Settings toggle that is not the problem; reporting both as a launch
     /// failure hides the toggle that is.
     private static func unreachableAgentError(host: String) async -> WirelessWDAError {
-        switch await probeConnectability(host: host, port: 8_100) {
+        let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .iphoneLocalNetworkDenied }
+        switch await probeConnectability(host: trimmed, port: 8_100) {
         case .refused:
-            .launchFailed
+            return .launchFailed
         case .timedOut:
-            .iphoneLocalNetworkDenied
+            return .iphoneLocalNetworkDenied
         case .connected:
             // Reachable but not answering /status yet: still starting up.
-            .timedOut
+            return .timedOut
         }
     }
 
@@ -496,6 +506,19 @@ final class WirelessWDAService: @unchecked Sendable {
             queue.asyncAfter(deadline: .now() + 6) {
                 completion.finish(.timedOut)
             }
+        }
+    }
+
+    /// Whether a failed launch could plausibly be fixed by reinstalling the
+    /// runner. Only a genuinely broken or missing installation qualifies.
+    nonisolated static func isWorthReinstalling(_ error: WirelessWDAError) -> Bool {
+        switch error {
+        case .launchFailed, .firstUSBSetupRequired, .buildFailed, .timedOut:
+            true
+        case .deviceLocked, .deviceUnavailable, .agentBackgroundingUnsupported,
+             .localNetworkDenied, .iphoneLocalNetworkDenied,
+             .missingSigningTeam, .missingRuntime:
+            false
         }
     }
 
@@ -842,7 +865,14 @@ final class WirelessWDAService: @unchecked Sendable {
             pipe.fileHandleForReading.readabilityHandler = nil
             throw WirelessWDAError.launchFailed
         }
-        guard let serverURL = monitor.waitForServerURL(timeout: 30) else {
+        // XCTest gives the runner 30.0s to enter the background, so its verdict
+        // lands just after that and the process exits a second later. Waiting
+        // only 30s raced it and lost, discarding the one line that explains the
+        // failure. The monitor also returns as soon as the process exits, so a
+        // longer ceiling costs nothing: a healthy runner prints its URL in 2-3s,
+        // and a failing one is diagnosed at ~32s instead of being misreported
+        // and then reinstalled for another 30s.
+        guard let serverURL = monitor.waitForServerURL(timeout: 45) else {
             if process.isRunning {
                 process.interrupt()
                 process.waitUntilExit()

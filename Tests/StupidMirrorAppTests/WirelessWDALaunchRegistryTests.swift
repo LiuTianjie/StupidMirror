@@ -174,3 +174,39 @@ final class WirelessWDABackgroundingFailureTests: XCTestCase {
         XCTAssertFalse(WirelessWDAService.outputIndicatesBackgroundingFailure(other))
     }
 }
+
+/// Reinstalling the runner costs a slow install plus a repeat of the launch
+/// wait, so it must only be attempted for failures it could actually fix.
+final class WirelessWDAReinstallPolicyTests: XCTestCase {
+    func testOnlyABrokenInstallationJustifiesReinstalling() {
+        for error in [
+            WirelessWDAError.launchFailed,
+            .firstUSBSetupRequired,
+            .buildFailed,
+            .timedOut
+        ] {
+            XCTAssertTrue(
+                WirelessWDAService.isWorthReinstalling(error),
+                "\(error) should allow a reinstall attempt"
+            )
+        }
+    }
+
+    func testFailuresAReinstallCannotFixSkipIt() {
+        for error in [
+            // The OS refuses this launch path; a fresh copy behaves identically.
+            WirelessWDAError.agentBackgroundingUnsupported,
+            .deviceLocked,
+            .deviceUnavailable,
+            .localNetworkDenied,
+            .iphoneLocalNetworkDenied,
+            .missingSigningTeam,
+            .missingRuntime
+        ] {
+            XCTAssertFalse(
+                WirelessWDAService.isWorthReinstalling(error),
+                "\(error) must not trigger a pointless reinstall"
+            )
+        }
+    }
+}
