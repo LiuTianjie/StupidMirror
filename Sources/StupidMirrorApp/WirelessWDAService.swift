@@ -14,6 +14,7 @@ enum WirelessWDAError: LocalizedError, Equatable {
     case iphoneLocalNetworkDenied
     case deviceLocked
     case deviceUnavailable
+    case agentBackgroundingUnsupported
     case timedOut
 
     var errorDescription: String? {
@@ -36,6 +37,8 @@ enum WirelessWDAError: LocalizedError, Equatable {
             "Unlock the iPhone and keep its screen on, then try again."
         case .deviceUnavailable:
             "The iPhone is not available over Wi-Fi. Unlock it and check that both devices are on the same network."
+        case .agentBackgroundingUnsupported:
+            "This iOS version stops the screen agent before it can start. Reconnect USB to prepare it again."
         case .timedOut:
             "The wireless screen agent did not respond. Retry, or reconnect USB if it continues."
         }
@@ -579,6 +582,26 @@ final class WirelessWDAService: @unchecked Sendable {
             || output.localizedCaseInsensitiveContains("device was not found")
     }
 
+    /// Detects the iOS 27 regression where a runner launched through `devicectl`
+    /// cannot enter the background, so XCTest aborts it before WDA's HTTP server
+    /// starts.
+    ///
+    /// The device reports `Failed to background test runner within 30.0s` with
+    /// `com.apple.dt.xctest.ui-testing.error` code 10300. Apple's CoreDevice
+    /// stack changed here, not this app: the same runner started by `xcodebuild`
+    /// is unaffected, which is why the first-time USB setup path still works.
+    /// Appium hit the same wall and stopped using the `devicectl` launch on
+    /// these versions (appium/appium#22636).
+    ///
+    /// Worth separating out because every visible symptom — no `ServerURLHere`,
+    /// no listener on 8100 — is identical to a runner that was never installed,
+    /// and the old code blamed a locked device even when it was unlocked.
+    nonisolated static func outputIndicatesBackgroundingFailure(_ output: String) -> Bool {
+        output.contains("ui-testing.error")
+            && (output.contains("10300")
+                || output.localizedCaseInsensitiveContains("Failed to background test runner"))
+    }
+
     nonisolated static func runnerBundleIdentifier(for bundleID: String) -> String {
         "\(bundleID).xctrunner"
     }
@@ -826,6 +849,13 @@ final class WirelessWDAService: @unchecked Sendable {
             }
             pipe.fileHandleForReading.readabilityHandler = nil
             let output = monitor.capturedOutput
+            // Check backgrounding first: the device reports it while still
+            // unlocked and reachable, so the broader checks below would
+            // misattribute it.
+            if outputIndicatesBackgroundingFailure(output) {
+                logger.error("Wireless WDA could not background on this iOS version: \(output, privacy: .public)")
+                throw WirelessWDAError.agentBackgroundingUnsupported
+            }
             if outputIndicatesLockedDevice(output) {
                 throw WirelessWDAError.deviceLocked
             }

@@ -130,3 +130,47 @@ final class WirelessWDALaunchRegistryTests: XCTestCase {
         XCTAssertTrue(registry.existing(udid: secondUDID) === second)
     }
 }
+
+/// The iOS 27 `devicectl` launch regression looks exactly like a missing agent
+/// from the Mac's side, so it has to be recognised from the device's own output.
+final class WirelessWDABackgroundingFailureTests: XCTestCase {
+    /// Verbatim from `devicectl device process launch` against an unlocked
+    /// iPhone on iOS 27.0.
+    private let realFailureOutput = """
+    Failed to initialize for UI testing: Error Domain=com.apple.dt.xctest.ui-testing.error \
+    Code=10300 "Failed to background test runner within 30.0s." UserInfo={screenshot-data=\
+    {length = 34801}, NSLocalizedDescription=Failed to background test runner within 30.0s.}
+    20:22:16  Acquired tunnel connection to device.
+    Launched application with com.stupidmirror.wda.l95pylft86.xctrunner bundle identifier.
+    The app terminated with the exit code 1.
+    """
+
+    func testRecognisesTheBackgroundingFailure() {
+        XCTAssertTrue(
+            WirelessWDAService.outputIndicatesBackgroundingFailure(realFailureOutput)
+        )
+    }
+
+    func testDoesNotBlameALockedOrUnavailableDevice() {
+        // The device was unlocked and reachable, so these must not claim it.
+        XCTAssertFalse(WirelessWDAService.outputIndicatesLockedDevice(realFailureOutput))
+        XCTAssertFalse(WirelessWDAService.outputIndicatesUnavailableDevice(realFailureOutput))
+    }
+
+    func testASuccessfulLaunchIsNotMistakenForTheFailure() {
+        let success = """
+        2026-09-01 19:04:10.522 WebDriverAgentRunner-Runner[22497:16810761] \
+        ServerURLHere->http://192.168.1.8:8100<-ServerURLHere
+        StupidMirror SRT/H.264 stream listening on UDP port 9200
+        """
+        XCTAssertFalse(WirelessWDAService.outputIndicatesBackgroundingFailure(success))
+    }
+
+    func testAnUnrelatedUITestingErrorIsNotTreatedAsBackgrounding() {
+        let other = """
+        Failed to initialize for UI testing: Error Domain=com.apple.dt.xctest.ui-testing.error \
+        Code=9 "Some other UI testing failure."
+        """
+        XCTAssertFalse(WirelessWDAService.outputIndicatesBackgroundingFailure(other))
+    }
+}

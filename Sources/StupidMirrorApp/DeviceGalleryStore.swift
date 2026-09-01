@@ -1548,7 +1548,10 @@ final class DeviceGalleryStore: ObservableObject {
         case .deviceUnavailable, .launchFailed, .timedOut:
             true
         case .missingSigningTeam, .missingRuntime, .firstUSBSetupRequired,
-             .deviceLocked, .localNetworkDenied, .iphoneLocalNetworkDenied, .buildFailed:
+             .deviceLocked, .localNetworkDenied, .iphoneLocalNetworkDenied,
+             .buildFailed, .agentBackgroundingUnsupported:
+            // Retrying a backgrounding failure just repeats the 30s device-side
+            // timeout: the OS refuses this launch path, not this attempt.
             false
         }
     }
@@ -1567,6 +1570,7 @@ final class DeviceGalleryStore: ObservableObject {
         case .iphoneLocalNetworkDenied: "wireless.error.iphoneLocalNetworkDenied"
         case .deviceLocked: "wireless.error.deviceLocked"
         case .deviceUnavailable: "wireless.error.deviceUnavailable"
+        case .agentBackgroundingUnsupported: "wireless.error.agentBackgroundingUnsupported"
         case .timedOut: "wireless.error.timedOut"
         }
         return t(key)
