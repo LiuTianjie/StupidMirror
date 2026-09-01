@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.27 - 2026-09-01
+
+- Stop concurrent wireless agent launches from terminating each other. Launching
+  passed `--terminate-existing`, so mirroring, control, and retries killed each
+  other's WebDriverAgent when they targeted the same iPhone. The losing side
+  waited for a runner that no longer existed, then reinstalled a runner that was
+  never broken — the cause of wireless starts that hung for minutes, reinstalled
+  the agent for no reason, and still failed. One launch per device is now shared.
+- Report iOS 27's agent launch failure accurately instead of claiming the iPhone
+  is locked. On that version a runner started through `devicectl` is stopped by
+  XCTest before its HTTP server starts, on an unlocked and reachable device.
+- Stop reinstalling the agent for failures a reinstall cannot fix, and read the
+  device's own explanation before giving up. Together these turn a 64-second
+  wrong answer into a 32-second correct one.
+- Tell apart an agent that is not running from an iPhone that is refusing the
+  connection, and name the Local Network setting when that is the real cause.
+- Shorten the readiness waits. A healthy agent answers in seconds, so the old
+  45-second budgets only stretched failures that do not improve with time.
+
 ## 0.2.26 - 2026-08-31
 
 - Add a direct online purchase link below the Xiaohongshu QR code in the
