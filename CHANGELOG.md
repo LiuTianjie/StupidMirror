@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.30 - 2026-09-04
+
+- Account-bound licensing: sign in with Google, GitHub, or email (shared iTool
+  Supabase Auth); buy an SM- code at https://wzyp.cn/item/exords and redeem it
+  onto `auth.uid()`; one-way claim from legacy Keychain receipts; grace for
+  v0.2.x install receipts; reject iTool `IT-` codes; remove Xiaohongshu
+  purchase QR; admin reset cannot mint a second seat. iTool Pro stays a
+  separate entitlement on the same uid.
+
 ## 0.2.29 - 2026-09-02
 
 - Restore USB control on iOS 27. A preinstalled runner started through
@@ -44,7 +53,7 @@
 
 ## 0.2.26 - 2026-08-31
 
-- Add a direct online purchase link below the Xiaohongshu QR code in the
+- Add a direct online purchase link in the
   activation window.
 - Add the same activation-code purchase entry to the GitHub Pages landing page
   and refresh its public download link for this release.

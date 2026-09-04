@@ -27,7 +27,7 @@ Android 11 及以上设备通过 ADB 发现，并通过固定版本的 scrcpy se
 - 发布包内置 Mac 侧 Appium、XCUITest 与 UiAutomator2 运行时，无需另装 Node。
 - 内置只监听本机的 MCP Server，可直接接入 Codex 或 Claude Code。
 - 本地 Apple Vision OCR、按需原生 Accessibility、可见的 AI 操作与高亮标记。
-- 免费镜像一台设备；激活后支持多设备并行镜像与设备控制。
+- 未登录也可免费镜像一台设备。多设备并行镜像与控制需要用 Google、GitHub 或邮箱登录，再在链动小铺购买 SM- 激活码并兑换到该账号：https://wzyp.cn/item/exords 。不接受 iTool 的 IT- 激活码。
 - 应用界面和产品网站均支持英文与简体中文。
 
 ## 系统要求
@@ -120,8 +120,9 @@ StupidMirror 在本机运行，不会主动上传镜像画面、缩略图、设�
 OCR 使用 macOS Vision 按需在本地完成；AI 操作标记只渲染在 Mac 界面中。
 应用不内置模型，也不要求模型 API Key。
 
-激活服务只会向 Supabase 许可证接口发送随机安装 ID、用户输入的激活码、应用
-版本和返回的回执，不包含镜像帧、缩略图、设备标识或控制输入。详见
+兑换/认领许可时，只会向 Supabase 许可证接口发送随机安装 ID、用户输入的
+SM- 激活码、应用版本、回执，以及已登录 Google / GitHub / email 会话；不包含镜像帧、
+缩略图、设备标识或控制输入。免费单设备镜像不需要登录。详见
 [PRIVACY.md](PRIVACY.md)。
 
 ## 开发与文档
@@ -138,7 +139,7 @@ make app
 - [贡献指南](CONTRIBUTING.md)
 - [更新日志](CHANGELOG.md)
 - [发布流程](RELEASING.md)
-- [许可证激活与本地生成器](LICENSING.md)
+- [账号许可、链动小铺购买与本地生成器](LICENSING.md)
 
 ## 许可证
 

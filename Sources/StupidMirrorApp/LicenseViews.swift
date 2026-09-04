@@ -6,6 +6,8 @@ struct LicenseActivationView: View {
     @ObservedObject var licenseManager: LicenseManager
 
     @State private var code = ""
+    @State private var email = ""
+    @State private var password = ""
     @State private var errorMessage: String?
 
     var body: some View {
@@ -26,7 +28,7 @@ struct LicenseActivationView: View {
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .disabled(licenseManager.isActivating)
+                .disabled(licenseManager.isActivating || licenseManager.isSigningIn)
             }
             .padding(20)
 
@@ -34,6 +36,13 @@ struct LicenseActivationView: View {
 
             VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
                 licenseStatus
+                accountSection
+
+                if licenseManager.needsClaim {
+                    claimBanner
+                }
+
+                purchaseLinks
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(store.t("license.code"))
@@ -41,6 +50,7 @@ struct LicenseActivationView: View {
                     TextField(store.t("license.code.placeholder"), text: $code)
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
+                        .disabled(licenseManager.authSession == nil)
                         .onSubmit(submit)
                     Text(store.t("license.code.help"))
                         .font(.caption)
@@ -54,33 +64,36 @@ struct LicenseActivationView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                purchaseQRCode
-
                 HStack {
                     Spacer()
                     Button(store.t("common.cancel")) {
                         store.cancelActivation()
                     }
-                    .disabled(licenseManager.isActivating)
+                    .disabled(licenseManager.isActivating || licenseManager.isSigningIn)
 
                     Button(action: submit) {
                         if licenseManager.isActivating {
                             HStack(spacing: 7) {
                                 ProgressView().controlSize(.small)
-                                Text(store.t("license.activating"))
+                                Text(store.t("license.redeeming"))
                             }
                         } else {
-                            Label(store.t("license.activate"), systemImage: "key.fill")
+                            Label(store.t("license.redeem"), systemImage: "key.fill")
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.Palette.accent)
-                    .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || licenseManager.isActivating)
+                    .disabled(
+                        licenseManager.authSession == nil
+                            || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || licenseManager.isActivating
+                            || licenseManager.isSigningIn
+                    )
                 }
             }
             .padding(20)
         }
-        .interactiveDismissDisabled(licenseManager.isActivating)
+        .interactiveDismissDisabled(licenseManager.isActivating || licenseManager.isSigningIn)
     }
 
     private var licenseStatus: some View {
@@ -100,76 +113,140 @@ struct LicenseActivationView: View {
         }
     }
 
-    private var purchaseQRCode: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            VStack(spacing: 8) {
-                if let image = Self.xiaohongshuQRCodeImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .interpolation(.none)
-                        .scaledToFit()
-                        .frame(width: 132, height: 132)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 10))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+    private var accountSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let session = licenseManager.authSession {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(store.t("license.signedIn"))
+                            .font(.headline)
+                        Text(session.email ?? session.userID.uuidString)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(store.t("license.signOut")) {
+                        Task { @MainActor in
+                            await store.signOutLicense()
+                        }
+                    }
+                    .disabled(licenseManager.isSigningIn || licenseManager.isActivating)
                 }
-                Link(store.t("license.purchase.online"), destination: Self.onlinePurchaseURL)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(store.t("license.purchase.title"))
-                    .font(.headline)
-                Text(store.t("license.purchase.help"))
+            } else {
+                Text(store.t("license.signIn.help"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button {
+                        signIn(.google)
+                    } label: {
+                        Label(store.t("license.signIn.google"), systemImage: "globe")
+                    }
+                    Button {
+                        signIn(.github)
+                    } label: {
+                        Label(store.t("license.signIn.github"), systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                    if licenseManager.isSigningIn {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                .disabled(licenseManager.isSigningIn || licenseManager.isActivating)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField(store.t("license.signIn.email"), text: $email)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField(store.t("license.signIn.password"), text: $password)
+                        .textFieldStyle(.roundedBorder)
+                    Button(store.t("license.signIn.emailSubmit")) {
+                        signInWithEmail()
+                    }
+                    .disabled(
+                        email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || password.isEmpty
+                            || licenseManager.isSigningIn
+                            || licenseManager.isActivating
+                    )
+                }
             }
-            Spacer()
         }
         .padding(12)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private static let onlinePurchaseURL = URL(string: "https://pay.ldxp.cn/item/exords")!
-
-    private static let xiaohongshuQRCodeImage: NSImage? = {
-        guard
-            let url = Bundle.main.url(
-                forResource: "xiaohongshu-purchase-card",
-                withExtension: "jpg"
-            ) ?? Bundle.module.url(
-                forResource: "xiaohongshu-purchase-card",
-                withExtension: "jpg"
-            ),
-            let source = NSImage(contentsOf: url)
-        else {
-            return nil
+    private var claimBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.t("license.claim.title"))
+                .font(.headline)
+            Text(store.t("license.claim.help"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { @MainActor in
+                    errorMessage = nil
+                    do {
+                        try await store.claimLicense()
+                    } catch {
+                        errorMessage = localizedActivationError(error)
+                    }
+                }
+            } label: {
+                Label(store.t("license.claim"), systemImage: "person.crop.circle.badge.checkmark")
+            }
+            .disabled(licenseManager.authSession == nil || licenseManager.isActivating || licenseManager.isSigningIn)
         }
+        .padding(12)
+        .background(Theme.Palette.pending.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+    }
 
-        var sourceRect = NSRect(origin: .zero, size: source.size)
-        guard let sourceImage = source.cgImage(forProposedRect: &sourceRect, context: nil, hints: nil) else {
-            return nil
+    private var purchaseLinks: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(store.t("license.purchase.title"))
+                .font(.headline)
+            Text(store.t("license.purchase.help"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                Link(store.t("license.purchase.online"), destination: LicensePurchaseURLs.buyURL)
+            }
+            .font(.caption.weight(.medium))
+            .disabled(licenseManager.authSession == nil)
         }
+        .padding(12)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+    }
 
-        // Keep the uploaded profile card intact in the bundle and crop only for
-        // presentation. These bounds include the QR code's required white margin.
-        let cropRect = CGRect(
-            x: CGFloat(sourceImage.width) * 0.6727,
-            y: CGFloat(sourceImage.height) * 0.7579,
-            width: CGFloat(sourceImage.width) * 0.2634,
-            height: CGFloat(sourceImage.height) * 0.1930
-        ).integral
-        guard let qrCode = sourceImage.cropping(to: cropRect) else {
-            return nil
-        }
-        return NSImage(cgImage: qrCode, size: NSSize(width: qrCode.width, height: qrCode.height))
-    }()
-
-    private func submit() {
-        guard !licenseManager.isActivating else { return }
+    private func signIn(_ provider: LicenseAuthProvider) {
         errorMessage = nil
         Task { @MainActor in
             do {
-                try await store.activateLicense(code: code)
+                try await store.signInLicense(provider: provider)
+            } catch LicenseAuthError.cancelled {
+                errorMessage = nil
+            } catch {
+                errorMessage = localizedActivationError(error)
+            }
+        }
+    }
+
+    private func signInWithEmail() {
+        errorMessage = nil
+        Task { @MainActor in
+            do {
+                try await store.signInLicense(email: email, password: password)
+                password = ""
+            } catch {
+                errorMessage = localizedActivationError(error)
+            }
+        }
+    }
+
+    private func submit() {
+        guard !licenseManager.isActivating, licenseManager.authSession != nil else { return }
+        errorMessage = nil
+        Task { @MainActor in
+            do {
+                try await store.redeemLicense(code: code)
             } catch {
                 errorMessage = localizedActivationError(error)
             }
@@ -177,6 +254,15 @@ struct LicenseActivationView: View {
     }
 
     private func localizedActivationError(_ error: Error) -> String {
+        if case LicenseServiceError.loginRequired = error {
+            return store.t("license.error.loginRequired")
+        }
+        if case LicenseServiceError.iToolCodeNotAccepted = error {
+            return store.t("license.error.itool")
+        }
+        if case LicenseAuthError.notConfigured = error {
+            return store.t("license.error.notConfigured")
+        }
         guard case let LicenseServiceError.rejected(code, _) = error else {
             if case LicenseServiceError.notConfigured = error {
                 return store.t("license.error.notConfigured")
@@ -190,6 +276,16 @@ struct LicenseActivationView: View {
             return store.t("license.error.rateLimited")
         case "license_revoked":
             return store.t("license.error.revoked")
+        case "login_required":
+            return store.t("license.error.loginRequired")
+        case "already_licensed":
+            return store.t("license.error.alreadyLicensed")
+        case "already_claimed":
+            return store.t("license.error.alreadyClaimed")
+        case "claim_required":
+            return store.t("license.error.claimRequired")
+        case "itool_code_not_accepted":
+            return store.t("license.error.itool")
         default:
             return error.localizedDescription
         }
@@ -233,7 +329,12 @@ struct LicenseActivationView: View {
         case .unlicensed:
             return store.t("license.capabilities.unactivated")
         case .licensed:
-            return store.t("license.capabilities.activated")
+            if licenseManager.needsClaim {
+                return store.t("license.capabilities.needsClaim")
+            }
+            return licenseManager.principal == .account
+                ? store.t("license.capabilities.account")
+                : store.t("license.capabilities.activated")
         case .checking:
             return store.t("license.capabilities.checking")
         }
@@ -287,8 +388,14 @@ struct LicenseSettingsSection: View {
     }
 
     private var capabilitySummary: String {
-        licenseManager.state.isActivated
-            ? store.t("license.capabilities.activated")
-            : store.t("license.capabilities.unactivated")
+        if licenseManager.needsClaim {
+            return store.t("license.capabilities.needsClaim")
+        }
+        if licenseManager.state.isActivated {
+            return licenseManager.principal == .account
+                ? store.t("license.capabilities.account")
+                : store.t("license.capabilities.activated")
+        }
+        return store.t("license.capabilities.unactivated")
     }
 }

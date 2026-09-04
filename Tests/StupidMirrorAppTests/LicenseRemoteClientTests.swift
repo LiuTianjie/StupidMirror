@@ -53,9 +53,38 @@ final class LicenseRemoteClientTests: XCTestCase {
         let capturedRequest = await transport.lastRequest()
         let request = try XCTUnwrap(capturedRequest)
         let body = try XCTUnwrap(request.httpBody)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
-        XCTAssertEqual(json["action"], "validate")
-        XCTAssertEqual(json["receipt"], "cached")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["action"] as? String, "validate")
+        XCTAssertEqual(json["receipt"] as? String, "cached")
+        XCTAssertEqual(json["client_protocol"] as? Int, 2)
+    }
+
+    func testRedeemSendsBearerTokenAndDoesNotAcceptMissingLogin() async throws {
+        let transport = RecordingLicenseTransport(
+            statusCode: 200,
+            body: #"{"ok":true,"active":true,"receipt":"8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1","principal":"account","server_time":"2033-05-18T03:33:20Z"}"#
+        )
+        let client = SupabaseLicenseRemoteClient(
+            configuration: configuredEndpoint,
+            transport: transport
+        )
+        _ = try await client.redeem(
+            code: "SM-1ABC-DEFG-HIJK-LMNO-PQRS-TUVW",
+            installationID: UUID(),
+            accessToken: "user-jwt"
+        )
+        let captured = await transport.lastRequest()
+        let request = try XCTUnwrap(captured)
+        XCTAssertEqual(
+            request.url?.absoluteString,
+            "https://example.supabase.co/rest/v1/rpc/stupidmirror_redeem_for_user"
+        )
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-jwt")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "apikey"), "sb_publishable_test")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertNotNil(json["p_code_hash"] as? String)
+        XCTAssertEqual((json["p_code_hash"] as? String)?.count, 64)
+        XCTAssertNil(json["action"])
     }
 
     func testRevokedResponseMapsStableServerCode() async {

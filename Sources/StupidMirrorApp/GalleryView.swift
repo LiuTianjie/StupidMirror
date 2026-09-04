@@ -274,7 +274,7 @@ struct GalleryView: View {
             }
             .help(store.t("toolbar.mcp"))
 
-            if store.licenseManager.state.showsDashboardActivationEntry {
+            if store.licenseManager.showsDashboardActivationEntry {
                 Button {
                     store.presentActivation()
                 } label: {

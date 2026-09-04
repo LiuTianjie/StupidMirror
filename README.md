@@ -31,9 +31,10 @@ a direct H.264 video and PCM audio stream from a pinned scrcpy server.
   including tap, swipe, text input, Home/Back, app switching, and app lifecycle
   actions.
 - Bundled Mac-side Appium runtime for packaged release builds.
-- Free one-device mirroring with one-time activation for simultaneous
-  multi-device mirroring and device control. Activation uses a private Supabase
-  license service, with purchase access available through Xiaohongshu.
+- Free one-device mirroring without signing in. Simultaneous multi-device
+  mirroring and extra device control require a Google, GitHub, or email login, then an
+  SM- activation code bought at https://wzyp.cn/item/exords and redeemed onto
+  that account. iTool IT- codes are not accepted.
 - Local probes for AVFoundation discovery, frame capture, device discovery, and
   WebDriverAgent readiness.
 
@@ -313,10 +314,11 @@ content, thumbnails, device metadata, or control events to any remote service.
 Optional Appium control talks to the configured Appium server URL, which defaults
 to `http://127.0.0.1:4723`.
 
-License activation sends only the random installation ID, entered activation
-code, app version, and the returned receipt to the Supabase license endpoint.
-It never includes mirrored frames, thumbnails, device identifiers, or control
-input. See [PRIVACY.md](PRIVACY.md) for details.
+License redeem/claim send the random installation ID, entered SM- activation
+code, app version, returned receipt, and the signed-in Google, GitHub, or email
+session to the Supabase license endpoint. It never includes mirrored frames,
+thumbnails, device identifiers, or control input. Free one-device mirroring
+does not require a session. See [PRIVACY.md](PRIVACY.md) for details.
 
 ## Documentation
 
@@ -326,7 +328,7 @@ input. See [PRIVACY.md](PRIVACY.md) for details.
 - [Contributing guide](CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Release process](RELEASING.md)
-- [License activation and local code generator](LICENSING.md)
+- [Account licensing, 链动小铺 purchase, and local code generator](LICENSING.md)
 
 ## License
 

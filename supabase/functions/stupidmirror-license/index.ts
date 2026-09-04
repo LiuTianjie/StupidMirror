@@ -6,6 +6,7 @@ const MAX_BODY_BYTES = 8 * 1024;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CODE_PATTERN = /^SM(?:-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{4}){6}$/;
+const REJECTED_CODE_PREFIX = /^IT(?:-|[23456789ABCDEFGHJKLMNPQRSTUVWXYZ])/i;
 
 type LicenseRequest = {
   action?: unknown;
@@ -83,10 +84,6 @@ function normalizeCode(value: string): string {
 }
 
 function trustedClientAddress(request: Request): string {
-  // Cloudflare rejects caller attempts to forge this header before the Edge
-  // Function runs. Do not fall back to X-Forwarded-For: a desktop caller can
-  // supply arbitrary hops. Missing metadata intentionally shares one bucket,
-  // while a separate project-wide bucket remains the final load-shedder.
   const connectingIP = request.headers.get("cf-connecting-ip")?.trim() ?? "";
   if (connectingIP && connectingIP.length <= 128) return connectingIP;
   return "unknown";
@@ -96,8 +93,11 @@ function statusFor(code: unknown): number {
   switch (code) {
     case "malformed_request":
       return 400;
+    case "unauthorized":
+      return 401;
     case "invalid_receipt":
     case "license_revoked":
+    case "claim_required":
       return 403;
     case "rate_limited":
       return 429;
@@ -134,6 +134,21 @@ async function callRPC(
   return await rpcResponse.json() as Record<string, unknown>;
 }
 
+function rejectNonSMCode(raw: string): Response | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (REJECTED_CODE_PREFIX.test(trimmed) || /^IT/i.test(trimmed.replace(/[\s-]+/g, ""))) {
+    return json(422, {
+      ok: false,
+      code: "invalid_or_unavailable",
+      message: "StupidMirror accepts SM- codes only. iTool Pro IT- codes are not valid here.",
+    });
+  }
+  return null;
+}
+
+// Prod Edge v6: install path ONLY (activate + validate).
+// Account redeem/claim/entitlement are Mac → PostgREST *_for_user with user JWT.
 Deno.serve(async (request: Request) => {
   if (request.method !== "POST") {
     return json(405, { ok: false, code: "method_not_allowed" });
@@ -150,10 +165,9 @@ Deno.serve(async (request: Request) => {
     return json(413, { ok: false, code: "request_too_large" });
   }
 
-  let rawBody: string;
   let body: LicenseRequest;
   try {
-    rawBody = await request.text();
+    const rawBody = await request.text();
     if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) {
       return json(413, { ok: false, code: "request_too_large" });
     }
@@ -180,8 +194,6 @@ Deno.serve(async (request: Request) => {
 
   try {
     const installationHash = await sha256(installationID);
-    // This subject is independent of the caller-controlled installation UUID.
-    // The RPC also enforces a project-wide bucket as a final load-shedder.
     const rateSubjectHash = await hmacSHA256(
       `ip\u0000${trustedClientAddress(request)}`,
       internalSecretKey(),
@@ -189,7 +201,10 @@ Deno.serve(async (request: Request) => {
     let result: Record<string, unknown>;
 
     if (body.action === "activate") {
-      const code = normalizeCode(typeof body.code === "string" ? body.code : "");
+      const rawCode = typeof body.code === "string" ? body.code : "";
+      const rejected = rejectNonSMCode(rawCode);
+      if (rejected) return rejected;
+      const code = normalizeCode(rawCode);
       if (!CODE_PATTERN.test(code)) {
         return json(422, {
           ok: false,
@@ -206,9 +221,6 @@ Deno.serve(async (request: Request) => {
     } else if (body.action === "validate") {
       const receipt = typeof body.receipt === "string" ? body.receipt : "";
       if (!UUID_PATTERN.test(receipt)) {
-        // A receipt is an untrusted local entitlement. Treat malformed values
-        // as terminal invalid receipts so clients cannot keep an arbitrary
-        // non-empty Keychain value licensed forever.
         return json(403, {
           ok: false,
           code: "invalid_receipt",
@@ -222,12 +234,15 @@ Deno.serve(async (request: Request) => {
         p_app_version: appVersion,
       });
     } else {
-      return json(400, { ok: false, code: "malformed_request" });
+      return json(400, {
+        ok: false,
+        code: "malformed_request",
+        message: "Account redeem/claim use PostgREST *_for_user RPCs, not this Edge Function.",
+      });
     }
 
     return json(result.ok === true ? 200 : statusFor(result.code), result);
   } catch {
-    // Never include request bodies, activation codes, or internal RPC errors.
     return json(503, {
       ok: false,
       code: "temporarily_unavailable",

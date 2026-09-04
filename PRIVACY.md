@@ -16,6 +16,8 @@ The app may process:
   in the macOS Keychain. Upgraded installations may retain unused legacy trial
   timestamps. These values are not an iPhone UDID, Mac serial number, or
   advertising identifier.
+- Optional Google, GitHub, or email sign-in through the shared iTool Supabase Auth project. The resulting
+  session tokens and the account user id are stored in the macOS Keychain.
 
 ## Network Behavior
 
@@ -30,13 +32,21 @@ iPhone companion app.
 Optional control support talks to the configured Appium server URL. The default
 is `http://127.0.0.1:4723`.
 
-License activation and periodic validation send the random installation
-identifier, activation code (only while activating), activation receipt, and app
-version to the configured StupidMirror license endpoint hosted on Supabase.
-Screen frames, thumbnails, iPhone metadata, control events, and typed text are
-not included in license requests. Activated installations can continue to work
-from the locally cached receipt when the license endpoint is temporarily
-unavailable.
+License activation, redeem, claim, and periodic validation send the random
+installation identifier, activation code (only while redeeming), activation
+receipt, app version, and — for buy/redeem/claim/account checks — the signed-in
+user's Supabase access token to the configured StupidMirror license endpoint
+hosted on Supabase. Google and GitHub only receive the OAuth sign-in; email/password stays with Supabase Auth. Screen
+frames, thumbnails, iPhone metadata, control events, and typed text are not
+included in license requests.
+
+An unclaimed Mac-bound Keychain receipt can keep paid features working for a
+limited grandfather period without signing in. After the license is claimed or
+redeemed onto an account, the account is the principal; signing out stops paid
+features on that Mac until the same account signs in again. Free one-device
+mirroring does not require a session. Activated installations can continue to
+work from a locally cached account or grandfathered receipt when the license
+endpoint is temporarily unavailable.
 
 The license endpoint also applies abuse rate limits using the request's network
 address. Before a rate-limit identifier reaches the licensing database, the Edge

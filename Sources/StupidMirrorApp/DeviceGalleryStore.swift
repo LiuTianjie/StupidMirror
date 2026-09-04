@@ -1264,7 +1264,32 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func activateLicense(code: String) async throws {
-        try await licenseManager.activate(code: code)
+        try await redeemLicense(code: code)
+    }
+
+    func redeemLicense(code: String) async throws {
+        try await licenseManager.redeem(code: code)
+        finishSuccessfulLicenseChange()
+    }
+
+    func claimLicense() async throws {
+        try await licenseManager.claimFromReceipt()
+        finishSuccessfulLicenseChange()
+    }
+
+    func signInLicense(provider: LicenseAuthProvider) async throws {
+        try await licenseManager.signIn(provider: provider)
+    }
+
+    func signInLicense(email: String, password: String) async throws {
+        try await licenseManager.signIn(email: email, password: password)
+    }
+
+    func signOutLicense() async {
+        await licenseManager.signOut()
+    }
+
+    private func finishSuccessfulLicenseChange() {
         let pending = pendingActivationMirrorIDs
         pendingActivationMirrorIDs.removeAll()
         setActiveSheet(nil)

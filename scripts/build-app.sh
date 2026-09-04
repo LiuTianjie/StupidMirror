@@ -34,7 +34,6 @@ trap 'rm -rf -- "$build_work_dir"' EXIT
 contents_path="${app_path}/Contents"
 macos_path="${contents_path}/MacOS"
 icon_path="${ICON_PATH:-Assets/AppIcon.icns}"
-purchase_qr_path="${PURCHASE_QR_PATH:-Sources/StupidMirrorApp/Resources/xiaohongshu-purchase-card.jpg}"
 
 xml_escape() {
   local value="$1"
@@ -127,17 +126,23 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <string>${license_endpoint_xml}</string>
   <key>StupidMirrorLicensePublishableKey</key>
   <string>${license_publishable_key_xml}</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>com.gaojiua.StupidMirror.auth</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>stupidmirror</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST
 
 resources_path="${contents_path}/Resources"
 mkdir -p "${resources_path}/en.lproj" "${resources_path}/zh-Hans.lproj"
-if [ ! -s "$purchase_qr_path" ]; then
-  echo "Purchase QR resource not found: ${purchase_qr_path}" >&2
-  exit 1
-fi
-cp "$purchase_qr_path" "${resources_path}/xiaohongshu-purchase-card.jpg"
 cat > "${resources_path}/en.lproj/InfoPlist.strings" <<'STRINGS'
 "NSCameraUsageDescription" = "StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.";
 "NSMicrophoneUsageDescription" = "StupidMirror uses microphone access to receive and play the audio track of an iPhone connected over USB.";
