@@ -1,151 +1,183 @@
-# StupidMirror
+<p align="center">
+  <img src="docs/assets/app-icon.webp" alt="StupidMirror" width="96" />
+</p>
 
-[English](README.md) · **简体中文**
+<h1 align="center">StupidMirror</h1>
 
-StupidMirror 是一款原生 macOS 菜单栏应用，可镜像并控制 iOS 与 Android
-真机。iPhone 支持 USB，以及完成一次 USB 准备后的同局域网无线镜像；
-Android 11 及以上设备通过 ADB 发现，并通过固定版本的 scrcpy server 直接
-传输 H.264 画面与 PCM 声音。
+<p align="center">
+  <strong>把手机带到 Mac，把真机交给 Agent。</strong><br />
+  原生 iOS / Android 镜像、真机控制，以及面向 AI Agent 的本地 MCP Server。
+</p>
 
-[产品网站](https://liutianjie.github.io/StupidMirror/) ·
-[下载 StupidMirror v0.2.13](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.13/StupidMirror-v0.2.13-macos.zip) ·
-[商业授权](COMMERCIAL-LICENSE.md)
+<p align="center">
+  <a href="Package.swift"><img src="https://img.shields.io/badge/macOS-15%2B-343b48?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="macOS 15 及以上" /></a>
+  <a href="https://github.com/LiuTianjie/StupidMirror/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/LiuTianjie/StupidMirror/ci.yml?style=flat-square&amp;label=build" alt="构建状态" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-64748b?style=flat-square" alt="PolyForm Noncommercial 许可证" /></a>
+</p>
 
-> 项目仍处于实验阶段。由于 macOS 将 iPhone 屏幕暴露为 AVFoundation
-> 捕获源，USB 镜像需要相机权限，但 StupidMirror 并不会因此调用 Mac 摄像头。
+<p align="center">
+  <a href="https://github.com/LiuTianjie/StupidMirror/releases/latest">下载</a> ·
+  <a href="https://liutianjie.github.io/StupidMirror/">官网</a> ·
+  <a href="#连接-ai-agent">MCP 接入</a> ·
+  <a href="CHANGELOG.md">更新日志</a> ·
+  <a href="README.md">English</a>
+</p>
 
-## 主要功能
+<p align="center">
+  <img src="docs/assets/dashboard.webp" alt="StupidMirror macOS 界面：已连接的 iPhone、实时镜像与真机控制入口" width="820" />
+</p>
 
-- 通过 CoreMediaIO / AVFoundation 自动发现并镜像 USB iPhone。
-- 完成一次 USB 准备后，通过 Apple `devicectl` 与局域网无线镜像。
-- iPhone 端全分辨率 H.264、SRT 传输、Mac 端 VideoToolbox 解码。
-- 通过 ADB 自动发现 Android 11 及以上设备，在 StupidMirror 内直接显示 H.264
-  画面，并可播放手机声音。
-- 菜单栏设备面板、实时缩略图、诊断、设置与独立镜像窗口。
-- 可选的 Appium 真机控制：iOS 使用 XCUITest，Android 使用 UiAutomator2；
-  支持点击、滑动、长按、文本输入、Home / Back、App 切换和启停 App。
-- 发布包内置 Mac 侧 Appium、XCUITest 与 UiAutomator2 运行时，无需另装 Node。
-- 内置只监听本机的 MCP Server，可直接接入 Codex 或 Claude Code。
-- 本地 Apple Vision OCR、按需原生 Accessibility、可见的 AI 操作与高亮标记。
-- 未登录也可免费镜像一台设备。多设备并行镜像与控制需要用 Google、GitHub 或邮箱登录，再在链动小铺购买 SM- 激活码并兑换到该账号：https://wzyp.cn/item/exords 。不接受 iTool 的 IT- 激活码。
-- 应用界面和产品网站均支持英文与简体中文。
+StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB 或 Wi-Fi 查看 iPhone，通过 ADB 镜像 Android，再按需连接控制，在 Mac 上操作手机。
 
-## 系统要求
+同一个工作台也可以通过 **MCP** 交给 AI Agent：观察当前画面，用本地 OCR 或原生无障碍信息定位目标，执行操作，再检查结果。整个过程都能在 Mac 镜像窗口中看到。
 
-- macOS 15 或更高版本。
-- 信任当前 Mac 的 iPhone；首次无线配置需要 USB。
-- USB 镜像需要相机权限。iPhone 屏幕源是音视频混合设备：音频口一旦打开，
-  iOS 就会把播放权交给 Mac 并关掉手机扬声器。默认关闭“在 Mac 上播放设备
-  声音”，声音留在 iPhone；打开该开关并授予麦克风权限后，才投到这台 Mac。
-- 真机控制需要 iPhone 开启开发者模式 / UI Automation，并允许当前 Mac
-  使用有效 Apple Development 身份签名 WebDriverAgentRunner。
-- Android 需要 Android 11 或更高版本、开启 USB 调试，并在 Mac 安装 Android
-  SDK Platform-Tools（`adb`）；手机弹出调试授权时需允许当前 Mac。
-- 首次点击 Android 的“连接控制”时，会自动安装 Appium UiAutomator2 的设置与
-  Server 辅助 APK；无需另装 StupidMirror Android App，也不需要额外账号。
+**无需登录，即可镜像和控制一台设备。** 账号激活后可同时连接多台设备。源码采用 PolyForm Noncommercial 许可证，商业用途需要单独授权，详见[许可证说明](#许可证)。
 
-## Android 镜像与控制
+## 核心能力
 
-Android 画面和声音通过 ADB / scrcpy 独立传输，不连接控制也能使用。控制只会
-在用户明确点击“连接控制”时启动。首次连接通常需要 20–60 秒，期间会检查并
-按需安装 `io.appium.settings`、`io.appium.uiautomator2.server` 和
-`io.appium.uiautomator2.server.test`；后续连接通常直接复用。
+- **原生设备工作台。** 使用 SwiftUI 与 AppKit 构建，提供菜单栏入口、设备面板、实时缩略图与独立镜像窗口。
+- **三条画面接入路径。** USB iPhone 使用 AVFoundation；无线 iPhone 通过局域网传输 H.264；Android 使用固定版本的 scrcpy server 传输画面与声音。
+- **按需连接真机控制。** 通过 Appium 点击、滑动、输入、按键、切换和启停 App。打开 USB 或 Android 镜像不会自动建立控制会话。
+- **Agent 可以观察操作对象。** 实时帧、Apple Vision OCR、按需无障碍树、语义定位、等待与断言都围绕同一台真机工作。
+- **自动化过程可见。** Agent 的点击、滑动路径和目标高亮显示在 Mac 镜像上，不改变手机画面，也不写入编码后的视频。
+- **接入已有 AI 客户端。** 内置 Codex 与 Claude Code 配置向导；StupidMirror 本身无需模型 API Key，也不内置模型。
 
-## 快速开始
+## 从一台设备开始
 
-直接下载已签名和 Apple 公证的版本：
+从 [GitHub Releases](https://github.com/LiuTianjie/StupidMirror/releases/latest) 下载 macOS 应用，移入 Applications 后打开。StupidMirror 以菜单栏工具的形式运行。
 
-[下载 StupidMirror v0.2.13](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.13/StupidMirror-v0.2.13-macos.zip)
+| 连接方式 | 准备工作 | 画面与声音 |
+| --- | --- | --- |
+| **iPhone · USB** | 信任当前 Mac；按提示授予相机权限 | AVFoundation 捕获；可选将设备声音播放到 Mac |
+| **iPhone · Wi-Fi** | 通过 USB 完成一次无线配置向导；两端保持同一局域网 | H.264 / SRT 传输，VideoToolbox 解码；暂不支持无线音频 |
+| **Android · ADB** | Android 11+；Mac 安装 Android SDK Platform-Tools；开启 USB 调试并授权当前 Mac | scrcpy 提供 H.264 画面与可选设备音频 |
 
-从源码运行：
+**需要 macOS 15 或更高版本。** 兼容性受系统版本、信任状态和自动化运行时影响，项目仍处于实验阶段。
 
-```sh
+### USB 连接 iPhone
+
+1. 连接并解锁 iPhone，接受“信任此电脑”。
+2. 打开 StupidMirror，通过应用中的权限按钮授予相机访问权限。
+3. 选择发现的设备并打开镜像。
+
+macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权限；这个权限用于读取手机屏幕，并非调用 Mac 摄像头。默认关闭**在 Mac 上播放设备声音**，声音保留在 iPhone。开启后，USB 设备音频会转到 Mac，并需要额外授予麦克风权限。
+
+### Wi-Fi 连接 iPhone
+
+保持 USB 连接，打开**无线配置向导**。向导会检查设备和 Apple Development 签名身份，准备屏幕 Runner，并在拔线前验证局域网连接。
+
+手机需要相应的开发者权限，并接受本地网络授权。后续会话复用已准备的 Runner。无线镜像无需相机权限或 ReplayKit Broadcast Extension，但需要这个签名后的设备端 Runner；准备无线画面不会自动连接控制。
+
+### 连接 Android
+
+安装 `adb`，开启 USB 调试，连接设备并在手机上授权当前 Mac，然后选择发现的设备开始镜像。画面与音频独立运行，不依赖可选的 Appium 控制连接。
+
+## 真机控制
+
+点击**连接控制**开始操作。发布包包含 Mac 侧 Node / Appium 运行时，以及 XCUITest 和 UiAutomator2 驱动。
+
+| 平台 | 控制后端 | 首次连接 |
+| --- | --- | --- |
+| iOS | Appium + XCUITest / WebDriverAgent | 需要信任 Mac、开启开发者模式 / UI Automation，并使用有效 Apple Development 身份签名 WebDriverAgentRunner |
+| Android | Appium + UiAutomator2 | 按需安装 Appium settings / server 辅助 APK |
+
+StupidMirror 会检测可用的 Apple Development 签名团队，并复用各设备的 WDA 构建缓存。首次构建或安装辅助程序会比后续重连耗时更长。高级设置允许配置自定义 Appium 地址，默认是 `http://127.0.0.1:4723`。
+
+## 连接 AI Agent
+
+1. 打开**设置 → MCP**，启用本地 MCP Server。
+2. 在连接向导中选择 **Codex** 或 **Claude Code**。
+3. 将生成的配置或命令复制到客户端，其中包含地址、Bearer 认证和准备超时。
+4. 保持 StupidMirror 打开，让 Agent 调用 `list_devices`。
+
+服务仅监听 `http://127.0.0.1:<port>/mcp`，轮换 Bearer Token 会使旧凭据失效。首次控制准备可能耗时较长，因此向导设置了 240 秒的工具超时。
+
+可以从这样的指令开始：
+
+> 列出已连接设备，开始镜像我的 iPhone，并高亮当前可点击的元素，先不要点击。
+
+### 观察 → 操作 → 验证
+
+| 阶段 | 工具 | 行为 |
+| --- | --- | --- |
+| 连接 | `list_devices`、`start_mirror`、`connect_control` | 发现目标，准备所需会话 |
+| 观察 | `observe_screen`、`find_any_element` | 读取实时帧，使用本地 OCR，按需获取无障碍信息 |
+| 操作 | `tap_text`、`tap_element`、`replace_text`、`swipe` | 操作已观察到的目标，或执行明确的手势 |
+| 验证 | `wait_for`、`assert_screen`、`observe_screen` | 检查操作后的状态 |
+| 引导 | `highlight_clickable_elements`、`highlight_elements`、`clear_highlights` | 只在 Mac 镜像上标记目标，不发送输入 |
+
+<details>
+<summary>面向 Agent 开发者的定位与文本输入细节</summary>
+
+- 存在多台设备时，明确传入 `device_id`。
+- `tap_text` 一次接受最多 16 个候选文案，默认先做一次本地 OCR，必要时再共享一次原生 UI 层级快照。`find_any_element` 只查找，不点击。
+- `observe_screen` 默认不抓取无障碍树。通过 `include_ocr` 启用本地文字识别，只在明确需要检查层级时使用 `include_accessibility`。
+- 遇到图标、画布或自定义控件，使用 `include_image: true` 获取截图，观察后再选择目标坐标。
+- 向 `tap_element` 传入 observation UUID，可在界面变化后拒绝过期元素 ID。
+- iOS 无障碍快照可能影响已聚焦的输入框。聚焦后直接调用 `replace_text` 或 `clear_text`；追加内容使用 `type_text`。替换和清空都会校验最终的原生值。
+- Vision OCR 提供 `fast` / `accurate` 模式，默认识别中英文，按需执行，不进入采集或编码热路径。
+- 输入工具在 MCP 元数据中标记为可能具有破坏性，因为实际效果取决于手机当前打开的 App。
+
+完整参数以[工具定义](Sources/StupidMirrorApp/StupidMirrorMCPTools.swift)为准。
+
+</details>
+
+## 架构与隐私
+
+```text
+iPhone USB ── AVFoundation ──────────────┐
+iPhone LAN ── H.264 / SRT ───────────────┼── Native macOS mirror
+Android    ── ADB / scrcpy ──────────────┘        │
+                                                  ├── Vision OCR / observations
+AI client  ── localhost MCP ── device actions ────┘
+                                  │
+                         Appium: XCUITest / UiAutomator2
+                                  │
+                              Real device
+```
+
+采集、播放和 OCR 均在本地完成。StupidMirror 不会自行将镜像内容上传到模型服务商。**外部 AI 客户端可以通过 MCP 获取截图和工具结果**；后续如何处理这些信息，取决于该客户端的账号、模型服务商和数据设置。
+
+账号登录与许可证校验会访问配置的 Supabase 服务，许可请求包含账号和激活信息，不包含镜像帧或控制输入。详见[隐私政策](PRIVACY.md)与[安全策略](SECURITY.md)。
+
+## 从源码构建
+
+需要 macOS 15+ 与 Swift 6 工具链：
+
+```bash
+git clone https://github.com/LiuTianjie/StupidMirror.git
+cd StupidMirror
 make run
 ```
 
-构建但不启动：
-
-```sh
-make build
-```
-
-生成本地 `.app`：
-
-```sh
-make app
+```bash
+swift build        # 编译
+swift test         # 运行测试
+make app           # 生成 dist/StupidMirror.app
 open dist/StupidMirror.app
 ```
 
-## 连接 Codex 或 Claude Code
+使用宿主机 Appium 时，可运行 `make setup-appium` 与 `make run-appium`。源码运行与打包后的应用具有不同的 macOS 权限身份，应为实际运行的进程授权。
 
-1. 打开 StupidMirror，进入 **设置 → MCP**，启用本地 MCP Server。
-2. 在内置连接向导中选择 **Codex** 或 **Claude Code**。
-3. 复制应用生成的配置或命令，其中已经包含本机
-   `http://127.0.0.1:<port>/mcp` 地址、Bearer 认证，以及首次准备 WDA 所需的
-   240 秒首次控制代理准备超时。
-4. 将配置加入对应客户端，必要时重启客户端，然后让它调用 `list_devices`。
+[探针工具](tools/probes/README.md)可检查设备发现、捕获与 WDA 就绪状态。`make probe-avfoundation-frame` 会将一帧画面保存在 Git 忽略的 `artifacts/` 目录中。
 
-生成的 Bearer Token 需要保密。服务只绑定 `127.0.0.1`；在应用中轮换 Token
-后，旧客户端凭据会立即失效。
+## 贡献与文档
 
-### MCP 能做什么
+反馈设备问题时，请提供 macOS / 手机系统版本、连接方式、复现步骤和脱敏诊断。涉及捕获或控制的改动应附上真机验证结果；Swift 构建通过并不能证明设备兼容性。
 
-- 设备与会话：发现设备、开始/停止镜像、连接/断开控制、读取状态与诊断。
-- 观察与定位：读取最新镜像帧、本地 Vision OCR、按需 Accessibility、语义化
-  元素查找、等待与断言。
-- 可见引导：在 Mac 镜像上编号高亮所有可点击目标，或高亮指定目标，不向
-  手机发送任何输入。
-- 真机操作：点击、双击、长按、滑动、滚动、输入、清空/替换文本、按键、
-  App 切换，以及按 iOS Bundle ID 或 Android 包名启停 App。
-
-推荐的 Agent 操作顺序：
-
-1. 调用 `list_devices`，按需执行 `start_mirror` 与 `connect_control`。
-2. 使用 `observe_screen` 获取最新帧；日常导航优先启用本地 OCR，只有明确需要
-   深层结构时才请求 Accessibility。
-3. 使用 `tap_text` 一次提交最多 16 个候选文案。StupidMirror 先在最新实时
-   镜像帧上做一次本地 OCR；像素中没有目标时，再为全部候选共享一次原生
-   UI Tree 快照。
-4. 使用 `tap_element` 时携带 observation UUID，可拒绝已经过期的元素 ID。
-5. 文本输入优先使用 `replace_text` 或 `clear_text`，它们直接操作当前原生输入
-   元素并校验结果，不依赖 iOS 选择菜单或坐标猜测。
-
-`highlight_clickable_elements` 会把当前所有可见、启用且可点击的目标编号显示在
-Mac 镜像上；`highlight_elements` 可高亮指定元素；`clear_highlights` 可提前清除。
-这些高亮不会点击手机，也不会被写进视频流。
-
-## 隐私
-
-StupidMirror 在本机运行，不会主动上传镜像画面、缩略图、设备信息或控制事件。
-OCR 使用 macOS Vision 按需在本地完成；AI 操作标记只渲染在 Mac 界面中。
-应用不内置模型，也不要求模型 API Key。
-
-兑换/认领许可时，只会向 Supabase 许可证接口发送随机安装 ID、用户输入的
-SM- 激活码、应用版本、回执，以及已登录 Google / GitHub / email 会话；不包含镜像帧、
-缩略图、设备标识或控制输入。免费单设备镜像不需要登录。详见
-[PRIVACY.md](PRIVACY.md)。
-
-## 开发与文档
-
-```sh
-swift build
-swift test
-make app
-```
-
-- [MVP 架构](docs/mvp-architecture.md)
-- [研究记录](docs/research.md)
-- [安全策略](SECURITY.md)
-- [贡献指南](CONTRIBUTING.md)
-- [更新日志](CHANGELOG.md)
-- [发布流程](RELEASING.md)
-- [账号许可、链动小铺购买与本地生成器](LICENSING.md)
+| 文档 | 内容 |
+| --- | --- |
+| [贡献指南](CONTRIBUTING.md) | 开发环境与 Pull Request 要求 |
+| [架构笔记](docs/mvp-architecture.md) | 初始设计与实现背景 |
+| [研究记录](docs/research.md) | 屏幕捕获与设备接入研究 |
+| [发布流程](RELEASING.md) | 签名、公证、固定应用身份与产物上传 |
+| [更新日志](CHANGELOG.md) | 版本历史 |
+| [账号许可](LICENSING.md) | 激活、账号迁移与许可服务实现 |
 
 ## 许可证
 
-StupidMirror 以 [PolyForm Noncommercial License 1.0.0](LICENSE) 提供源码。
-个人学习、研究、实验、兴趣项目及其他非商业用途可在该许可证范围内免费使用；
-商业用途需要项目所有者单独书面授权，详见[商业授权说明](COMMERCIAL-LICENSE.md)。
+StupidMirror 以 **source-available（源码可用）** 形式采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 发布，允许许可证约定的非商业用途，不属于 OSI 认可的开源许可证。商业用途需要单独书面授权，详见[商业授权说明](COMMERCIAL-LICENSE.md)。
 
-这不是 MIT 或 OSI 认可的开源许可证。第三方组件仍遵循各自许可证，详见
-[NOTICE](NOTICE)。
+当前应用在未激活时允许一个镜像会话和一个控制会话。需要同时连接多台设备时，可使用 Google、GitHub 或邮箱登录，并兑换[官方商店](https://wzyp.cn/item/exords)提供的 `SM-` 激活码；不接受 iTool `IT-` 码。功能激活与商业授权是两件独立的事。
+
+第三方组件仍遵循各自许可证，详见 [NOTICE](NOTICE)。

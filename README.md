@@ -1,342 +1,183 @@
-# StupidMirror
+<p align="center">
+  <img src="docs/assets/app-icon.webp" alt="StupidMirror" width="96" />
+</p>
 
-**English** · [简体中文](README.zh-CN.md)
+<h1 align="center">StupidMirror</h1>
 
-StupidMirror is a native macOS menu bar app for mirroring and controlling iOS
-and Android devices. iPhone mirroring works over USB or, after one USB setup,
-the same local network. Android 11+ devices are discovered through ADB and use
-a direct H.264 video and PCM audio stream from a pinned scrcpy server.
+<p align="center">
+  <strong>Your phone, on your Mac. Your agent, on your phone.</strong><br />
+  Native iOS and Android mirroring, device control, and a local MCP server for AI agents.
+</p>
 
-[Product website](https://liutianjie.github.io/StupidMirror/) ·
-[Download StupidMirror v0.2.13](https://github.com/LiuTianjie/StupidMirror/releases/download/v0.2.13/StupidMirror-v0.2.13-macos.zip) ·
-[Commercial licensing](COMMERCIAL-LICENSE.md)
+<p align="center">
+  <a href="Package.swift"><img src="https://img.shields.io/badge/macOS-15%2B-343b48?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="macOS 15 or newer" /></a>
+  <a href="https://github.com/LiuTianjie/StupidMirror/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/LiuTianjie/StupidMirror/ci.yml?style=flat-square&amp;label=build" alt="Build status" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-64748b?style=flat-square" alt="PolyForm Noncommercial license" /></a>
+</p>
 
-> This project is experimental. It depends on private-feeling system behavior:
-> macOS exposes the iPhone screen as an AVFoundation capture source, which means
-> the app needs Camera permission even though it is not trying to use a webcam.
+<p align="center">
+  <a href="https://github.com/LiuTianjie/StupidMirror/releases/latest">Download</a> ·
+  <a href="https://liutianjie.github.io/StupidMirror/">Website</a> ·
+  <a href="#connect-an-ai-agent">MCP setup</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-## Features
+<p align="center">
+  <img src="docs/assets/dashboard.webp" alt="StupidMirror on macOS showing a connected iPhone and device controls" width="820" />
+</p>
 
-- USB iPhone screen source discovery through CoreMediaIO/AVFoundation.
-- Optional wireless discovery through Apple's `devicectl`, with no custom or
-  private device transport implementation.
-- High-quality wireless H.264 mirroring over the local network, without a
-  ReplayKit Broadcast Extension or companion iPhone app.
-- Android 11+ discovery through ADB, with H.264 video and optional device audio
-  decoded and played directly inside StupidMirror.
-- Menu bar dashboard with device list, thumbnails, diagnostics, and settings.
-- Standalone mirror windows with device-ratio sizing.
-- Chinese and English UI copy.
-- Optional Appium control through XCUITest on iOS and UiAutomator2 on Android,
-  including tap, swipe, text input, Home/Back, app switching, and app lifecycle
-  actions.
-- Bundled Mac-side Appium runtime for packaged release builds.
-- Free one-device mirroring without signing in. Simultaneous multi-device
-  mirroring and extra device control require a Google, GitHub, or email login, then an
-  SM- activation code bought at https://wzyp.cn/item/exords and redeemed onto
-  that account. iTool IT- codes are not accepted.
-- Local probes for AVFoundation discovery, frame capture, device discovery, and
-  WebDriverAgent readiness.
+StupidMirror brings real mobile devices into a native macOS workspace. View an iPhone over USB or Wi-Fi, mirror an Android device through ADB, and interact with either through an explicit control session.
 
-## Requirements
+The same workspace is available to AI agents over **MCP**: observe the current screen, locate a target with local OCR or native accessibility, act on the device, and inspect the result. You can watch those actions on the Mac mirror as they happen.
 
-- macOS 15 or newer.
-- Xcode or the Swift toolchain with Swift 6 support.
-- An iPhone that trusts this Mac. USB is required for initial wireless setup.
-- Camera permission for the packaged app or the terminal process running
-  `swift run`.
-- Optional control support: iPhone trust, Developer Mode/UI Automation, and a
-  WebDriverAgentRunner that the Mac app can install or start through its bundled
-  Node/Appium/XCUITest runtime.
-- Android support: Android 11 or newer, USB debugging enabled, and Android SDK
-  Platform-Tools (`adb`) installed on the Mac. Approve this Mac's debugging key
-  on the phone when prompted.
-- Android control installs Appium's UiAutomator2 settings/server helper APKs on
-  the phone the first time **Connect** is used. No separate StupidMirror Android
-  app or account is required.
+**One device can be mirrored and controlled without signing in.** Account activation unlocks simultaneous devices. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
 
-## Quick Start
+## What makes it useful
 
-Run from source:
+- **A native place for your devices.** Menu bar access, a device dashboard, live thumbnails, and independent mirror windows built with SwiftUI and AppKit.
+- **Three capture paths.** USB iPhone capture through AVFoundation, wireless iPhone H.264 over the local network, and Android H.264/audio through a pinned scrcpy server.
+- **Control when you ask for it.** Tap, swipe, type, press device buttons, switch apps, and launch or terminate apps through Appium. Opening a USB or Android mirror does not start a control session.
+- **An agent can see what it is doing.** Live frames, Apple Vision OCR, optional accessibility trees, semantic targeting, waits, and assertions share the same device workspace.
+- **Automation stays visible.** Agent taps, swipe paths, and selected targets appear on the Mac mirror. These overlays do not alter the phone screen or encoded video.
+- **Bring your own AI client.** Built-in connection guides for Codex and Claude Code. StupidMirror itself needs no model API key and runs no embedded model.
 
-```sh
+## Start with one device
+
+Download the macOS app from [GitHub Releases](https://github.com/LiuTianjie/StupidMirror/releases/latest), move it to Applications, and open it. StupidMirror runs as a menu bar utility.
+
+| Connection | Prepare | Video and audio |
+| --- | --- | --- |
+| **iPhone · USB** | Trust this Mac; allow Camera access when requested | AVFoundation capture; optional device audio on the Mac |
+| **iPhone · Wi-Fi** | Complete the Wireless Setup Guide once over USB; keep both devices on the same LAN | H.264 over SRT with VideoToolbox decoding; wireless audio is not available |
+| **Android · ADB** | Android 11+; install Android SDK Platform-Tools on the Mac; enable USB debugging and approve the Mac's key | H.264 video and optional device audio from scrcpy |
+
+**macOS 15+ is required.** Device compatibility can depend on OS versions, trust state, and the available automation runtime. The project remains experimental.
+
+### iPhone over USB
+
+1. Connect the iPhone, unlock it, and accept **Trust This Computer**.
+2. Open StupidMirror and grant Camera access from the in-app permission button.
+3. Select the discovered device and open its mirror.
+
+Camera permission is needed because macOS exposes the iPhone screen as an AVFoundation capture source; StupidMirror is not using the Mac webcam for this. **Play Device Audio on Mac** is off by default, preserving playback on the iPhone. Turning it on routes USB device audio to the Mac and also requires Microphone permission.
+
+### iPhone over Wi-Fi
+
+Open the **Wireless Setup Guide** while the phone is connected over USB. The guide checks the device and Apple Development signing identity, prepares the screen runner, and verifies its LAN connection before you unplug.
+
+The phone needs the relevant developer permissions and must accept the Local Network prompt. Later sessions reuse the prepared runner. Wireless mirroring does not require Camera permission or a ReplayKit Broadcast Extension. It does require this signed device-side runner; video setup does not itself enable a control session.
+
+### Android
+
+Install `adb`, enable USB debugging, connect the device, and approve this Mac on the phone. Select the discovered device to start mirroring. Video and audio work independently of the optional Appium control connection.
+
+## Device control
+
+Click **Connect** to start control. Release bundles include the Mac-side Node/Appium runtime and the XCUITest and UiAutomator2 drivers.
+
+| Platform | Control backend | First connection |
+| --- | --- | --- |
+| iOS | Appium + XCUITest / WebDriverAgent | Requires trust, Developer Mode / UI Automation, and valid Apple Development signing for WebDriverAgentRunner |
+| Android | Appium + UiAutomator2 | Installs Appium settings/server helper APKs when needed |
+
+StupidMirror detects usable Apple Development signing teams and reuses per-device WDA build caches. A first build or helper installation takes longer than reconnecting to an existing setup. Advanced settings support a custom Appium endpoint; the default is `http://127.0.0.1:4723`.
+
+## Connect an AI agent
+
+1. Open **Settings → MCP** and enable the local MCP server.
+2. Choose **Codex** or **Claude Code** in the connection guide.
+3. Copy the generated configuration or command into that client. It includes the endpoint, bearer authentication, and setup timeout.
+4. Keep StupidMirror open and ask the agent to call `list_devices`.
+
+The server listens only on `http://127.0.0.1:<port>/mcp`. Rotating the bearer token invalidates the previous credential. First-time control setup can be slow, so the guide configures a 240-second tool timeout.
+
+Try an instruction such as:
+
+> List my connected devices, start mirroring my iPhone, and highlight the visible clickable elements without tapping them.
+
+### Observe → act → verify
+
+| Step | Tools | Behavior |
+| --- | --- | --- |
+| Connect | `list_devices`, `start_mirror`, `connect_control` | Discover the target and prepare the required sessions |
+| Observe | `observe_screen`, `find_any_element` | Read a live frame; use local OCR and request accessibility only when needed |
+| Act | `tap_text`, `tap_element`, `replace_text`, `swipe` | Target observed content or an explicit gesture |
+| Verify | `wait_for`, `assert_screen`, `observe_screen` | Check the resulting state |
+| Guide | `highlight_clickable_elements`, `highlight_elements`, `clear_highlights` | Draw targets on the Mac mirror without sending input |
+
+<details>
+<summary>Targeting and text-input details for agent authors</summary>
+
+- Pass `device_id` when more than one device is present.
+- `tap_text` accepts up to 16 candidate labels. By default it runs one local OCR pass, then at most one shared native hierarchy snapshot if needed. `find_any_element` performs the lookup without tapping.
+- `observe_screen` does not fetch accessibility by default. Use `include_ocr` for local text recognition and `include_accessibility` for explicit hierarchy inspection.
+- For icons, canvases, or custom controls, request `include_image: true`, inspect the screenshot, then use an observed coordinate.
+- Pass the observation UUID to `tap_element` to reject stale element IDs after the screen changes.
+- On iOS, accessibility snapshots can disturb focused text fields. After focusing, use `replace_text` or `clear_text` directly; use `type_text` to append. Replacement and clearing verify the resulting native value.
+- Vision OCR supports `fast` and `accurate` modes, defaults to Chinese and English, and runs on demand outside the capture/encoding path.
+- Input tools are marked as potentially destructive in MCP metadata because their effect depends on the app currently open on the device.
+
+The [tool definitions](Sources/StupidMirrorApp/StupidMirrorMCPTools.swift) are the authoritative schema.
+
+</details>
+
+## Architecture and privacy
+
+```text
+iPhone USB ── AVFoundation ──────────────┐
+iPhone LAN ── H.264 / SRT ───────────────┼── Native macOS mirror
+Android    ── ADB / scrcpy ──────────────┘        │
+                                                  ├── Vision OCR / observations
+AI client  ── localhost MCP ── device actions ────┘
+                                  │
+                         Appium: XCUITest / UiAutomator2
+                                  │
+                              Real device
+```
+
+Capture, playback, and OCR run locally. StupidMirror does not independently upload mirrored content to a model provider. **An external AI client can receive screenshots and tool results through MCP**; its account, model provider, and data settings determine what happens to that information afterward.
+
+Account sign-in and license validation contact the configured Supabase service. License requests contain account/activation data, not mirrored frames or control input. See the [privacy policy](PRIVACY.md) and [security policy](SECURITY.md).
+
+## Build from source
+
+Use macOS 15+ and a Swift 6 toolchain:
+
+```bash
+git clone https://github.com/LiuTianjie/StupidMirror.git
+cd StupidMirror
 make run
 ```
 
-Build without launching:
-
-```sh
-make build
-```
-
-Create a local `.app` bundle:
-
-```sh
-make app
+```bash
+swift build        # Compile
+swift test         # Run tests
+make app           # Create dist/StupidMirror.app
 open dist/StupidMirror.app
 ```
 
-The packaged app runs as a menu bar utility and does not stay in the Dock.
+For a host Appium installation, use `make setup-appium` and `make run-appium`. Source execution and packaged apps have separate macOS permission identities; grant permissions to the process you are actually running.
 
-Build and upload a local GitHub Release artifact:
+The [probe tools](tools/probes/README.md) help inspect discovery, capture, and WDA readiness. `make probe-avfoundation-frame` saves a local frame under the git-ignored `artifacts/` directory.
 
-```sh
-gh auth login
-make release-local
-```
+## Contributing and documentation
 
-This reads `VERSION`, creates `dist/releases/StupidMirror-vX.Y.Z-macos.zip`, and
-uploads it to the matching GitHub Release. If the release already exists, the
-artifact is replaced.
+Device bugs are most useful with macOS/device OS versions, connection type, reproduction steps, and redacted diagnostics. Changes to capture or control should include real-device verification; a successful Swift build cannot establish device compatibility.
 
-Bump the version and release in one step:
-
-```sh
-make release-local BUMP=patch
-make release-local BUMP=minor
-make release-local BUMP=major
-make release-local BUMP=0.2.0
-```
-
-With `BUMP`, the script updates `VERSION`, commits the release, creates an
-annotated tag, pushes the branch and tag, then uploads the zip.
-
-For a locally signed and notarized release:
-
-```sh
-xcrun notarytool store-credentials stupidmirror-notary
-
-SIGN_IDENTITY="Developer ID Application: Gaojiua Technology (Beijing) Co., Ltd. (L95PYLFT86)" \
-VERSION="0.1.0" \
-BUILD_NUMBER="1" \
-NOTARY_PROFILE="stupidmirror-notary" \
-make release-local
-```
-
-Distributed releases have a fixed identity: bundle ID `com.gaojiua.StupidMirror` and
-Apple Team `L95PYLFT86`. The release script rejects identity drift before upload
-so macOS does not treat an update as a different app and ask for permissions
-again.
-
-Release builds are signed with `StupidMirror.entitlements` by default. The Camera
-entitlement is required. The bundled Node runtime is signed
-separately with the JIT entitlements in `NodeRuntime.entitlements`; the release
-script verifies all nested Mach-O code without relying on `codesign --deep`.
-
-Release uploads require `NOTARY_PROFILE`. After notarization, the script staples
-the ticket and validates the app with `codesign`, `stapler`, Gatekeeper, and
-`syspolicy_check`. `ALLOW_UNNOTARIZED=true` is only for private test artifacts.
-
-## Permissions
-
-StupidMirror checks Camera status without prompting at launch.
-macOS permission prompts are requested only after you click the corresponding
-in-app button, and an in-flight request disables that button so it cannot be
-requested twice concurrently.
-
-Camera access is required because macOS exposes USB iPhone screen sources
-through AVFoundation camera capture APIs. Those sources are muxed: an enabled
-audio port makes iOS hand playback to the Mac and mute the phone speaker.
-**Play Device Audio on Mac** is off by default so the iPhone keeps its speaker.
-Turn the switch on to send that USB audio to this Mac; macOS also requires
-Microphone permission for that optional track.
-
-Wireless mode does not require Camera permission. Enable it under Settings,
-then keep the Mac and iPhone on the same local network. The first setup for each
-iPhone must be completed over USB: open the independent Wireless Setup Guide,
-which checks the connected device and Apple development account before signing
-and caching the screen agent. This does not connect or enable iPhone control.
-The guide then installs and launches the runner while USB is still connected,
-waits for the iPhone-side Local Network prompt, and verifies WDA through the
-iPhone's reported LAN address. Later wireless sessions launch that same runner
-without keeping a Mac `devicectl --console` session attached, and reuse the
-verified LAN path for both video and control. A successful guide therefore
-covers the same route used after USB is unplugged.
-Wireless audio is not currently available.
-
-If permission is denied:
-
-1. Open System Settings.
-2. Go to Privacy & Security -> Camera.
-3. Enable StupidMirror, or enable the terminal app if running with `make run`.
-4. Return to StupidMirror and use the in-app permission recheck button.
-
-## Optional Device Control
-
-Packaged Mac builds include a local Appium/XCUITest runtime at
-`StupidMirror.app/Contents/Resources/Appium`. Click **Connect** in StupidMirror;
-the app checks the local service and starts the bundled runtime if needed. A
-live control session stays warm briefly when the user disconnects, so an
-immediate reconnect does not recreate WebDriverAgent. After an app restart,
-StupidMirror reuses this Mac's per-device WDA build cache without compiling it
-again; only a genuinely missing cache falls back to launching an installed WDA
-or performing the first build and install. Reuse does not require a Team ID.
-When a first installation is required, StupidMirror detects valid Apple
-Development signing teams from the Mac automatically; manual Team ID entry
-remains available under the setup guide and advanced control settings.
-
-Control is explicit: opening a mirror window never installs the control agent by
-itself. WebDriverAgentRunner still needs valid signing before real-device
-control can work, and the iPhone must trust this Mac with Developer Mode/UI
-Automation enabled.
-
-For Android, the packaged runtime also includes Appium's UiAutomator2 driver.
-The first explicit **Connect** may take 20–60 seconds while it checks and
-installs `io.appium.settings`, `io.appium.uiautomator2.server`, and
-`io.appium.uiautomator2.server.test`. Later connections normally reuse them.
-Mirroring and audio use ADB/scrcpy independently and do not require control to
-be connected.
-
-For source development, you can still use the host Appium install:
-
-```sh
-make setup-appium
-make run-appium
-```
-
-## AI Harness through MCP
-
-StupidMirror does not embed an AI model, require a model API key, or upload the
-device screen to a model provider. Instead, its localhost MCP server exposes a
-device harness that external agents such as Codex or Claude can use with the
-user's existing account and privacy settings.
-
-### Connect Codex or Claude Code
-
-1. Open StupidMirror, choose **Settings → MCP**, and enable the local MCP server.
-2. Select **Codex** or **Claude Code** in the built-in connection guide.
-3. Copy the generated configuration or command. It already contains the local
-   `http://127.0.0.1:<port>/mcp` endpoint, bearer authentication, and a 240-second
-   tool timeout for first-time control-agent setup.
-4. Add that configuration to the selected client, restart the client if needed,
-   then ask it to call `list_devices`.
-
-Keep the generated bearer token private. The server binds to localhost only;
-rotating the token immediately invalidates the previous client credential.
-
-### What the MCP server exposes
-
-- Device and session lifecycle: discover devices, start or stop mirrors,
-  connect or disconnect control, inspect status, and collect diagnostics.
-- Observation and targeting: live-frame screenshots, local Vision OCR,
-  opt-in Accessibility trees, semantic element lookup, waits, and assertions.
-- Visible guidance: highlight every clickable target or a selected set on the
-  Mac mirror without sending input to the device.
-- Real-device actions: tap, double-tap, long-press, swipe, scroll, type, clear
-  or replace text, press hardware-style buttons, switch apps, and activate or
-  terminate an app by iOS bundle ID or Android package name.
-
-The preferred agent loop is:
-
-1. `list_devices`, then `start_mirror` and `connect_control` as needed.
-2. `observe_screen` reads the newest live frame without fetching Accessibility
-   by default. Set `include_ocr` for local text recognition. Request
-   `include_accessibility` only for explicit deep hierarchy inspection.
-3. `tap_text` takes up to 16 candidate labels and checks the latest live mirror
-   frame with local Vision OCR first. If pixels do not expose a label,
-   it parses one native UI tree for every candidate together and clicks the fresh
-   observed frame. `find_any_element` provides the same lookup without clicking.
-4. A missing label therefore costs one OCR pass plus one hierarchy snapshot,
-   rather than one slow negative native predicate lookup per synonym. Existing
-   native element references still use direct element clicks.
-5. When neither OCR nor Accessibility describes an icon, canvas, or custom
-   control, request `observe_screen` with `include_image: true` and let the AI
-   inspect the screenshot before using one targeted normalized coordinate.
-
-`tap_element` accepts the observation UUID so an agent can reject stale element
-identifiers after the screen changes. Element actions and raw control tools are
-marked as potentially destructive in MCP metadata because their real-world
-effect depends on the visible device UI.
-
-On iOS, avoid Accessibility or UI-tree queries between focusing a text field
-and `type_text`: XCUITest snapshotting can disturb the app's input state. The
-fast native lookup and batch tools are designed to keep that control loop short.
-Use `replace_text` to atomically clear and replace the active field, or
-`clear_text` to empty it. Both operate on the active native element and verify
-the resulting value, so agents do not need to invoke a selection menu or guess
-delete-key coordinates.
-
-For user-guided operation, `highlight_clickable_elements` reads native
-Accessibility semantics and numbers every visible enabled clickable target on
-the Mac mirror. `highlight_elements` highlights any selected element IDs from
-the latest observation, and `clear_highlights` removes the overlay early. These
-tools never send a tap or other input event to the device. Highlight counts are
-not capped; identical native target geometry is only drawn once to avoid
-duplicate container/child markers.
-
-Accessibility elements include source, parent/child identifiers, depth, path,
-state, screen-point frame, and normalized frame. OCR elements use
-`source: "ocr"` and add a confidence score. OCR runs through
-`VNRecognizeTextRequest` locally with `fast` and `accurate` modes; Chinese and
-English are the defaults, and agents can pass other Vision language identifiers.
-Recognition is on-demand, single-flight, and briefly cached. It reads the
-newest retained frame without changing the live wireless stream or entering
-the capture/encoding hot path.
-
-Actions invoked through the AI harness are visible in StupidMirror: semantic
-targets are boxed, taps are marked, swipes show their path and direction, and
-non-positional actions display a short `AI` notice. This overlay is rendered by
-the Mac UI only. It is not burned into the device frame, sent to the device, or
-processed by the video encoder; direct manual mirror interactions are not
-labelled as AI actions.
-
-## Probes
-
-Run probes from the repo root:
-
-```sh
-make probe-devices
-make probe-avfoundation
-make probe-avfoundation-frame
-make probe-pymobiledevice3
-make probe-wda
-```
-
-The probes inspect the host and connected devices. `make probe-avfoundation-frame`
-writes one local screenshot frame to `artifacts/`, which is ignored by git.
-
-## Development
-
-Useful commands:
-
-```sh
-swift build
-swift test
-make app
-```
-
-The app bundle is written to `dist/StupidMirror.app`.
-
-## Privacy
-
-StupidMirror runs locally. The app does not intentionally upload mirrored screen
-content, thumbnails, device metadata, or control events to any remote service.
-Optional Appium control talks to the configured Appium server URL, which defaults
-to `http://127.0.0.1:4723`.
-
-License redeem/claim send the random installation ID, entered SM- activation
-code, app version, returned receipt, and the signed-in Google, GitHub, or email
-session to the Supabase license endpoint. It never includes mirrored frames,
-thumbnails, device identifiers, or control input. Free one-device mirroring
-does not require a session. See [PRIVACY.md](PRIVACY.md) for details.
-
-## Documentation
-
-- [MVP architecture](docs/mvp-architecture.md)
-- [Research notes](docs/research.md)
-- [Security policy](SECURITY.md)
-- [Contributing guide](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
-- [Release process](RELEASING.md)
-- [Account licensing, 链动小铺 purchase, and local code generator](LICENSING.md)
+| Document | Scope |
+| --- | --- |
+| [Contributing](CONTRIBUTING.md) | Development setup and pull request expectations |
+| [Architecture notes](docs/mvp-architecture.md) | Original design and implementation context |
+| [Research notes](docs/research.md) | Capture and device-integration research |
+| [Release process](RELEASING.md) | Signing, notarization, fixed app identity, and artifact upload |
+| [Changelog](CHANGELOG.md) | Release history |
+| [Account licensing](LICENSING.md) | Activation, account migration, and licensing infrastructure |
 
 ## License
 
-StupidMirror is source-available under the
-[PolyForm Noncommercial License 1.0.0](LICENSE). Personal study, research,
-experimentation, hobby projects, and other noncommercial uses are permitted
-under those terms. Commercial use requires separate written authorization from
-the project owner; see [Commercial licensing](COMMERCIAL-LICENSE.md).
+StupidMirror is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE). It permits the noncommercial uses described in that license and is not an OSI-approved open-source license. Commercial use requires separate written authorization; see [commercial licensing](COMMERCIAL-LICENSE.md).
 
-This is not an MIT or OSI-approved open-source license. Third-party components
-remain subject to their own licenses as described in [NOTICE](NOTICE).
+The current app allows one mirror and one control session without activation. To unlock simultaneous devices, sign in with Google, GitHub, or email and redeem an `SM-` activation code from the [official store](https://wzyp.cn/item/exords). iTool `IT-` codes are not accepted. Feature activation and commercial authorization are separate matters.
+
+Third-party components retain their own licenses. See [NOTICE](NOTICE).
