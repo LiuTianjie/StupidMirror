@@ -118,7 +118,7 @@ final class ControlGestureReducerTests: XCTestCase {
 
     @MainActor
     func testIdleControlSessionSendsKeepAliveAndStopsWhenDisconnected() async throws {
-        let stub = AppiumKeepAliveStub(mode: .healthy)
+        let stub = AppiumKeepAliveStub(mode: .holdHealthyResponse)
         let session = AppiumControlSession(
             device: androidDevice(),
             httpClientFactory: { baseURL, platform in
@@ -138,13 +138,16 @@ final class ControlGestureReducerTests: XCTestCase {
             screenSize: DeviceScreenSize(width: 1080, height: 2400)
         )
 
-        try await waitUntil { await stub.keepAliveRequestCount >= 1 }
+        // Hold one request in flight so a second scheduled request cannot race
+        // the disconnect and make the counter snapshot depend on CI timing.
+        try await waitUntil { await stub.keepAliveRequestCount == 1 }
         session.disconnectKeepingAgentWarm()
-        let countAfterDisconnect = await stub.keepAliveRequestCount
+        await stub.releaseKeepAliveResponse()
         try await Task.sleep(for: .milliseconds(80))
 
         let finalCount = await stub.keepAliveRequestCount
-        XCTAssertEqual(finalCount, countAfterDisconnect)
+        XCTAssertEqual(finalCount, 1)
+        XCTAssertFalse(session.isReady)
     }
 
     @MainActor
@@ -538,6 +541,7 @@ final class ControlGestureReducerTests: XCTestCase {
 private actor AppiumKeepAliveStub {
     enum Mode: Sendable, Equatable {
         case healthy
+        case holdHealthyResponse
         case expireWarmSession
         case expireWarmAction
     }
@@ -546,18 +550,29 @@ private actor AppiumKeepAliveStub {
     private(set) var keepAliveRequestCount = 0
     private(set) var createdSessionCount = 0
     private(set) var actionRequestCount = 0
+    private var keepAliveResponseContinuation: CheckedContinuation<Void, Never>?
 
     init(mode: Mode) {
         self.mode = mode
     }
 
-    func response(for request: URLRequest) throws -> (Data, URLResponse) {
+    func releaseKeepAliveResponse() {
+        keepAliveResponseContinuation?.resume()
+        keepAliveResponseContinuation = nil
+    }
+
+    func response(for request: URLRequest) async throws -> (Data, URLResponse) {
         let url = try XCTUnwrap(request.url)
         let path = url.path
         let method = request.httpMethod ?? "GET"
 
         if path.contains("/session/warm-test-session/window/") {
             keepAliveRequestCount += 1
+            if mode == .holdHealthyResponse, keepAliveRequestCount == 1 {
+                await withCheckedContinuation { continuation in
+                    keepAliveResponseContinuation = continuation
+                }
+            }
             if mode == .expireWarmSession {
                 return jsonResponse(
                     url: url,
