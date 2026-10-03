@@ -575,11 +575,6 @@ final class DeviceDiscoveryTests: XCTestCase {
         )
     }
 
-    func testUSBControlDoesNotResolveRetainedWirelessTransport() {
-        XCTAssertFalse(DeviceGalleryStore.shouldResolveWirelessControl(for: .usb))
-        XCTAssertTrue(DeviceGalleryStore.shouldResolveWirelessControl(for: .wireless))
-    }
-
     @MainActor
     func testWirelessSessionCanAcceptDynamicEndpointRefreshWithoutReplacingOwners() {
         let original = WirelessDeviceMetadata(
@@ -612,14 +607,14 @@ final class DeviceDiscoveryTests: XCTestCase {
         var session = DeviceSession(device: identity, wirelessDevice: original)
         let mirrorOwner = session.mirrorSession
         let controlOwner = session.controlSession
-        let wdaOwner = session.wirelessWDA
+        let wdaOwner = session.iosAgent
 
         XCTAssertTrue(DeviceGalleryStore.canReuseWirelessSession(session, for: refreshed))
         session.wirelessDevice = refreshed
 
         XCTAssertTrue(session.mirrorSession === mirrorOwner)
         XCTAssertTrue(session.controlSession === controlOwner)
-        XCTAssertTrue(session.wirelessWDA === wdaOwner)
+        XCTAssertTrue(session.iosAgent === wdaOwner)
         XCTAssertEqual(session.wirelessDevice?.tunnelIPAddress, "fd00::2")
     }
 
@@ -657,7 +652,7 @@ final class DeviceDiscoveryTests: XCTestCase {
         )
         let mirrorOwner = session.mirrorSession
         let controlOwner = session.controlSession
-        let wdaOwner = session.wirelessWDA
+        let wdaOwner = session.iosAgent
 
         session.adoptWireless(
             identity: DeviceIdentity(
@@ -675,84 +670,33 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertEqual(session.transport, .wireless)
         XCTAssertTrue(session.mirrorSession === mirrorOwner)
         XCTAssertTrue(session.controlSession === controlOwner)
-        XCTAssertTrue(session.wirelessWDA === wdaOwner)
+        XCTAssertTrue(session.iosAgent === wdaOwner)
         XCTAssertEqual(session.device.connectionState, .connected)
     }
 
-    func testWirelessWDAKeepsAppleCoreDeviceHostnameForControlDiscovery() {
-        XCTAssertEqual(
-            WirelessWDAService.lanHostname(from: "Test-iPhone.coredevice.local"),
-            "Test-iPhone.coredevice.local"
-        )
-    }
-
-    func testWirelessWDAEndpointUsesReportedLANAddressForVideo() throws {
-        let controlURL = try XCTUnwrap(URL(string: "http://[fd68:8f67:2e76::1]:8100"))
-        let endpoint = WirelessWDAService.endpoint(
-            baseURL: controlURL,
-            statusJSON: [
-                "value": [
-                    "ready": true,
-                    "ios": ["ip": "192.168.31.135"]
-                ]
-            ]
-        )
-
-        XCTAssertEqual(endpoint?.controlURL, controlURL)
-        XCTAssertEqual(endpoint?.videoHost, "192.168.31.135")
-    }
-
     func testWirelessWDADetectsLockedAndUnavailableDestinations() {
-        XCTAssertTrue(WirelessWDAService.outputIndicatesLockedDevice(
+        XCTAssertTrue(IOSAgentService.outputIndicatesLockedDevice(
             "Unlock iPhone Air to Continue. The device is locked."
         ))
-        XCTAssertTrue(WirelessWDAService.outputIndicatesUnavailableDevice(
-            "Device is busy (Connecting to iPhone Air)"
-        ))
-        XCTAssertFalse(WirelessWDAService.outputIndicatesLockedDevice("Testing started"))
-        XCTAssertFalse(WirelessWDAService.outputIndicatesUnavailableDevice("Testing started"))
-    }
-
-    func testWirelessWDAControlURLFormatsIPv6Hosts() throws {
-        XCTAssertEqual(
-            WirelessWDAService.controlURL(host: "192.168.31.135")?.absoluteString,
-            "http://192.168.31.135:8100"
-        )
-        XCTAssertEqual(
-            WirelessWDAService.controlURL(host: "fd00::1234")?.absoluteString,
-            "http://[fd00::1234]:8100"
-        )
+        XCTAssertFalse(IOSAgentService.outputIndicatesLockedDevice("Testing started"))
     }
 
     func testWirelessWDAUsesXCTestRunnerBundleIdentifier() {
         XCTAssertEqual(
-            WirelessWDAService.runnerBundleIdentifier(for: "com.example.wda"),
+            IOSAgentService.runnerBundleIdentifier(for: "com.example.wda"),
             "com.example.wda.xctrunner"
         )
     }
 
-    func testWirelessWDAReadsLaunchedProcessIdentifier() throws {
-        let data = try XCTUnwrap(
-            #"{"result":{"process":{"processIdentifier":59076}}}"#.data(using: .utf8)
-        )
-        XCTAssertEqual(
-            WirelessWDAService.processIdentifier(fromDevicectlJSON: data),
-            59_076
-        )
-        XCTAssertNil(WirelessWDAService.processIdentifier(fromDevicectlJSON: Data("{}".utf8)))
+    func testWirelessWDAInstallationFailuresAreRecognised() {
+        XCTAssertTrue(IOSAgentService.outputIndicatesMissingInstallation(
+            "RunTestWithConfig: could not find app with bundle id com.x.xctrunner"
+        ))
+        XCTAssertTrue(IOSAgentService.outputIndicatesMissingInstallation(
+            "The application com.x.xctrunner is not installed on this device."
+        ))
+        XCTAssertFalse(IOSAgentService.outputIndicatesMissingInstallation(
+            "the runner did not answer on port 8100 within 1m30s"
+        ))
     }
-
-    func testWirelessWDAReadsLANURLFromRunnerConsoleOutput() {
-        let output = """
-        Launched application.
-        ServerURLHere->http://192.168.31.135:8100<-ServerURLHere
-        """
-
-        XCTAssertEqual(
-            WirelessWDAService.serverURL(fromConsoleOutput: output)?.absoluteString,
-            "http://192.168.31.135:8100"
-        )
-        XCTAssertNil(WirelessWDAService.serverURL(fromConsoleOutput: "ServerURLHere->http://partial"))
-    }
-
 }

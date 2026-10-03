@@ -8,9 +8,7 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     case diagnostics
     case settings
     case activation
-    case controlSetup
-    case wirelessSetup
-    case wirelessAccess
+    case iphoneSetup
 
     var id: String { rawValue }
 
@@ -19,10 +17,12 @@ enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     }
 }
 
-enum WirelessSetupState: Equatable, Sendable {
+/// Where the iPhone setup guide is.
+enum IPhoneSetupPhase: Equatable, Sendable {
     case idle
-    case preparing
-    case ready
+    case inspecting
+    case preparing(IOSAgentSetupStep)
+    case ready(reachableOverWiFi: Bool)
     case failed(String)
 }
 
@@ -115,7 +115,13 @@ final class DeviceGalleryStore: ObservableObject {
     }
     @Published private(set) var detectedSigningTeams: [XcodeSigningTeam] = []
     @Published private(set) var isDetectingSigningTeams = false
-    @Published private(set) var wirelessSetupState: WirelessSetupState = .idle
+    @Published private(set) var iphoneSetupPhase: IPhoneSetupPhase = .idle
+    @Published private(set) var iphoneSetupReadiness: IOSDeviceReadiness?
+    /// Which phone `iphoneSetupReadiness` describes.
+    private var iphoneSetupReadinessUDID: String?
+    @Published private(set) var iphoneSetupPreparingUDID: String?
+    private var iphoneSetupTask: Task<Void, Never>?
+    private var iphoneSetupInspection: Task<Void, Never>?
     @Published private(set) var activeSheet: DashboardSheet?
     @Published private(set) var settingsTab: DashboardSettingsTab = .general
     @Published var selectedSessionID: String?
@@ -348,7 +354,7 @@ final class DeviceGalleryStore: ObservableObject {
     func discoverWirelessDevices() {
         wirelessMirroringEnabled = true
         guard UserDefaults.standard.bool(forKey: Self.wirelessSetupGuideSeenDefaultsKey) else {
-            presentWirelessSetup()
+            presentIPhoneSetup(for: iphoneSetupUSBSession)
             return
         }
         continueWirelessDiscovery()
@@ -363,57 +369,148 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
-    func presentWirelessSetup() {
-        if let usb = wirelessSetupUSBSession {
+    /// Opens the iPhone setup guide and starts checking the phone's state.
+    func presentIPhoneSetup(for session: DeviceSession? = nil) {
+        if let session, session.platform == .iOS {
+            select(session)
+        } else if let usb = iphoneSetupUSBSession {
             select(usb)
-            wirelessSetupState = hasCachedWDABuild(for: usb.device.udid) ? .ready : .idle
-        } else {
-            wirelessSetupState = .idle
         }
-        setActiveSheet(.wirelessSetup)
+        // Reopening the guide while a preparation runs keeps showing it.
+        if case .preparing = iphoneSetupPhase {
+            setActiveSheet(.iphoneSetup)
+            return
+        }
+        iphoneSetupPhase = .idle
+        iphoneSetupReadiness = nil
+        iphoneSetupReadinessUDID = nil
+        setActiveSheet(.iphoneSetup)
     }
 
-    func prepareWirelessSetup() async {
-        guard let session = wirelessSetupUSBSession,
-              let udid = session.device.udid, !udid.isEmpty else {
-            wirelessSetupState = .failed(t("wireless.setup.error.connectUSB"))
-            return
-        }
-        await detectSigningTeams()
-        guard !controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            wirelessSetupState = .failed(t("wireless.error.missingSigningTeam"))
-            return
-        }
+    var isPreparingIPhone: Bool {
+        if case .preparing = iphoneSetupPhase { return true }
+        return false
+    }
 
-        wirelessSetupState = .preparing
-        statusMessage = t("wireless.setup.preparing")
+    /// Re-reads the selected USB iPhone's state for the setup guide.
+    /// Concurrent calls share one inspection.
+    func refreshIPhoneSetupReadiness() async {
+        if let inFlight = iphoneSetupInspection {
+            await inFlight.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.inspectIPhoneForSetup()
+        }
+        iphoneSetupInspection = task
+        await task.value
+        iphoneSetupInspection = nil
+    }
+
+    private func inspectIPhoneForSetup() async {
+        guard !isPreparingIPhone else { return }
+        guard let session = iphoneSetupUSBSession, let udid = session.device.udid, !udid.isEmpty else {
+            // The phone went away: nothing shown may describe it any longer.
+            iphoneSetupReadiness = nil
+            iphoneSetupReadinessUDID = nil
+            iphoneSetupPhase = .idle
+            return
+        }
+        if iphoneSetupReadinessUDID != udid {
+            iphoneSetupReadiness = nil
+            if case .ready = iphoneSetupPhase { iphoneSetupPhase = .idle }
+            if case .failed = iphoneSetupPhase { iphoneSetupPhase = .idle }
+        }
+        iphoneSetupPhase = .inspecting
+        if detectedSigningTeams.isEmpty {
+            await detectSigningTeams()
+        }
+        let configuration = iosControlConfiguration()
         do {
-            try await WirelessWDAService.prepareInitialUSBSetup(
-                udid: udid,
-                configuration: controlConfiguration(for: session)
-            )
-            guard hasCachedWDABuild(for: udid) else {
-                throw WirelessWDAError.buildFailed
-            }
-            UserDefaults.standard.set(true, forKey: Self.wirelessSetupGuideSeenDefaultsKey)
-            wirelessSetupState = .ready
-            statusMessage = t("wireless.setup.ready")
-        } catch is CancellationError {
-            wirelessSetupState = .idle
+            let readiness = try await IOSAgentService.inspect(udid: udid, configuration: configuration)
+            guard iphoneSetupUSBSession?.device.udid == udid, !isPreparingIPhone else { return }
+            iphoneSetupReadiness = readiness
+            iphoneSetupReadinessUDID = udid
+            iphoneSetupPhase = .idle
         } catch {
-            let message = wirelessWDAErrorMessage(error)
-            wirelessSetupState = .failed(message)
-            statusMessage = message
+            guard iphoneSetupUSBSession?.device.udid == udid, !isPreparingIPhone else { return }
+            iphoneSetupReadiness = nil
+            iphoneSetupReadinessUDID = nil
+            iphoneSetupPhase = .failed(agentErrorMessage(error))
         }
     }
 
-    func finishWirelessSetupAndDiscover() {
+    /// Starts the one-time USB preparation: build and install the agent,
+    /// test-launch it, and switch on Wi-Fi connections. Runs until it ends or
+    /// `cancelIPhoneSetupPreparation()`, even when the guide is closed.
+    func prepareIPhoneAgent(force: Bool = false) {
+        guard !isPreparingIPhone else { return }
+        guard let session = iphoneSetupUSBSession,
+              let udid = session.device.udid, !udid.isEmpty else {
+            iphoneSetupPhase = .failed(t("iphone.setup.error.connectUSB"))
+            return
+        }
+        guard !controlXcodeOrgID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            iphoneSetupPhase = .failed(t(IOSAgentError.missingSigningTeam.copyKey))
+            return
+        }
+        iphoneSetupPhase = .preparing(.inspecting)
+        iphoneSetupPreparingUDID = udid
+        statusMessage = t("iphone.setup.preparing")
+        let configuration = iosControlConfiguration()
+        iphoneSetupTask = Task { @MainActor [weak self] in
+            do {
+                let result = try await IOSAgentService.prepare(
+                    udid: udid,
+                    configuration: configuration,
+                    force: force
+                ) { [weak self] step in
+                    await MainActor.run {
+                        guard let self, self.isPreparingIPhone, !Task.isCancelled else { return }
+                        self.iphoneSetupPhase = .preparing(step)
+                    }
+                }
+                try Task.checkCancellation()
+                guard let self else { return }
+                UserDefaults.standard.set(true, forKey: Self.wirelessSetupGuideSeenDefaultsKey)
+                self.iphoneSetupPhase = .ready(reachableOverWiFi: result.reachableOverWiFi)
+                self.statusMessage = self.t("iphone.setup.ready")
+                self.iphoneSetupReadiness = try? await IOSAgentService.inspect(udid: udid, configuration: configuration)
+                self.iphoneSetupReadinessUDID = udid
+            } catch {
+                guard let self else { return }
+                if error is CancellationError || Task.isCancelled {
+                    self.iphoneSetupPhase = .idle
+                    self.statusMessage = self.t("iphone.setup.cancelled")
+                } else {
+                    let message = self.agentErrorMessage(error)
+                    self.iphoneSetupPhase = .failed(message)
+                    self.statusMessage = message
+                }
+            }
+            self?.iphoneSetupTask = nil
+            self?.iphoneSetupPreparingUDID = nil
+        }
+    }
+
+    func cancelIPhoneSetupPreparation() {
+        iphoneSetupTask?.cancel()
+    }
+
+    /// The phone the running preparation targets, for the guide to name.
+    var iphoneSetupPreparingSession: DeviceSession? {
+        guard let udid = iphoneSetupPreparingUDID else { return nil }
+        return sessions.first { $0.platform == .iOS && $0.device.udid == udid }
+    }
+
+    func finishIPhoneSetupAndDiscover() {
         UserDefaults.standard.set(true, forKey: Self.wirelessSetupGuideSeenDefaultsKey)
         setActiveSheet(nil)
         continueWirelessDiscovery()
     }
 
-    var wirelessSetupUSBSession: DeviceSession? {
+    var iphoneSetupUSBSession: DeviceSession? {
         if let selectedSessionID,
            let selected = sessions.first(where: { $0.id == selectedSessionID }),
            selected.platform == .iOS,
@@ -434,13 +531,6 @@ final class DeviceGalleryStore: ObservableObject {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") else {
             return
         }
-        NSWorkspace.shared.open(url)
-    }
-
-    func openLocalNetworkPrivacySettings() {
-        guard let url = URL(
-            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
-        ) else { return }
         NSWorkspace.shared.open(url)
     }
 
@@ -516,7 +606,7 @@ final class DeviceGalleryStore: ObservableObject {
             MirrorWindowRegistry.shared.closeAll(sessions: usbSessions)
             for session in usbSessions {
                 session.mirrorSession.dispose()
-                session.controlSession.disconnectKeepingAgentWarm()
+                session.controlSession.disconnect()
             }
             for capture in thumbnailCaptures.values {
                 capture.cancel()
@@ -821,7 +911,7 @@ final class DeviceGalleryStore: ObservableObject {
                     connectionState: Self.wirelessConnectionState(
                         tunnelConnected: wirelessDevice.isTunnelConnected,
                         connectionDesired: connectionDesired,
-                        hasActiveEndpoint: matchingSession?.wirelessWDA?.activeEndpoint != nil
+                        hasActiveEndpoint: matchingSession?.iosAgent?.activeEndpoint != nil
                     ),
                     trustState: .trusted
                 )
@@ -1054,13 +1144,13 @@ final class DeviceGalleryStore: ObservableObject {
             migrateSessionID(from: extra.id, to: chosen.id)
             extra.mirrorSession.stop()
             extra.mirrorSession.dispose()
-            if chosen.wirelessWDA == nil, extra.wirelessWDA != nil {
-                chosen.wirelessWDA = extra.wirelessWDA
+            if chosen.iosAgent == nil, extra.iosAgent != nil {
+                chosen.iosAgent = extra.iosAgent
             } else {
-                extra.wirelessWDA?.stop()
+                extra.iosAgent?.stop()
             }
             if extra.controlSession !== chosen.controlSession {
-                extra.controlSession.stop(serverURL: appiumServerURL)
+                extra.controlSession.disconnect()
             }
         }
         return chosen
@@ -1167,8 +1257,8 @@ final class DeviceGalleryStore: ObservableObject {
         disconnectedSince[session.id] = nil
         MirrorWindowRegistry.shared.close(session: session)
         session.mirrorSession.dispose()
-        session.wirelessWDA?.stop()
-        session.controlSession.stop(serverURL: appiumServerURL)
+        session.iosAgent?.stop()
+        session.controlSession.disconnect()
     }
 
     func removeDevice(_ session: DeviceSession) {
@@ -1236,11 +1326,6 @@ final class DeviceGalleryStore: ObservableObject {
 
     func presentDiagnostics() {
         setActiveSheet(.diagnostics)
-    }
-
-    func presentControlSetup(for session: DeviceSession) {
-        select(session)
-        setActiveSheet(.controlSetup)
     }
 
     func toggleSettings() {
@@ -1312,7 +1397,7 @@ final class DeviceGalleryStore: ObservableObject {
         for session in sessions {
             wirelessTransportTasks[session.id]?.cancel()
             wirelessTransportTasks[session.id] = nil
-            session.controlSession.disconnectKeepingAgentWarm()
+            session.controlSession.disconnect()
         }
     }
 
@@ -1371,19 +1456,30 @@ final class DeviceGalleryStore: ObservableObject {
         thumbnailAspectRatios.removeAll()
         thumbnailErrors.removeAll()
 
+        iphoneSetupTask?.cancel()
+        iphoneSetupTask = nil
         let activeSessions = sessions
-        let serverURL = appiumServerURL
         for session in activeSessions {
             session.mirrorSession.dispose()
-            session.wirelessWDA?.stop()
-            // App shutdown is the one place the shared runner must actually be
-            // terminated, so the agent does not keep running after the app exits.
-            if let udid = session.device.udid, !udid.isEmpty, session.transport == .wireless {
-                WirelessWDAService.terminateSharedRunner(udid: udid)
-            }
+            session.iosAgent?.stop()
         }
+        // The control sessions close their WebDriverAgent sessions before the
+        // tunnels they ride on go away.
         for session in activeSessions {
-            await session.controlSession.shutdown(serverURL: serverURL)
+            await session.controlSession.shutdown()
+        }
+        // App shutdown is the one place the shared runner must actually be
+        // terminated, so the agent does not keep running after the app exits.
+        // The setup guide starts one over USB too, so this is not limited to
+        // wireless sessions; it does nothing for a device without a runner.
+        let udids = Set(activeSessions.compactMap { session -> String? in
+            guard session.platform == .iOS, let udid = session.device.udid, !udid.isEmpty else { return nil }
+            return udid
+        })
+        await withTaskGroup(of: Void.self) { group in
+            for udid in udids {
+                group.addTask { await IOSAgentService.terminateSharedAgent(udid: udid) }
+            }
         }
         await appiumService.shutdown()
 
@@ -1472,7 +1568,7 @@ final class DeviceGalleryStore: ObservableObject {
               session.transport == .wireless,
               wirelessTransportTasks[session.id] == nil,
               let wirelessDevice = session.wirelessDevice,
-              let wirelessWDA = session.wirelessWDA else { return }
+              let iosAgent = session.iosAgent else { return }
 
         let sessionID = session.id
         let mirrorSession = session.mirrorSession
@@ -1483,9 +1579,9 @@ final class DeviceGalleryStore: ObservableObject {
             }
             self.prepareWirelessTransportIfNeeded(for: current)
         }
-        wirelessTransportTasks[sessionID] = Task { @MainActor [weak self, weak wirelessWDA, weak mirrorSession] in
+        wirelessTransportTasks[sessionID] = Task { @MainActor [weak self, weak iosAgent, weak mirrorSession] in
             await Task.yield()
-            guard let self, let wirelessWDA, let mirrorSession, !self.isShuttingDown else { return }
+            guard let self, let iosAgent, let mirrorSession, !self.isShuttingDown else { return }
             defer { self.wirelessTransportTasks[sessionID] = nil }
 
             await self.detectSigningTeams()
@@ -1493,24 +1589,22 @@ final class DeviceGalleryStore: ObservableObject {
                   !self.isShuttingDown,
                   self.desiredMirrorIDs.contains(sessionID) else { return }
             do {
-                var resolvedEndpoint: WirelessWDAEndpoint?
+                var resolvedEndpoint: IOSAgentEndpoint?
                 var lastError: Error?
                 for attempt in 0..<3 {
                     do {
-                        resolvedEndpoint = try await wirelessWDA.ensureRunning(
-                            device: wirelessDevice,
-                            configuration: self.controlConfiguration(for: session),
+                        resolvedEndpoint = try await iosAgent.ensureRunning(
+                            udid: wirelessDevice.udid,
+                            configuration: self.iosControlConfiguration(),
                             progress: { [weak self] progress in
                                 await MainActor.run {
                                     guard let self else { return }
                                     let key = switch progress {
-                                    case .checkingExistingAgent: "wireless.start.checkingAgent"
-                                    case .connectingDevice: "wireless.start.connectingDevice"
-                                    case .launchingInstalledAgent: "wireless.start.launchingAgent"
-                                    case .preparingAgent: "wireless.start.preparingAgent"
-                                    case .installingAgent: "wireless.start.installingAgent"
-                                    case .waitingForAgent: "wireless.start.waitingForAgent"
-                                    case .connectingVideo: "wireless.start.connectingVideo"
+                                    case .checkingExistingAgent: "agent.start.checkingAgent"
+                                    case .checkingDevice: "agent.start.checkingDevice"
+                                    case .launchingAgent: "agent.start.launchingAgent"
+                                    case .waitingForDevice: "agent.start.waitingForDevice"
+                                    case .connectingVideo: "agent.start.connectingVideo"
                                     }
                                     let message = self.t(key)
                                     self.statusMessage = message
@@ -1522,19 +1616,19 @@ final class DeviceGalleryStore: ObservableObject {
                     } catch {
                         lastError = error
                         guard attempt < 2,
-                              self.shouldRetryWirelessWDA(error),
+                              self.shouldRetryAgentStart(error),
                               self.desiredMirrorIDs.contains(sessionID),
                               !Task.isCancelled else {
                             throw error
                         }
-                        let message = self.t("wireless.start.retryingAgent")
+                        let message = self.t("agent.start.retryingAgent")
                         self.statusMessage = message
                         mirrorSession.updateWirelessStartupDetail(message)
                         try await Task.sleep(for: .seconds(attempt + 1))
                     }
                 }
                 guard let resolvedEndpoint else {
-                    throw lastError ?? WirelessWDAError.launchFailed
+                    throw lastError ?? IOSAgentError.launchFailed
                 }
                 guard !Task.isCancelled,
                       self.desiredMirrorIDs.contains(sessionID),
@@ -1542,64 +1636,44 @@ final class DeviceGalleryStore: ObservableObject {
                           $0.id == sessionID && $0.mirrorSession === mirrorSession
                       }) else { return }
                 self.markWirelessConnection(.connected, sessionID: sessionID)
-                mirrorSession.connectWirelessVideo(host: resolvedEndpoint.videoHost)
+                mirrorSession.connectWirelessVideo(
+                    host: resolvedEndpoint.videoHost,
+                    port: resolvedEndpoint.videoPort
+                )
             } catch is CancellationError {
                 return
             } catch {
                 self.desiredMirrorIDs.remove(sessionID)
                 self.markWirelessConnection(.unavailable, sessionID: sessionID)
-                let localizedMessage = self.wirelessWDAErrorMessage(error)
+                let localizedMessage = self.agentErrorMessage(error)
                 mirrorSession.failWirelessStart(localizedMessage)
-                if error as? WirelessWDAError == .localNetworkDenied {
-                    self.statusMessage = self.t("status.wirelessLocalNetworkDenied")
-                    self.setActiveSheet(.wirelessAccess)
-                } else if error as? WirelessWDAError == .deviceLocked {
-                    self.statusMessage = self.t("status.wirelessUnlockRequired")
-                } else if error as? WirelessWDAError == .deviceUnavailable {
-                    self.statusMessage = self.t("status.wirelessUnavailable")
-                } else if error as? WirelessWDAError == .firstUSBSetupRequired {
-                    self.statusMessage = localizedMessage
-                    self.setActiveSheet(.wirelessSetup)
-                } else {
-                    self.statusMessage = localizedMessage
+                self.statusMessage = localizedMessage
+                if let agentError = error as? IOSAgentError,
+                   agentError == .setupRequired || agentError == .developerModeDisabled {
+                    self.presentIPhoneSetup(for: session)
                 }
             }
         }
     }
 
-    private func shouldRetryWirelessWDA(_ error: Error) -> Bool {
-        guard let wirelessError = error as? WirelessWDAError else { return true }
-        return switch wirelessError {
+    private func shouldRetryAgentStart(_ error: Error) -> Bool {
+        guard let agentError = error as? IOSAgentError else { return true }
+        switch agentError {
         case .deviceUnavailable, .launchFailed, .timedOut:
-            true
-        case .missingSigningTeam, .missingRuntime, .firstUSBSetupRequired,
-             .deviceLocked, .localNetworkDenied, .iphoneLocalNetworkDenied,
-             .buildFailed, .agentBackgroundingUnsupported, .missingInstallation:
-            // Retrying a backgrounding failure just repeats the 30s device-side
-            // timeout: the OS refuses this launch path, not this attempt.
-            false
+            return true
+        case .missingSigningTeam, .missingRuntime, .setupRequired, .buildFailed,
+             .deviceLocked, .developerModeDisabled, .wifiConnectionsUnavailable, .developerImageMissing,
+             .automationNotApproved:
+            // These name a missing precondition, not a flaky attempt.
+            return false
         }
     }
 
-    private func wirelessWDAErrorMessage(_ error: Error) -> String {
-        guard let wirelessError = error as? WirelessWDAError else {
+    private func agentErrorMessage(_ error: Error) -> String {
+        guard let agentError = error as? IOSAgentError else {
             return error.localizedDescription
         }
-        let key = switch wirelessError {
-        case .missingSigningTeam: "wireless.error.missingSigningTeam"
-        case .missingRuntime: "wireless.error.missingRuntime"
-        case .firstUSBSetupRequired: "wireless.error.firstUSBSetupRequired"
-        case .buildFailed: "wireless.error.buildFailed"
-        case .launchFailed: "wireless.error.launchFailed"
-        case .missingInstallation: "wireless.error.missingInstallation"
-        case .localNetworkDenied: "wireless.error.localNetworkDenied"
-        case .iphoneLocalNetworkDenied: "wireless.error.iphoneLocalNetworkDenied"
-        case .deviceLocked: "wireless.error.deviceLocked"
-        case .deviceUnavailable: "wireless.error.deviceUnavailable"
-        case .agentBackgroundingUnsupported: "wireless.error.agentBackgroundingUnsupported"
-        case .timedOut: "wireless.error.timedOut"
-        }
-        return t(key)
+        return t(agentError.copyKey)
     }
 
     private func showActivation(for sessionIDs: Set<String>) {
@@ -1629,34 +1703,21 @@ final class DeviceGalleryStore: ObservableObject {
         floatingMirrorIDs.contains(session.id)
     }
 
-    func prepareControl(
-        for session: DeviceSession,
-        configuration: AppiumControlConfiguration? = nil
-    ) {
-        guard !isShuttingDown,
-              canAttemptConnection(session),
-              session.device.udid?.isEmpty == false,
-              !session.controlSession.isReady,
-              session.controlSession.isConnecting else {
-            return
-        }
-
-        session.controlSession.prepare(
-            serverURL: appiumServerURL,
-            bundleID: controlBundleID,
-            configuration: configuration ?? controlConfiguration(for: session)
-        ) { [weak self] message in
-            guard let self, !self.isShuttingDown else { return }
-            self.statusMessage = self.t(message)
-            self.presentControlRecovery(for: session)
-        }
-    }
-
-    private func presentControlRecovery(for session: DeviceSession) {
+    /// Opens whatever can fix a failed control connection: the iPhone setup
+    /// guide when the phone itself still needs preparing, diagnostics otherwise.
+    private func presentControlRecovery(for session: DeviceSession, message: String) {
         if session.platform == .android {
             presentDiagnostics()
-        } else {
-            presentControlSetup(for: session)
+            return
+        }
+        let setupKeys: Set<String> = [
+            IOSAgentError.setupRequired.copyKey,
+            IOSAgentError.developerModeDisabled.copyKey,
+            IOSAgentError.missingSigningTeam.copyKey,
+            IOSAgentError.buildFailed.copyKey
+        ]
+        if setupKeys.contains(message) {
+            presentIPhoneSetup(for: session)
         }
     }
 
@@ -1668,49 +1729,72 @@ final class DeviceGalleryStore: ObservableObject {
             showActivation(for: [])
             return
         }
-        guard session.device.udid?.isEmpty == false else {
+        guard let udid = session.device.udid, !udid.isEmpty else {
             statusMessage = t("status.controlNoUDID")
-            presentControlSetup(for: session)
             return
         }
-        guard !session.controlSession.isReady, !session.controlSession.isConnecting else {
-            return
-        }
-        if session.controlSession.resumeWarmSession(
-            serverURL: appiumServerURL,
-            bundleID: controlBundleID,
-            configuration: controlConfiguration(for: session)
-        ) {
-            statusMessage = t("control.state.ready")
-            return
-        }
+        guard !session.controlSession.isReady, !session.controlSession.isConnecting else { return }
         statusMessage = t("status.controlPreparingAgent")
-        session.controlSession.beginPreparingService()
-        Task {
-            let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
-            guard !isShuttingDown else { return }
-            if ready {
-                guard session.controlSession.isConnecting else { return }
-                if session.platform == .android {
-                    prepareControl(for: session)
-                    return
-                }
-                await detectSigningTeams()
-                guard session.controlSession.isConnecting else { return }
-                do {
-                    let configuration = try await preparedControlConfiguration(for: session)
-                    guard session.controlSession.isConnecting else { return }
-                    prepareControl(for: session, configuration: configuration)
-                } catch {
-                    session.controlSession.failPreparation(error.localizedDescription)
-                    statusMessage = error.localizedDescription
-                    presentControlRecovery(for: session)
-                }
-            } else {
-                statusMessage = t("status.controlAppiumUnavailable")
-                session.controlSession.failPreparation("control.error.appiumUnavailable")
-                presentControlRecovery(for: session)
+        session.controlSession.onFailure = { [weak self] message in
+            guard let self, !self.isShuttingDown else { return }
+            self.statusMessage = self.t(message)
+            self.presentControlRecovery(for: session, message: message)
+        }
+        session.controlSession.connect(using: controlConnector(for: session, udid: udid))
+    }
+
+    /// Builds the connector the control session runs off the main actor: it
+    /// brings the device-side agent up and returns a connected backend.
+    private func controlConnector(for session: DeviceSession, udid: String) -> DeviceControlSession.Connector {
+        if session.platform == .android {
+            let serverURL = appiumServerURL
+            let appPackage = controlBundleID
+            let configuration = AppiumControlConfiguration(
+                platform: .android,
+                platformVersion: session.androidDevice?.osVersion ?? ""
+            ).isolated(forDeviceUDID: udid)
+            let appiumService = self.appiumService
+            return { report in
+                await report(.startingService, nil)
+                let ready = await appiumService.ensureRunning(serverURL: serverURL)
+                guard ready else { throw ControlServiceUnavailableError() }
+                return try await AppiumAndroidBackend.connect(
+                    serverURL: serverURL,
+                    udid: udid,
+                    appPackage: appPackage,
+                    configuration: configuration,
+                    report: report
+                )
             }
+        }
+        let agent = session.iosAgent ?? IOSAgentService()
+        // A phone on the cable should be driven over the cable; a wireless
+        // session takes whatever usbmuxd offers, preferring the network.
+        let transport: DeviceTunnelTransport = session.transport == .usb ? .usb : .auto
+        return { [weak self] report in
+            guard let self else { throw CancellationError() }
+            await self.detectSigningTeams()
+            let configuration = await self.iosControlConfiguration()
+            await report(.startingAgent, nil)
+            let endpoint = try await agent.ensureRunning(
+                udid: udid,
+                transport: transport,
+                configuration: configuration
+            ) { [weak self] progress in
+                switch progress {
+                case .checkingExistingAgent, .checkingDevice, .launchingAgent:
+                    await report(.startingAgent, nil)
+                case .waitingForDevice:
+                    let message = await self?.t("agent.start.waitingForDevice")
+                    await report(.startingAgent, message)
+                case .connectingVideo:
+                    await report(.connectingAgent, nil)
+                }
+            }
+            await report(.connectingAgent, nil)
+            let backend = try await WDAControlBackend.connect(baseURL: endpoint.controlURL)
+            await report(.finishing, nil)
+            return backend
         }
     }
 
@@ -1725,40 +1809,19 @@ final class DeviceGalleryStore: ObservableObject {
         guard !isShuttingDown else {
             throw DeviceAutomationError.deviceUnavailable
         }
-        guard session.device.udid?.isEmpty == false else {
+        guard let udid = session.device.udid, !udid.isEmpty else {
             throw DeviceAutomationError.deviceUnavailable
         }
-        if session.controlSession.isReady,
-           await session.controlSession.verifyReadySession(serverURL: appiumServerURL) {
+        if session.controlSession.isReady, await session.controlSession.verifyReady() {
             return
         }
-        if session.controlSession.resumeWarmSession(
-            serverURL: appiumServerURL,
-            bundleID: controlBundleID,
-            configuration: controlConfiguration(for: session)
-        ) {
-            return
+        if !session.controlSession.isConnecting {
+            session.controlSession.onFailure = { [weak self] message in
+                guard let self, !self.isShuttingDown else { return }
+                self.statusMessage = self.t(message)
+            }
+            session.controlSession.connect(using: controlConnector(for: session, udid: udid))
         }
-
-        session.controlSession.beginPreparingService()
-        let ready = await appiumService.ensureRunning(serverURL: appiumServerURL)
-        guard !isShuttingDown else { throw CancellationError() }
-        guard session.controlSession.isConnecting else { throw CancellationError() }
-        guard ready else {
-            session.controlSession.failPreparation("control.error.appiumUnavailable")
-            throw DeviceAutomationError.appiumUnavailable
-        }
-        if session.platform == .android {
-            prepareControl(for: session)
-            try await waitForControlConnection(session)
-            return
-        }
-        await detectSigningTeams()
-        guard session.controlSession.isConnecting else { throw CancellationError() }
-        let configuration = try await preparedControlConfiguration(for: session)
-        guard session.controlSession.isConnecting else { throw CancellationError() }
-        prepareControl(for: session, configuration: configuration)
-
         try await waitForControlConnection(session)
     }
 
@@ -1844,152 +1907,19 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func stopControl(for session: DeviceSession) {
-        session.controlSession.disconnectKeepingAgentWarm()
+        session.controlSession.disconnect()
     }
 
-    private func controlConfiguration(for session: DeviceSession) -> AppiumControlConfiguration {
-        if session.platform == .android {
-            return AppiumControlConfiguration(
-                platform: .android,
-                platformVersion: session.androidDevice?.osVersion ?? ""
-            )
-        }
-        let hasCachedBuild = hasCachedWDABuild(for: session.device.udid)
-        return AppiumControlConfiguration(
+    /// The signing identity and per-device build directory used to prepare
+    /// and name the iPhone screen agent.
+    func iosControlConfiguration() -> AppiumControlConfiguration {
+        AppiumControlConfiguration(
             platform: .iOS,
             xcodeOrgID: controlXcodeOrgID,
             xcodeSigningID: controlXcodeSigningID,
-            wdaBundleID: effectiveControlWDABundleID,
-            // On this Mac, a cached build is the fastest reliable restart:
-            // xcodebuild uses test-without-building and avoids the RemoteXPC
-            // preinstalled probe, which can otherwise wait for its full timeout.
-            preferInstalledWDA: true,
-            usePrebuiltWDA: hasCachedBuild,
-            useNewWDA: false,
-            derivedDataPath: wdaDerivedDataPath,
-            directDeviceHost: session.wirelessDevice.map {
-                $0.formattedPreferredEndpointHost
-            } ?? "",
-            platformVersion: session.wirelessDevice?.osVersion ?? "",
-            xcodeConfigFile: srtXcodeConfigPath
+            wdaBundleID: controlWDABundleID,
+            derivedDataPath: wdaDerivedDataPath
         )
-    }
-
-    private var srtXcodeConfigPath: String {
-        let support = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support", isDirectory: true)
-        return support
-            .appendingPathComponent("StupidMirror/AppiumHome/stupidmirror-srt", isDirectory: true)
-            .appendingPathComponent("StupidMirrorSRT.xcconfig")
-            .path
-    }
-
-    private func preparedControlConfiguration(
-        for session: DeviceSession
-    ) async throws -> AppiumControlConfiguration {
-        let configuration = controlConfiguration(for: session)
-        // Wired or wireless: if the installed runner is already answering,
-        // attach to it. Asking Appium to start a session without a URL falls
-        // through to xcodebuild and reinstalls an agent that was never missing.
-        if let endpoint = await existingReadyControlEndpoint(
-            for: session,
-            configuration: configuration
-        ) {
-            return attachingControlConfiguration(configuration, endpoint: endpoint)
-        }
-        guard Self.shouldResolveWirelessControl(for: session.transport),
-              let wirelessWDA = session.wirelessWDA,
-              let wirelessDevice = session.wirelessDevice else {
-            return configuration
-        }
-        let endpoint = try await wirelessWDA.ensureRunning(
-            device: wirelessDevice,
-            configuration: configuration
-        )
-        return attachingControlConfiguration(configuration, endpoint: endpoint)
-    }
-
-    private func existingReadyControlEndpoint(
-        for session: DeviceSession,
-        configuration: AppiumControlConfiguration
-    ) async -> WirelessWDAEndpoint? {
-        var urls: [URL] = []
-        if let active = session.wirelessWDA?.activeEndpoint {
-            urls.append(active.controlURL)
-            if let video = WirelessWDAService.controlURL(host: active.videoHost) {
-                urls.append(video)
-            }
-        }
-        if let wireless = session.wirelessDevice {
-            urls.append(contentsOf: wireless.endpointURLs(port: 8_100))
-        }
-        if let udid = session.device.udid, !udid.isEmpty {
-            let isolated = configuration.isolated(forDeviceUDID: udid)
-            if let local = URL(string: "http://127.0.0.1:\(isolated.wdaLocalPort)") {
-                urls.append(local)
-            }
-        }
-        if let defaultLocal = URL(string: "http://127.0.0.1:8100") {
-            urls.append(defaultLocal)
-        }
-        var seen = Set<URL>()
-        let unique = urls.filter { seen.insert($0).inserted }
-        if let ready = await WirelessWDAService.firstReadyEndpoint(unique) {
-            return ready
-        }
-        guard let udid = session.device.udid, !udid.isEmpty else { return nil }
-        return await WirelessWDAService.firstReadyEndpoint(
-            WirelessWDAService.detailsProbeURLs(udid: udid)
-        )
-    }
-
-    nonisolated static func shouldResolveWirelessControl(
-        for transport: DeviceTransport
-    ) -> Bool {
-        transport == .wireless
-    }
-
-    private func attachingControlConfiguration(
-        _ configuration: AppiumControlConfiguration,
-        endpoint: WirelessWDAEndpoint
-    ) -> AppiumControlConfiguration {
-        var configuration = configuration
-        configuration.webDriverAgentURL = endpoint.controlURL.absoluteString
-        configuration.preferInstalledWDA = false
-        configuration.usePrebuiltWDA = false
-        return configuration
-    }
-
-    private func hasCachedWDABuild(for udid: String?) -> Bool {
-        guard let udid, !udid.isEmpty else { return false }
-        return Self.hasCachedWDABuild(udid: udid, derivedDataPath: wdaDerivedDataPath)
-    }
-
-    nonisolated static func hasCachedWDABuild(udid: String, derivedDataPath: String) -> Bool {
-        guard !udid.isEmpty else { return false }
-        var base = AppiumControlConfiguration(derivedDataPath: derivedDataPath)
-        base = base.isolated(forDeviceUDID: udid)
-        let products = URL(fileURLWithPath: base.derivedDataPath, isDirectory: true)
-            .appendingPathComponent("Build/Products", isDirectory: true)
-        let runner = products
-            .appendingPathComponent("Debug-iphoneos", isDirectory: true)
-            .appendingPathComponent("WebDriverAgentRunner-Runner.app", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: runner.path) else { return false }
-        let h264ServerBinary = runner
-            .appendingPathComponent("PlugIns/WebDriverAgentRunner.xctest/Frameworks/WebDriverAgentLib.framework")
-            .appendingPathComponent("WebDriverAgentLib")
-        guard let binaryData = try? Data(contentsOf: h264ServerBinary, options: .mappedIfSafe),
-              binaryData.range(of: Data("StupidMirror SRT/H.264 stream".utf8)) != nil else {
-            return false
-        }
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: products,
-            includingPropertiesForKeys: nil
-        ) else { return false }
-        return contents.contains { $0.pathExtension == "xctestrun" }
     }
 
     private var wdaDerivedDataPath: String {
@@ -2011,46 +1941,92 @@ final class DeviceGalleryStore: ObservableObject {
 
     func tapControl(for session: DeviceSession, normalizedX: Double, normalizedY: Double) {
         guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.tapNormalized(
-            x: normalizedX,
-            y: normalizedY,
-            serverURL: appiumServerURL
-        )
+        session.controlSession.enqueue(.tap(CGPoint(x: normalizedX, y: normalizedY)))
     }
 
     func swipeControl(for session: DeviceSession, from start: CGPoint, to end: CGPoint, durationMS: Int) {
         guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.swipeNormalized(
-            from: start,
-            to: end,
-            durationMS: durationMS,
-            serverURL: appiumServerURL
-        )
+        session.controlSession.enqueue(.swipe(from: start, to: end, durationMS: durationMS))
     }
 
     func flickControl(for session: DeviceSession, direction: ControlFlickDirection) {
         guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.flick(direction, serverURL: appiumServerURL)
+        session.controlSession.enqueue(.flick(direction))
+    }
+
+    func dragControl(for session: DeviceSession, path: [ControlPathSample]) {
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.enqueue(.drag(path: path))
+    }
+
+    func doubleTapControl(for session: DeviceSession, normalizedX: Double, normalizedY: Double) {
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.enqueue(.doubleTap(CGPoint(x: normalizedX, y: normalizedY)))
+    }
+
+    func longPressControl(for session: DeviceSession, normalizedX: Double, normalizedY: Double, durationMS: Int) {
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.enqueue(.longPress(CGPoint(x: normalizedX, y: normalizedY), durationMS: durationMS))
+    }
+
+    func pinchControl(for session: DeviceSession, center: CGPoint, scale: Double, velocity: Double) {
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.enqueue(.pinch(center: center, scale: scale, velocity: velocity))
+    }
+
+    func rotateControl(for session: DeviceSession, center: CGPoint, degrees: Double, velocity: Double) {
+        guard prepareQueuedControlAction(for: session) else { return }
+        session.controlSession.enqueue(.rotate(center: center, degrees: degrees, velocity: velocity))
+    }
+
+    /// The full gesture surface of the mirror, wired to one device session.
+    func gestureHandlers(for session: DeviceSession) -> ControlGestureHandlers {
+        ControlGestureHandlers(
+            onTap: { [weak self] point in
+                self?.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
+            },
+            onDoubleTap: { [weak self] point in
+                self?.doubleTapControl(for: session, normalizedX: point.x, normalizedY: point.y)
+            },
+            onLongPress: { [weak self] point, durationMS in
+                self?.longPressControl(for: session, normalizedX: point.x, normalizedY: point.y, durationMS: durationMS)
+            },
+            onSwipe: { [weak self] start, end, durationMS in
+                self?.swipeControl(for: session, from: start, to: end, durationMS: durationMS)
+            },
+            onDrag: { [weak self] path in
+                self?.dragControl(for: session, path: path)
+            },
+            onFlick: { [weak self] direction in
+                self?.flickControl(for: session, direction: direction)
+            },
+            onPinch: { [weak self] center, scale, velocity in
+                self?.pinchControl(for: session, center: center, scale: scale, velocity: velocity)
+            },
+            onRotate: { [weak self] center, degrees, velocity in
+                self?.rotateControl(for: session, center: center, degrees: degrees, velocity: velocity)
+            }
+        )
     }
 
     func typeControlText(_ text: String, for session: DeviceSession) {
         guard prepareQueuedControlAction(for: session), !text.isEmpty else { return }
-        session.controlSession.typeText(text, serverURL: appiumServerURL)
+        session.controlSession.enqueue(.typeText(text))
     }
 
     func pressHome(for session: DeviceSession) {
         guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.pressHome(serverURL: appiumServerURL)
+        session.controlSession.enqueue(.press(.home))
     }
 
     func openAppSwitcher(for session: DeviceSession) {
         guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.openAppSwitcher(serverURL: appiumServerURL)
+        session.controlSession.enqueue(.press(.appSwitcher))
     }
 
     func pressBack(for session: DeviceSession) {
         guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.pressBack(serverURL: appiumServerURL)
+        session.controlSession.enqueue(.press(.back))
     }
 
     private func prepareQueuedControlAction(for session: DeviceSession) -> Bool {
@@ -2087,7 +2063,7 @@ final class DeviceGalleryStore: ObservableObject {
         let preferred = active.first { $0.id == selectedSessionID }
         let retainedIDs = Set(([preferred].compactMap { $0 } + active).prefix(limit).map(\.id))
         for session in active where !retainedIDs.contains(session.id) {
-            session.controlSession.stop(serverURL: appiumServerURL)
+            session.controlSession.disconnect()
         }
         statusMessage = t("status.activationControlRequired")
     }
@@ -2121,8 +2097,32 @@ final class DeviceGalleryStore: ObservableObject {
         return 1260.0 / 2736.0
     }
 
+    /// A phone's tunnel ended on its own: Wi-Fi dropped, the cable came out,
+    /// or the runner died. Video and control both rode on it, and its loopback
+    /// ports are gone, so both reconnect through a fresh tunnel.
+    private func handleAgentExit(udid: String) {
+        guard !isShuttingDown else { return }
+        for session in sessions where session.platform == .iOS && session.device.udid == udid {
+            session.controlSession.agentDidExit()
+            guard desiredMirrorIDs.contains(session.id), session.transport == .wireless else { continue }
+            session.mirrorSession.requestWirelessReconnect()
+        }
+    }
+
     private func installDeviceObservers() {
         let center = NotificationCenter.default
+        observers.append(
+            center.addObserver(
+                forName: IOSAgentService.agentDidExitNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                guard let udid = notification.userInfo?[IOSAgentService.udidUserInfoKey] as? String else { return }
+                Task { @MainActor in
+                    self?.handleAgentExit(udid: udid)
+                }
+            }
+        )
         observers.append(
             center.addObserver(
                 forName: AVCaptureDevice.wasConnectedNotification,
@@ -2393,12 +2393,11 @@ final class DeviceGalleryStore: ObservableObject {
         guard session.controlSession.isReady,
               wirelessThumbnailTasks[session.id] == nil else { return }
         let sessionID = session.id
-        let serverURL = appiumServerURL
         wirelessThumbnailTasks[sessionID] = Task { @MainActor [weak self, weak controlSession = session.controlSession] in
             defer { self?.wirelessThumbnailTasks[sessionID] = nil }
             guard let self, let controlSession else { return }
             do {
-                let data = try await controlSession.screenshot(serverURL: serverURL)
+                let data = try await controlSession.screenshot()
                 try Task.checkCancellation()
                 guard let image = NSImage(data: data) else {
                     throw WirelessThumbnailError.invalidImage

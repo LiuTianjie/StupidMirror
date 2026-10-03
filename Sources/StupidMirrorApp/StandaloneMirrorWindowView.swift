@@ -4,7 +4,7 @@ import SwiftUI
 struct StandaloneMirrorWindowView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
-    @ObservedObject private var controlSession: AppiumControlSession
+    @ObservedObject private var controlSession: DeviceControlSession
 
     let session: DeviceSession
     @State private var chromeVisible = false
@@ -97,6 +97,9 @@ struct StandaloneMirrorWindowView: View {
         .onChange(of: mirrorSession.frameAspectRatio) { _, newRatio in
             guard let newRatio else { return }
             MirrorWindowRegistry.shared.applyLiveAspectRatio(newRatio, for: session)
+            // The phone rotated: control coordinates follow the new screen size
+            // now instead of at the next keep-alive.
+            session.controlSession.refreshScreenSize()
         }
     }
 
@@ -206,7 +209,7 @@ struct StandaloneMirrorWindowView: View {
                         Text(mirrorSession.wirelessStartupDetail
                             ?? store.t("detail.wirelessStarting"))
                         Text(String(
-                            format: store.t("wireless.start.elapsed"),
+                            format: store.t("agent.start.elapsed"),
                             wirelessStartupElapsed(at: context.date)
                         ))
                         .foregroundStyle(.white.opacity(0.5))
@@ -216,7 +219,7 @@ struct StandaloneMirrorWindowView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
                 }
-                Button(store.t("wireless.start.cancel")) {
+                Button(store.t("agent.start.cancel")) {
                     store.stop(session)
                 }
                 .buttonStyle(.bordered)
@@ -237,7 +240,7 @@ struct StandaloneMirrorWindowView: View {
                     .padding(.horizontal)
                 if session.isIOSWireless
                     && store.canAttemptConnection(session) {
-                    Button(store.t("wireless.start.retry")) {
+                    Button(store.t("agent.start.retry")) {
                         store.start(session)
                     }
                     .buttonStyle(.borderedProminent)
@@ -270,15 +273,7 @@ struct StandaloneMirrorWindowView: View {
         ControlGestureOverlay(
             isEnabled: store.canUseControl && controlSession.isReady,
             aspectRatio: store.displayAspectRatio(for: session),
-            onTap: { point in
-                store.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
-            },
-            onSwipe: { start, end, durationMS in
-                store.swipeControl(for: session, from: start, to: end, durationMS: durationMS)
-            },
-            onFlick: { direction in
-                store.flickControl(for: session, direction: direction)
-            }
+            handlers: store.gestureHandlers(for: session)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

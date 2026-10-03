@@ -8,3 +8,9 @@ requirements.
 Android mirroring uses the scrcpy server from the scrcpy project. The scrcpy
 server, Appium, WebDriverAgent, and UiAutomator2 remain subject to their
 respective upstream licenses.
+
+The bundled `smtunnel` device tunnel sidecar (tools/smtunnel) is built with
+go-ios (github.com/danielpaulus/go-ios, MIT License) and gVisor's netstack
+(gvisor.dev/gvisor, Apache License 2.0), plus their Go module dependencies.
+Those components remain subject to their own licenses; see
+tools/smtunnel/go.mod for the exact versions.

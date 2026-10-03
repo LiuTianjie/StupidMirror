@@ -18,6 +18,7 @@ node_entitlements="${NODE_ENTITLEMENTS:-NodeRuntime.entitlements}"
 skip_codesign="${SKIP_CODESIGN:-false}"
 bundle_appium="${BUNDLE_APPIUM:-true}"
 bundle_android_runtime="${BUNDLE_ANDROID_RUNTIME:-true}"
+bundle_smtunnel="${BUNDLE_SMTUNNEL:-true}"
 default_appium_url="${DEFAULT_APPIUM_URL:-http://127.0.0.1:4723}"
 default_control_bundle_id="${DEFAULT_CONTROL_BUNDLE_ID:-}"
 default_xcode_org_id="${DEFAULT_XCODE_ORG_ID:-${STUPIDMIRROR_XCODE_ORG_ID:-}}"
@@ -74,6 +75,30 @@ if [ "$bundle_android_runtime" = "true" ]; then
   mkdir -p "${contents_path}/Resources"
   bash scripts/vendor-android-runtime.sh "${contents_path}/Resources/Android"
 fi
+if [ "$bundle_smtunnel" = "true" ]; then
+  mkdir -p "${contents_path}/Resources"
+  bash scripts/build-smtunnel.sh "${contents_path}/Resources/smtunnel"
+fi
+
+# Mach-O files nested under Resources that need their own signature.
+nested_binaries() {
+  local roots=()
+  if [ "$bundle_appium" = "true" ]; then
+    roots+=("${contents_path}/Resources/Appium")
+  fi
+  if [ "$bundle_smtunnel" = "true" ]; then
+    roots+=("${contents_path}/Resources/smtunnel")
+  fi
+  if [ "${#roots[@]}" -eq 0 ]; then
+    return 0
+  fi
+  find "${roots[@]}" -type f -print0 \
+    | while IFS= read -r -d '' candidate; do
+        if file -b "$candidate" | grep -q 'Mach-O'; then
+          printf '%s\0' "$candidate"
+        fi
+      done
+}
 
 cat > "${contents_path}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -207,38 +232,20 @@ if [ "$skip_codesign" != "true" ] && command -v codesign >/dev/null 2>&1; then
       app_sign_args+=(--timestamp --options runtime)
     fi
 
-    if [ "$bundle_appium" = "true" ]; then
-      while IFS= read -r -d '' nested_binary; do
-        nested_args=("${nested_sign_args[@]}")
-        if [ "$nested_binary" = "${contents_path}/Resources/Appium/bin/node" ]; then
-          nested_args+=(--entitlements "$node_entitlements")
-        fi
-        codesign "${nested_args[@]}" "$nested_binary" || return 1
-      done < <(
-        find "${contents_path}/Resources/Appium" -type f -print0 \
-          | while IFS= read -r -d '' candidate; do
-              if file -b "$candidate" | grep -q 'Mach-O'; then
-                printf '%s\0' "$candidate"
-              fi
-            done
-      )
-    fi
+    while IFS= read -r -d '' nested_binary; do
+      nested_args=("${nested_sign_args[@]}")
+      if [ "$nested_binary" = "${contents_path}/Resources/Appium/bin/node" ]; then
+        nested_args+=(--entitlements "$node_entitlements")
+      fi
+      codesign "${nested_args[@]}" "$nested_binary" || return 1
+    done < <(nested_binaries)
 
     app_sign_args+=(--entitlements "$entitlements")
     codesign "${app_sign_args[@]}" "$build_app_path" || return 1
 
-    if [ "$bundle_appium" = "true" ]; then
-      while IFS= read -r -d '' nested_binary; do
-        codesign --verify --strict --verbose=2 "$nested_binary" >/dev/null || return 1
-      done < <(
-        find "${contents_path}/Resources/Appium" -type f -print0 \
-          | while IFS= read -r -d '' candidate; do
-              if file -b "$candidate" | grep -q 'Mach-O'; then
-                printf '%s\0' "$candidate"
-              fi
-            done
-      )
-    fi
+    while IFS= read -r -d '' nested_binary; do
+      codesign --verify --strict --verbose=2 "$nested_binary" >/dev/null || return 1
+    done < <(nested_binaries)
     # Verifies the main signature and the bundle's sealed resources without
     # asking codesign to recursively infer how nested code should be signed.
     codesign --verify --strict --verbose=2 "$build_app_path" >/dev/null || return 1

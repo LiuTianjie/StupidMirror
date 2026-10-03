@@ -27,3 +27,9 @@ npm-debug.log*
 # Supabase CLI local state and branch metadata
 supabase/.temp/
 supabase/.branches/
+
+# Locally built device tunnel sidecar (use make smtunnel)
+tools/smtunnel/smtunnel
+
+# Claude Code agent worktrees
+.claude/worktrees/

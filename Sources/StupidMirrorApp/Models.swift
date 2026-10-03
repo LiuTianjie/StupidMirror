@@ -133,10 +133,12 @@ enum ControlState: Equatable {
     }
 }
 
+/// Where a control connection currently is. `startingService` only applies
+/// to Android, whose driver runs inside a local Appium service.
 enum ControlConnectionPhase: Equatable, Sendable {
     case startingService
-    case reusingAgent
-    case installingAgent
+    case startingAgent
+    case connectingAgent
     case finishing
 }
 
@@ -149,8 +151,9 @@ struct DeviceSession: Identifiable {
     var wirelessDevice: WirelessDeviceMetadata?
     let androidDevice: AndroidDeviceMetadata?
     let mirrorSession: MirrorCaptureSession
-    let controlSession: AppiumControlSession
-    var wirelessWDA: WirelessWDAService?
+    let controlSession: DeviceControlSession
+    /// The screen agent service for an iPhone, whichever cable it is on.
+    var iosAgent: IOSAgentService?
     var mirrorState: MirrorState
 
     var sourceID: String {
@@ -181,8 +184,8 @@ struct DeviceSession: Identifiable {
         self.wirelessDevice = nil
         self.androidDevice = nil
         self.mirrorSession = MirrorCaptureSession(device: captureDevice)
-        self.controlSession = AppiumControlSession(device: device)
-        self.wirelessWDA = nil
+        self.controlSession = DeviceControlSession(device: device)
+        self.iosAgent = IOSAgentService()
         self.mirrorState = .stopped
     }
 
@@ -198,8 +201,8 @@ struct DeviceSession: Identifiable {
         self.mirrorSession = MirrorCaptureSession(
             wirelessEndpointURL: wirelessDevice.endpointURLs(port: 8_100).first!
         )
-        self.controlSession = AppiumControlSession(device: device)
-        self.wirelessWDA = WirelessWDAService()
+        self.controlSession = DeviceControlSession(device: device)
+        self.iosAgent = IOSAgentService()
         self.mirrorState = .stopped
     }
 
@@ -213,8 +216,8 @@ struct DeviceSession: Identifiable {
         self.wirelessDevice = nil
         self.androidDevice = androidDevice
         self.mirrorSession = MirrorCaptureSession(androidDevice: androidDevice)
-        self.controlSession = AppiumControlSession(device: device)
-        self.wirelessWDA = nil
+        self.controlSession = DeviceControlSession(device: device)
+        self.iosAgent = nil
         self.mirrorState = .stopped
     }
 
@@ -236,8 +239,8 @@ struct DeviceSession: Identifiable {
         device = identity
         controlSession.updateDevice(identity)
         self.wirelessDevice = wirelessDevice
-        if wirelessWDA == nil {
-            wirelessWDA = WirelessWDAService()
+        if iosAgent == nil {
+            iosAgent = IOSAgentService()
         }
         guard transport != .wireless else { return }
         transport = .wireless
@@ -265,7 +268,7 @@ struct DeviceSession: Identifiable {
         if session.device.udid?.isEmpty == false { score += 8 }
         if session.controlSession.isReady { score += 4 }
         if session.controlSession.isConnecting { score += 2 }
-        if session.wirelessWDA != nil { score += 2 }
+        if session.iosAgent != nil { score += 2 }
         switch session.mirrorSession.state {
         case .running: score += 2
         case .starting: score += 1

@@ -1,7 +1,11 @@
-.PHONY: build app run release-local bump-version setup-appium run-appium probe-devices probe-avfoundation probe-avfoundation-frame probe-pymobiledevice3 probe-wda
+.PHONY: build app run smtunnel release-local bump-version setup-appium run-appium probe-devices probe-avfoundation probe-avfoundation-frame probe-pymobiledevice3 probe-wda
 
 build:
 	swift build
+
+# The device tunnel sidecar (Go). `make run` finds it in .build/smtunnel.
+smtunnel:
+	bash scripts/build-smtunnel.sh
 
 app:
 	bash scripts/build-app.sh

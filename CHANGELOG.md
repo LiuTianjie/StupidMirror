@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.2.31 - 2026-10-03
+
+- A launch that stalls because the iPhone is waiting for its passcode to
+  allow automation (the first session after a restart) now says so while it
+  waits and when it gives up, instead of failing as a generic timeout.
+- When a phone's tunnel ends (Wi-Fi lost, cable pulled, runner gone), video
+  and control reconnect right away through a fresh tunnel instead of freezing
+  on a dead port. A replaced tunnel is stopped before the new one starts, so
+  one phone never carries two.
+- iPhone gestures are about twice as fast: WebDriverAgent no longer snapshots
+  the whole app before every tap (measured over USB on an iPhone 15 Pro,
+  iOS 27: tap ~900 → ~400 ms). Element lookups still see the full tree.
+- Swipes and scrolls lift at the speed they were made with, so lists keep
+  their momentum; a double click is one double tap (not three taps); pinch
+  and rotate centre on the pointer; control follows rotation immediately.
+- A single slow request no longer relaunches the agent, and a lagging device
+  drops stale taps and swipes but never typed text or key presses.
+- The iPhone setup guide shows why a check failed, can stop a running
+  preparation, keeps running it when closed, never shows one phone's state
+  for another, and explains how to turn on Developer Mode.
+- Release builds verify the bundled `smtunnel` sidecar (present, signed by
+  the release team, universal, runs).
+- Update the MCP Swift SDK to 0.12.1, which builds with Xcode 26.6.
+- Remove unused copy, the old control-setup entry point, and other dead code.
+
+- Rebuild the iOS wireless path on a bundled Go sidecar (`smtunnel`, built on
+  go-ios and gVisor's netstack). It reaches the phone through usbmuxd over the
+  local network, opens Apple's CoreDeviceProxy tunnel in an in-process network
+  stack (no root, no kernel interface), launches the WebDriverAgent runner
+  through testmanagerd like an IDE would, and publishes the runner's control
+  and video ports on 127.0.0.1. Nothing in the path depends on the installed
+  Xcode version's `xcodebuild`/`devicectl` launchers, which stop a runner
+  over Wi-Fi on iOS 27, and nothing crosses iOS's Local Network privacy gate,
+  which was dropping the direct LAN connections.
+- The one-time USB setup now also installs the runner, test-launches it, and
+  turns on the phone's Wi-Fi connections (Xcode's "Connect via network"), so
+  later sessions need no tap on the phone and no Local Network prompt.
+- The runner's SRT stream listens on IPv4 and IPv6, and failures from the
+  device tunnel are reported by cause (phone not on the network, developer
+  image unmounted, runner not installed) instead of as a generic launch error.
+- iPhone control talks to WebDriverAgent directly over the tunnel instead of
+  through a local Appium server: one `DeviceControlSession` state machine, a
+  `WDAControlBackend` for iOS and an Appium-backed UiAutomator2 backend for
+  Android, a bounded coalescing queue for interactive input, and automatic
+  rebuild of a session the device dropped. Wired and wireless iPhones share
+  the same agent and the same code path.
+- Mirror gestures reproduce what the mouse did: a slow drag replays its
+  recorded path and timing, holding still is a long press (right click too),
+  a double click is a double tap, trackpad pinch and rotate map to the
+  device's pinch and rotate, and back is the system edge swipe. XCTest
+  replays a gesture only after the mouse is released, so finger-following
+  while the button is held is still not possible; see the README note.
+- Replace the separate control and wireless guides with one iPhone setup
+  guide that reads the phone's real state (USB, Developer Mode, installed
+  agent, Wi-Fi connections) through the sidecar and shows each preparation
+  step as it runs.
+
 ## 0.2.30 - 2026-09-04
 
 - Account-bound licensing: sign in with Google, GitHub, or email (shared iTool

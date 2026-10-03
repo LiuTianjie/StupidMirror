@@ -17,6 +17,17 @@ jobs:
           xcode-version: "26.2"
       - name: Show Swift version
         run: swift --version
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/smtunnel/go.mod
+          cache-dependency-path: tools/smtunnel/go.sum
+      - name: Vet and test the smtunnel sidecar
+        working-directory: tools/smtunnel
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build the smtunnel sidecar
+        run: bash scripts/build-smtunnel.sh
       - name: Build
         run: swift build
       - name: Test

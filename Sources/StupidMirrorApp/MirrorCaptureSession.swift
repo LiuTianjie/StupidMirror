@@ -247,15 +247,37 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessStartupDetail = detail
     }
 
+    /// The tunnel carrying the stream ended, so its loopback port is gone.
+    /// Waiting for SRT to notice would freeze the picture for seconds and
+    /// then retry a dead port; ask the owner for a fresh endpoint instead.
     @MainActor
-    func connectWirelessVideo(host: String) {
+    func requestWirelessReconnect() {
+        guard wirelessEndpointURL != nil,
+              state == .starting || state == .running,
+              !disposed else { return }
+        wirelessGeneration &+= 1
+        wirelessRetryTask?.cancel()
+        wirelessRetryTask = nil
+        wirelessSRTStream?.stop()
+        wirelessSRTStream = nil
+        state = .starting
+        wirelessStartupBeganAt = Date()
+        lastStreamFailureAt = lastStreamFailureAt ?? Date()
+        if let refresh = onWirelessEndpointNeedsRefresh {
+            refresh()
+        }
+    }
+
+    @MainActor
+    func connectWirelessVideo(host: String, port: Int) {
         guard wirelessEndpointURL != nil,
               state == .starting || state == .running,
               !disposed else { return }
         var components = URLComponents()
         components.scheme = "srt"
-        components.host = host
-        components.port = 9_200
+        // A tunnel address may be an IPv6 literal.
+        components.host = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+        components.port = port
         guard let streamURL = components.url else {
             failWirelessStart(WirelessMirrorError.invalidEndpoint.localizedDescription)
             return
@@ -818,7 +840,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
               state == .starting,
               let srtURL = wirelessStreamURL,
               !disposed else { return }
-        guard let host = srtURL.host, !host.isEmpty else {
+        guard let host = srtURL.host?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")),
+              !host.isEmpty else {
             failWirelessStart(WirelessMirrorError.invalidEndpoint.localizedDescription)
             return
         }

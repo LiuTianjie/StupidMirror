@@ -4,7 +4,7 @@ import SwiftUI
 struct DeviceRowView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
-    @ObservedObject private var controlSession: AppiumControlSession
+    @ObservedObject private var controlSession: DeviceControlSession
     @State private var confirmsRemoval = false
 
     let session: DeviceSession
@@ -95,7 +95,7 @@ struct DeviceRowView: View {
 struct DeviceDetailView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
-    @ObservedObject private var controlSession: AppiumControlSession
+    @ObservedObject private var controlSession: DeviceControlSession
 
     let session: DeviceSession
 
@@ -224,7 +224,7 @@ struct DeviceDetailView: View {
                                 Text(mirrorSession.wirelessStartupDetail
                                     ?? store.t("detail.wirelessStarting"))
                                 Text(String(
-                                    format: store.t("wireless.start.elapsed"),
+                                    format: store.t("agent.start.elapsed"),
                                     wirelessStartupElapsed(at: context.date)
                                 ))
                                 .foregroundStyle(.tertiary)
@@ -234,7 +234,7 @@ struct DeviceDetailView: View {
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 220)
                         }
-                        Button(store.t("wireless.start.cancel")) {
+                        Button(store.t("agent.start.cancel")) {
                             store.stop(session)
                         }
                         .buttonStyle(.link)
@@ -281,15 +281,7 @@ struct DeviceDetailView: View {
         ControlGestureOverlay(
             isEnabled: store.canUseControl && controlSession.isReady,
             aspectRatio: aspectRatio,
-            onTap: { point in
-                store.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
-            },
-            onSwipe: { start, end, durationMS in
-                store.swipeControl(for: session, from: start, to: end, durationMS: durationMS)
-            },
-            onFlick: { direction in
-                store.flickControl(for: session, direction: direction)
-            }
+            handlers: store.gestureHandlers(for: session)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -297,7 +289,7 @@ struct DeviceDetailView: View {
 
 struct ControlConnectionLoadingView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
-    @ObservedObject var controlSession: AppiumControlSession
+    @ObservedObject var controlSession: DeviceControlSession
     let cancel: () -> Void
 
     var body: some View {
@@ -353,34 +345,33 @@ struct ControlConnectionLoadingView: View {
     }
 
     private var phaseTitleKey: String {
+        let phase = controlSession.connectionPhase ?? .startingAgent
         if controlSession.platform == .android {
-            return switch controlSession.connectionPhase ?? .startingService {
+            return switch phase {
             case .startingService: "control.loading.android.startingService"
-            case .reusingAgent: "control.loading.android.reusingAgent"
-            case .installingAgent: "control.loading.android.installingAgent"
+            case .startingAgent, .connectingAgent: "control.loading.android.connectingAgent"
             case .finishing: "control.loading.android.finishing"
             }
         }
-        return switch controlSession.connectionPhase ?? .startingService {
-        case .startingService: "control.loading.startingService"
-        case .reusingAgent: "control.loading.reusingAgent"
-        case .installingAgent: "control.loading.installingAgent"
+        return switch phase {
+        case .startingService, .startingAgent: "control.loading.startingAgent"
+        case .connectingAgent: "control.loading.connectingAgent"
         case .finishing: "control.loading.finishing"
         }
     }
 
     private var expectationKey: String {
+        let phase = controlSession.connectionPhase ?? .startingAgent
         if controlSession.platform == .android {
-            return switch controlSession.connectionPhase ?? .startingService {
+            return switch phase {
             case .startingService: "control.loading.expectation.short"
-            case .reusingAgent, .installingAgent: "control.loading.android.expectation.agent"
+            case .startingAgent, .connectingAgent: "control.loading.android.expectation.agent"
             case .finishing: "control.loading.expectation.finishing"
             }
         }
-        return switch controlSession.connectionPhase ?? .startingService {
-        case .startingService: "control.loading.expectation.short"
-        case .reusingAgent: "control.loading.expectation.reuse"
-        case .installingAgent: "control.loading.expectation.install"
+        return switch phase {
+        case .startingService, .startingAgent: "control.loading.expectation.agent"
+        case .connectingAgent: "control.loading.expectation.short"
         case .finishing: "control.loading.expectation.finishing"
         }
     }
@@ -406,10 +397,10 @@ struct ControlConnectionLoadingView: View {
 #if DEBUG
 struct ControlConnectionLoadingDebugPreview: View {
     @EnvironmentObject private var store: DeviceGalleryStore
-    @StateObject private var controlSession: AppiumControlSession
+    @StateObject private var controlSession: DeviceControlSession
 
     init() {
-        _controlSession = StateObject(wrappedValue: AppiumControlSession(device: DeviceIdentity(
+        _controlSession = StateObject(wrappedValue: DeviceControlSession(device: DeviceIdentity(
             id: "loading-preview",
             udid: "00000000-0000000000000000",
             name: "Preview iPhone",
@@ -434,7 +425,7 @@ struct ControlConnectionLoadingDebugPreview: View {
                 .padding(24)
         }
         .onAppear {
-            controlSession.showConnectionPreview(phase: .installingAgent, elapsedSeconds: 73)
+            controlSession.showConnectionPreview(phase: .startingAgent, elapsedSeconds: 73)
         }
     }
 }
@@ -445,7 +436,7 @@ struct ControlConnectionLoadingDebugPreview: View {
 struct DeviceActionBar: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
-    @ObservedObject private var controlSession: AppiumControlSession
+    @ObservedObject private var controlSession: DeviceControlSession
     @State private var confirmsRemoval = false
 
     let session: DeviceSession

@@ -49,7 +49,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 | 连接方式 | 准备工作 | 画面与声音 |
 | --- | --- | --- |
 | **iPhone · USB** | 信任当前 Mac；按提示授予相机权限 | AVFoundation 捕获；可选将设备声音播放到 Mac |
-| **iPhone · Wi-Fi** | 通过 USB 完成一次无线配置向导；两端保持同一局域网 | H.264 / SRT 传输，VideoToolbox 解码；暂不支持无线音频 |
+| **iPhone · Wi-Fi** | 通过 USB 完成一次“设置这台 iPhone”（会在手机上开启 Wi‑Fi 连接）；两端保持同一局域网 | H.264 / SRT 经 CoreDevice 隧道传输，VideoToolbox 解码；暂不支持无线音频 |
 | **Android · ADB** | Android 11+；Mac 安装 Android SDK Platform-Tools；开启 USB 调试并授权当前 Mac | scrcpy 提供 H.264 画面与可选设备音频 |
 
 **需要 macOS 15 或更高版本。** 兼容性受系统版本、信任状态和自动化运行时影响，项目仍处于实验阶段。
@@ -64,9 +64,9 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 ### Wi-Fi 连接 iPhone
 
-保持 USB 连接，打开**无线配置向导**。向导会检查设备和 Apple Development 签名身份，准备屏幕 Runner，并在拔线前验证局域网连接。
+保持 USB 连接，打开**设置这台 iPhone**。向导会检查设备和 Apple Development 签名身份，构建并安装屏幕 Runner，试启动一次，然后在手机上开启 Wi‑Fi 连接（与 Xcode 的“通过网络连接”是同一个开关），之后再拔线。
 
-手机需要相应的开发者权限，并接受本地网络授权。后续会话复用已准备的 Runner。无线镜像无需相机权限或 ReplayKit Broadcast Extension，但需要这个签名后的设备端 Runner；准备无线画面不会自动连接控制。
+后续会话由内置的 `smtunnel` 侧车连接手机：它在局域网上用进程内网络协议栈建立 Apple 的 CoreDevice 隧道，并通过 testmanagerd 启动 Runner，不依赖 Xcode 的启动器，不需要管理员密码、本地网络授权或在手机上点任何东西。无线镜像无需相机权限或 ReplayKit Broadcast Extension，但需要这个签名后的设备端 Runner 和手机上的开发者模式；准备无线画面不会自动连接控制。
 
 ### 连接 Android
 
@@ -74,14 +74,14 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 ## 真机控制
 
-点击**连接控制**开始操作。发布包包含 Mac 侧 Node / Appium 运行时，以及 XCUITest 和 UiAutomator2 驱动。
+点击**连接控制**开始操作。
 
 | 平台 | 控制后端 | 首次连接 |
 | --- | --- | --- |
-| iOS | Appium + XCUITest / WebDriverAgent | 需要信任 Mac、开启开发者模式 / UI Automation，并使用有效 Apple Development 身份签名 WebDriverAgentRunner |
-| Android | Appium + UiAutomator2 | 按需安装 Appium settings / server 辅助 APK |
+| iOS | 经 `smtunnel` 隧道直连 WebDriverAgent（USB 与 Wi‑Fi 同一条路径） | 在 iPhone 设置向导中用 USB 准备一次：信任 Mac、开启开发者模式、用 Apple Development 身份签名并安装屏幕代理 |
+| Android | Appium + UiAutomator2（发布包内置 Node / Appium 运行时） | 按需安装 Appium settings / server 辅助 APK |
 
-StupidMirror 会检测可用的 Apple Development 签名团队，并复用各设备的 WDA 构建缓存。首次构建或安装辅助程序会比后续重连耗时更长。高级设置允许配置自定义 Appium 地址，默认是 `http://127.0.0.1:4723`。
+镜像上的手势会尽量还原鼠标的动作：慢速拖动按记录的路径与节奏回放，按住不动是长按（右键也是），双击是双击，触控板捏合与旋转对应手机上的捏合与旋转，返回是系统的边缘滑动。XCTest 只能在鼠标抬起后整体回放一个手势，所以按住期间“手指跟随”目前做不到。高级设置允许为 Android 配置自定义 Appium 地址，默认是 `http://127.0.0.1:4723`。
 
 ## 连接 AI Agent
 

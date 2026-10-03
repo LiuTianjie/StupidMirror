@@ -49,7 +49,7 @@ Download the macOS app from [GitHub Releases](https://github.com/LiuTianjie/Stup
 | Connection | Prepare | Video and audio |
 | --- | --- | --- |
 | **iPhone · USB** | Trust this Mac; allow Camera access when requested | AVFoundation capture; optional device audio on the Mac |
-| **iPhone · Wi-Fi** | Complete the Wireless Setup Guide once over USB; keep both devices on the same LAN | H.264 over SRT with VideoToolbox decoding; wireless audio is not available |
+| **iPhone · Wi-Fi** | Complete **Set Up This iPhone** once over USB (it turns on the phone's Wi-Fi connections); keep both devices on the same LAN | H.264 over SRT through a CoreDevice tunnel, VideoToolbox decoding; wireless audio is not available |
 | **Android · ADB** | Android 11+; install Android SDK Platform-Tools on the Mac; enable USB debugging and approve the Mac's key | H.264 video and optional device audio from scrcpy |
 
 **macOS 15+ is required.** Device compatibility can depend on OS versions, trust state, and the available automation runtime. The project remains experimental.
@@ -64,9 +64,9 @@ Camera permission is needed because macOS exposes the iPhone screen as an AVFoun
 
 ### iPhone over Wi-Fi
 
-Open the **Wireless Setup Guide** while the phone is connected over USB. The guide checks the device and Apple Development signing identity, prepares the screen runner, and verifies its LAN connection before you unplug.
+Open **Set Up This iPhone** while the phone is connected over USB. The guide checks the device and Apple Development signing identity, builds and installs the screen runner, test-launches it, and enables Wi-Fi connections on the phone (the same switch as Xcode's "Connect via network") before you unplug.
 
-The phone needs the relevant developer permissions and must accept the Local Network prompt. Later sessions reuse the prepared runner. Wireless mirroring does not require Camera permission or a ReplayKit Broadcast Extension. It does require this signed device-side runner; video setup does not itself enable a control session.
+Later sessions reach the phone through the bundled `smtunnel` sidecar: it opens Apple's CoreDevice tunnel over the local network with an in-process network stack and starts the runner through testmanagerd, so no Xcode launcher, administrator password, Local Network prompt, or tap on the phone is involved. Wireless mirroring does not require Camera permission or a ReplayKit Broadcast Extension. It does require this signed device-side runner and Developer Mode on the phone; video setup does not itself enable a control session.
 
 ### Android
 
@@ -74,14 +74,14 @@ Install `adb`, enable USB debugging, connect the device, and approve this Mac on
 
 ## Device control
 
-Click **Connect** to start control. Release bundles include the Mac-side Node/Appium runtime and the XCUITest and UiAutomator2 drivers.
+Click **Connect** to start control.
 
 | Platform | Control backend | First connection |
 | --- | --- | --- |
-| iOS | Appium + XCUITest / WebDriverAgent | Requires trust, Developer Mode / UI Automation, and valid Apple Development signing for WebDriverAgentRunner |
-| Android | Appium + UiAutomator2 | Installs Appium settings/server helper APKs when needed |
+| iOS | WebDriverAgent driven directly through the `smtunnel` tunnel (one path for USB and Wi-Fi) | Run **Set Up This iPhone** once over USB: trust the Mac, enable Developer Mode, and let it sign and install the screen agent with an Apple Development identity |
+| Android | Appium + UiAutomator2 (the release bundles the Node/Appium runtime for this) | Installs Appium settings/server helper APKs when needed |
 
-StupidMirror detects usable Apple Development signing teams and reuses per-device WDA build caches. A first build or helper installation takes longer than reconnecting to an existing setup. Advanced settings support a custom Appium endpoint; the default is `http://127.0.0.1:4723`.
+Mirror gestures reproduce what the mouse did: a slow drag replays its recorded path and timing, holding still is a long press (so is a right click), a double click is a double tap, trackpad pinch and rotate map to the device's pinch and rotate, and back is the system edge swipe. XCTest can only replay a gesture once the mouse is released, so the finger cannot be followed while the button is held. Advanced settings support a custom Appium endpoint for Android; the default is `http://127.0.0.1:4723`.
 
 ## Connect an AI agent
 

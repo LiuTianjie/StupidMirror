@@ -251,6 +251,29 @@ assert_release_app() {
     exit 1
   fi
 
+  # iPhone mirroring and control both run through the tunnel sidecar.
+  bundled_smtunnel="${app}/Contents/Resources/smtunnel/smtunnel"
+  if [ ! -x "$bundled_smtunnel" ]; then
+    echo "Release does not contain the smtunnel sidecar." >&2
+    exit 1
+  fi
+  codesign --verify --strict --verbose=2 "$bundled_smtunnel"
+  smtunnel_team_id="$(codesign -dv --verbose=4 "$bundled_smtunnel" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -n 1)"
+  if [ "$smtunnel_team_id" != "$official_team_id" ]; then
+    echo "smtunnel signing team mismatch: expected ${official_team_id}, got ${smtunnel_team_id:-<empty>}." >&2
+    exit 1
+  fi
+  for arch in arm64 x86_64; do
+    if ! lipo -archs "$bundled_smtunnel" | tr ' ' '\n' | grep -qx "$arch"; then
+      echo "smtunnel is missing the ${arch} slice." >&2
+      exit 1
+    fi
+  done
+  if ! "$bundled_smtunnel" version | grep -q '"event":"version"'; then
+    echo "Bundled smtunnel does not run." >&2
+    exit 1
+  fi
+
   value="$("$bundled_node" -p "require(process.argv[1]).version" "${bundled_runtime}/node_modules/appium/package.json")"
   if [ "$value" != "$official_appium_version" ]; then
     echo "Bundled Appium version mismatch: expected ${official_appium_version}, got ${value:-<empty>}." >&2

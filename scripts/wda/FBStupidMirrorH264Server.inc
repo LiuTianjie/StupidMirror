@@ -137,14 +137,28 @@ static void SMH264CompressionOutputCallback(
     [self setSRTOption:SRTO_SNDTIMEO value:&sendTimeout length:sizeof(sendTimeout) onSocket:listener] &&
     [self setSRTOption:SRTO_RCVTIMEO value:&receiveTimeout length:sizeof(receiveTimeout) onSocket:listener] &&
     [self setSRTOption:SRTO_PAYLOADSIZE value:&payloadSize length:sizeof(payloadSize) onSocket:listener];
-  struct sockaddr_in address = {0};
-  address.sin_len = sizeof(address);
-  address.sin_family = AF_INET;
-  address.sin_port = htons(port);
-  address.sin_addr.s_addr = htonl(INADDR_ANY);
-  if (!configured ||
-      srt_bind(listener, (const struct sockaddr *)&address, sizeof(address)) == SRT_ERROR ||
-      srt_listen(listener, 1) == SRT_ERROR) {
+  // Listen on IPv6 with IPv4 mapping. The CoreDevice tunnel is IPv6 only and
+  // is not subject to the Local Network privacy gate, so a dual-stack listener
+  // stays reachable when iOS drops connections to the LAN address.
+  int32_t ipv6Only = 0;
+  struct sockaddr_in6 address6 = {0};
+  address6.sin6_len = sizeof(address6);
+  address6.sin6_family = AF_INET6;
+  address6.sin6_port = htons(port);
+  address6.sin6_addr = in6addr_any;
+  BOOL dualStack = configured &&
+    [self setSRTOption:SRTO_IPV6ONLY value:&ipv6Only length:sizeof(ipv6Only) onSocket:listener] &&
+    srt_bind(listener, (const struct sockaddr *)&address6, sizeof(address6)) != SRT_ERROR;
+  BOOL bound = dualStack;
+  if (configured && !bound) {
+    struct sockaddr_in address = {0};
+    address.sin_len = sizeof(address);
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    bound = srt_bind(listener, (const struct sockaddr *)&address, sizeof(address)) != SRT_ERROR;
+  }
+  if (!bound || srt_listen(listener, 1) == SRT_ERROR) {
     SMStupidMirrorSRTStartupState = -3;
     strlcpy(SMStupidMirrorSRTStartupError, srt_getlasterror_str(), sizeof(SMStupidMirrorSRTStartupError));
     [FBLogger logFmt:@"Cannot start StupidMirror SRT listener: %s", srt_getlasterror_str()];
@@ -152,13 +166,15 @@ static void SMH264CompressionOutputCallback(
     return;
   }
   self.srtListener = listener;
-  SMStupidMirrorSRTStartupState = 2;
+  // 2: listening on IPv4 only. 3: also reachable over IPv6 (the tunnel).
+  SMStupidMirrorSRTStartupState = dualStack ? 3 : 2;
   SMStupidMirrorSRTStartupError[0] = '\0';
   __weak typeof(self) weakSelf = self;
   dispatch_async(self.srtAcceptQueue, ^{
     [weakSelf acceptSRTClients];
   });
-  [FBLogger logFmt:@"StupidMirror SRT/H.264 stream listening on UDP port %@", @(port)];
+  [FBLogger logFmt:@"StupidMirror SRT/H.264 stream listening on UDP port %@ (%@)",
+    @(port), dualStack ? @"IPv4+IPv6" : @"IPv4"];
 }
 
 - (void)acceptSRTClients

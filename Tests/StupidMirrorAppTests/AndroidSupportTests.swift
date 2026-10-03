@@ -39,9 +39,9 @@ final class AndroidSupportTests: XCTestCase {
         XCTAssertNotEqual(first.mjpegServerPort, second.mjpegServerPort)
         XCTAssertTrue(first.derivedDataPath.isEmpty)
 
-        let capabilities = AppiumSessionCapabilities.make(
+        let capabilities = AppiumSessionCapabilities.android(
             udid: "android-one",
-            bundleID: "",
+            appPackage: "",
             configuration: first
         )
         XCTAssertEqual(capabilities["platformName"] as? String, "Android")
@@ -64,16 +64,16 @@ final class AndroidSupportTests: XCTestCase {
             visible: true,
             frame: ScreenElementFrame(x: 10, y: 20, width: 100, height: 60)
         )
-        let locators = AppiumSemanticElementResolver.locators(for: element, platform: .android)
-        XCTAssertEqual(locators.first, AppiumSemanticLocator(
+        let locators = SemanticElementLocator.locators(for: element, platform: .android)
+        XCTAssertEqual(locators.first, SemanticLocator(
             using: "id",
             value: "com.example:id/login"
         ))
-        XCTAssertTrue(locators.contains(AppiumSemanticLocator(
+        XCTAssertTrue(locators.contains(SemanticLocator(
             using: "accessibility id",
             value: "登录"
         )))
-        let contains = AppiumSemanticElementResolver.textContainsLocator(
+        let contains = SemanticElementLocator.textContainsLocator(
             query: "登录",
             platform: .android
         )
@@ -112,7 +112,18 @@ final class AndroidSupportTests: XCTestCase {
               !serial.isEmpty else {
             throw XCTSkip("Set STUPIDMIRROR_TEST_ANDROID_SERIAL to run the real-device control keep-alive check.")
         }
-        let session = AppiumControlSession(device: DeviceIdentity(
+        var configuration = AppiumControlConfiguration(platform: .android).isolated(forDeviceUDID: serial)
+        configuration.newCommandTimeoutSeconds = 3
+        let backend = try await AppiumAndroidBackend.connect(
+            serverURL: "http://127.0.0.1:4723",
+            udid: serial,
+            appPackage: "",
+            configuration: configuration,
+            report: { _, _ in }
+        )
+        defer { Task { await backend.close() } }
+
+        let session = await DeviceControlSession(device: DeviceIdentity(
             id: serial,
             udid: serial,
             platform: .android,
@@ -122,29 +133,10 @@ final class AndroidSupportTests: XCTestCase {
             connectionState: .connected,
             trustState: .trusted
         ))
-        var configuration = AppiumControlConfiguration(platform: .android)
-        configuration.newCommandTimeoutSeconds = 3
-        configuration.keepAliveIntervalSeconds = 1
-        session.prepare(
-            serverURL: "http://127.0.0.1:4723",
-            bundleID: "",
-            configuration: configuration
-        )
-
-        let deadline = Date().addingTimeInterval(45)
-        while !session.isReady, session.isConnecting, Date() < deadline {
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        guard session.isReady else {
-            let message = session.statusMessage
-            await session.shutdown(serverURL: "http://127.0.0.1:4723")
-            XCTFail("Android control did not become ready: \(message)")
-            return
-        }
-
+        await session.adoptForTesting(backend, keepAliveInterval: .seconds(1))
         try await Task.sleep(for: .seconds(6))
-        let stayedAlive = await session.verifyReadySession(serverURL: "http://127.0.0.1:4723")
-        await session.shutdown(serverURL: "http://127.0.0.1:4723")
+        let stayedAlive = await session.verifyReady()
+        await session.shutdown()
 
         XCTAssertTrue(stayedAlive, "The Android session expired despite control keep-alive.")
     }

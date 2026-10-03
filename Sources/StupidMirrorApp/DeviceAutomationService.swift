@@ -236,7 +236,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         if includeAccessibility, session.controlSession.isReady {
             do {
                 let xml = try await withDeviceLock(session.id) {
-                    try await session.controlSession.pageSource(serverURL: self.store.appiumServerURL)
+                    try await session.controlSession.uiTree()
                 }
                 let screenSize = session.controlSession.screenSize
                 accessibilityElements = await Task.detached(priority: .utility) {
@@ -478,10 +478,7 @@ final class DeviceAutomationService: @unchecked Sendable {
                let reference = nativeCache.referencesByElementID[element.id] {
                 do {
                     try await withDeviceLock(session.id) {
-                        try await session.controlSession.clickElementReferenceAwaiting(
-                            reference,
-                            serverURL: self.store.appiumServerURL
-                        )
+                        try await session.controlSession.click(elementReference: reference)
                     }
                     return ScreenElementTapResult(
                         observationID: cached.id,
@@ -503,10 +500,7 @@ final class DeviceAutomationService: @unchecked Sendable {
             // elements that have no usable geometry.
             if element.normalizedFrame == nil, element.frame == nil {
                 let clicked = try await withDeviceLock(session.id) {
-                    try await session.controlSession.clickSemanticElementAwaiting(
-                        element,
-                        serverURL: self.store.appiumServerURL
-                    )
+                    try await session.controlSession.click(semantic: element)
                 }
                 if clicked {
                     return ScreenElementTapResult(
@@ -532,11 +526,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         let x = min(max(normalizedFrame.centerX, 0), 1)
         let y = min(max(normalizedFrame.centerY, 0), 1)
         try await withDeviceLock(session.id) {
-            try await session.controlSession.tapNormalizedAwaiting(
-                x: x,
-                y: y,
-                serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.tap(normalizedX: x, normalizedY: y)
         }
         return ScreenElementTapResult(
             observationID: cached.id,
@@ -793,7 +783,7 @@ final class DeviceAutomationService: @unchecked Sendable {
     func disconnectControl(deviceID: String?) async throws -> AutomationDeviceSnapshot {
         let session = try selectSession(deviceID: deviceID)
         try await withDeviceLock(session.id) {
-            await session.controlSession.shutdown(serverURL: self.store.appiumServerURL)
+            await session.controlSession.shutdown()
         }
         return snapshot(for: session)
     }
@@ -801,14 +791,14 @@ final class DeviceAutomationService: @unchecked Sendable {
     func screenshot(deviceID: String?) async throws -> Data {
         let session = try readyControlSession(deviceID: deviceID)
         return try await withDeviceLock(session.id) {
-            try await session.controlSession.screenshot(serverURL: self.store.appiumServerURL)
+            try await session.controlSession.screenshot()
         }
     }
 
     func uiTree(deviceID: String?) async throws -> String {
         let session = try readyControlSession(deviceID: deviceID)
         return try await withDeviceLock(session.id) {
-            try await session.controlSession.pageSource(serverURL: self.store.appiumServerURL)
+            try await session.controlSession.uiTree()
         }
     }
 
@@ -821,9 +811,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         )
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.tapNormalizedAwaiting(
-                x: x, y: y, serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.tap(normalizedX: x, normalizedY: y)
         }
     }
 
@@ -837,9 +825,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         )
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.doubleTapNormalizedAwaiting(
-                x: x, y: y, serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.doubleTap(normalizedX: x, normalizedY: y)
         }
     }
 
@@ -856,12 +842,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         )
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.longPressNormalizedAwaiting(
-                x: x,
-                y: y,
-                durationSeconds: durationSeconds,
-                serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.longPress(normalizedX: x, normalizedY: y, durationSeconds: durationSeconds)
         }
     }
 
@@ -886,12 +867,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         )
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.swipeNormalizedAwaiting(
-                from: CGPoint(x: startX, y: startY),
-                to: CGPoint(x: endX, y: endY),
-                durationMS: durationMS,
-                serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.swipe(fromNormalized: CGPoint(x: startX, y: startY), toNormalized: CGPoint(x: endX, y: endY), durationMS: durationMS)
         }
     }
 
@@ -900,10 +876,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · Flick")
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.flickAwaiting(
-                direction: direction,
-                serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.flick(direction)
         }
     }
 
@@ -952,7 +925,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · Type \(text.count) chars")
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.typeTextAwaiting(text, serverURL: self.store.appiumServerURL)
+            try await session.controlSession.typeText(text)
         }
     }
 
@@ -961,9 +934,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · Clear text")
         await Task.yield()
         let result = try await withDeviceLock(session.id) {
-            try await session.controlSession.clearTextAwaiting(
-                serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.clearText()
         }
         return AutomationTextEditResult(
             action: "clear_text",
@@ -986,10 +957,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · Replace with \(text.count) chars")
         await Task.yield()
         let result = try await withDeviceLock(session.id) {
-            try await session.controlSession.replaceTextAwaiting(
-                text,
-                serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.replaceText(text)
         }
         return AutomationTextEditResult(
             action: "replace_text",
@@ -1000,11 +968,11 @@ final class DeviceAutomationService: @unchecked Sendable {
     }
 
     func pressButton(deviceID: String?, name: String) async throws {
-        let appiumName: String
+        let button: DeviceButton
         switch name {
-        case "home": appiumName = "home"
-        case "volume_up": appiumName = "volumeUp"
-        case "volume_down": appiumName = "volumeDown"
+        case "home": button = .home
+        case "volume_up": button = .volumeUp
+        case "volume_down": button = .volumeDown
         default:
             throw DeviceAutomationError.invalidArgument(
                 "button must be home, volume_up, or volume_down."
@@ -1014,9 +982,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · \(name.replacingOccurrences(of: "_", with: " ").capitalized)")
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.pressButtonAwaiting(
-                appiumName, serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.press(button)
         }
     }
 
@@ -1032,7 +998,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         }
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.pressBackAwaiting(serverURL: self.store.appiumServerURL)
+            try await session.controlSession.press(.back)
         }
     }
 
@@ -1041,7 +1007,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · App Switcher")
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.openAppSwitcherAwaiting(serverURL: self.store.appiumServerURL)
+            try await session.controlSession.press(.appSwitcher)
         }
     }
 
@@ -1051,9 +1017,7 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · Open App")
         await Task.yield()
         try await withDeviceLock(session.id) {
-            try await session.controlSession.activateApp(
-                bundleID: bundleID, serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.activateApp(bundleID)
         }
     }
 
@@ -1063,15 +1027,13 @@ final class DeviceAutomationService: @unchecked Sendable {
         session.mirrorSession.showAutomationNotice("AI · Terminate App")
         await Task.yield()
         return try await withDeviceLock(session.id) {
-            try await session.controlSession.terminateApp(
-                bundleID: bundleID, serverURL: self.store.appiumServerURL
-            )
+            try await session.controlSession.terminateApp(bundleID)
         }
     }
 
     private func cacheFastAccessibilityObservation(
         session: DeviceSession,
-        nativeMatches: [AppiumNativeElementMatch]
+        nativeMatches: [NativeElementMatch]
     ) -> ScreenObservation {
         let observation = ScreenObservation(
             id: UUID(),

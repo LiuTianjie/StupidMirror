@@ -173,20 +173,20 @@ final class ScreenObservationTests: XCTestCase {
             visible: true,
             frame: ScreenElementFrame(x: 20, y: 100, width: 80, height: 40)
         )
-        let locators = AppiumSemanticElementResolver.locators(for: element)
+        let locators = SemanticElementLocator.locators(for: element, platform: .iOS)
         XCTAssertTrue(locators.first?.value.contains("save\\'now") == true)
-        XCTAssertEqual(locators.last, AppiumSemanticLocator(using: "accessibility id", value: "save'now"))
+        XCTAssertEqual(locators.last, SemanticLocator(using: "accessibility id", value: "save'now"))
 
-        let textLocator = AppiumSemanticElementResolver.textContainsLocator(query: "瑞幸'咖啡")
-        XCTAssertEqual(textLocator.using, "-ios predicate string")
+        let textLocator = SemanticElementLocator.textContainsLocator(query: "瑞幸'咖啡", platform: .iOS)
+        XCTAssertEqual(textLocator.using, "predicate string")
         XCTAssertTrue(textLocator.value.contains("visible == 1"))
         XCTAssertTrue(textLocator.value.contains("瑞幸\\'咖啡"))
         XCTAssertTrue(textLocator.value.contains("CONTAINS[c]"))
 
-        let selected = AppiumSemanticElementResolver.bestMatch(
+        let selected = SemanticElementLocator.bestMatch(
             among: [
-                AppiumResolvedElement(id: "far", frame: ScreenElementFrame(x: 20, y: 400, width: 80, height: 40)),
-                AppiumResolvedElement(id: "near", frame: ScreenElementFrame(x: 22, y: 102, width: 80, height: 40))
+                ResolvedNativeElement(id: "far", frame: ScreenElementFrame(x: 20, y: 400, width: 80, height: 40)),
+                ResolvedNativeElement(id: "near", frame: ScreenElementFrame(x: 22, y: 102, width: 80, height: 40))
             ],
             observedFrame: element.frame
         )
