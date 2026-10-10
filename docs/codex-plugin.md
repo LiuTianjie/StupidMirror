@@ -1,6 +1,6 @@
 # Codex plugin / Codex 插件
 
-Available in StupidMirror 0.3.0 (bundled plugin 0.2.0).
+Available in StupidMirror 0.3.1 (bundled plugin 0.2.1).
 
 ## Connect / 连接
 
@@ -45,8 +45,13 @@ WebRTC 只在本机传输；AI 请求的截图及主动发送的标注仍会交�
 
 ## Troubleshooting / 排障
 
-- No tools: reconnect/restart Codex and select the plugin in a new chat. After an
+- No tools: reconnect the plugin and select it in a new Codex chat. After an
   app update, use **Connect Codex / Update or reinstall plugin** again.
+- Initialization fails with `-32603` and “data isn’t in the correct format”: older
+  builds reject object-valued experimental client capabilities. Update to StupidMirror 0.3.1 or later
+  and reconnect the plugin; restarting Codex does not fix this decoding error.
+  The compatibility fix covers both the plugin's stdio helper and direct Streamable
+  HTTP connections, while preserving authentication and normal tool traffic.
 - No device: unlock it, check cable/trust or ADB authorization, and refresh.
 - No video: grant the app Camera permission for USB iPhone; complete the iPhone
   setup guide for wireless video. Keep the phone connected and awake.

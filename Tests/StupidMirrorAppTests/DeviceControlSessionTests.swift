@@ -170,13 +170,21 @@ final class DeviceControlSessionTests: XCTestCase {
         let replacement = RecordingControlBackend()
         let session = DeviceControlSession(device: identity())
         session.adoptForTesting(backend, keepAliveInterval: .milliseconds(40)) { _ in replacement }
+        defer { session.disconnect() }
 
-        try? await Task.sleep(for: .milliseconds(120))
+        // A loaded CI main actor may not start the keep-alive task within 120 ms.
+        // Wait for the event being tested, with a bounded failure deadline.
+        let pingDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !backend.calls.contains(.ping), ContinuousClock.now < pingDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         XCTAssertTrue(backend.calls.contains(.ping))
 
         backend.failNext = ControlBackendError.sessionLost("agent exited")
-        try? await Task.sleep(for: .milliseconds(200))
-        await settle()
+        let recoveryDeadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while (!session.isReady || !backend.calls.contains(.close)), ContinuousClock.now < recoveryDeadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         XCTAssertTrue(session.isReady)
         XCTAssertTrue(backend.calls.contains(.close))
     }

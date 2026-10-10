@@ -32,7 +32,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
   let layoutReads = 0;
   let imageWrites = 0;
   const ids = ['app', 'device', 'screen', 'image', 'empty-state', 'empty-state-text', 'cursor', 'stage', 'model', 'live-text', 'toast',
-    'tool-refresh', 'tool-home', 'tool-screenshot', 'tool-pause', 'device-picker', 'device-menu', 'device-switcher', 'pause-label', 'video', 'control-button', 'annotate-button', 'control-label',
+    'empty-hint', 'empty-retry', 'tool-refresh', 'tool-home', 'tool-screenshot', 'tool-pause', 'device-picker', 'device-menu', 'device-switcher', 'pause-label', 'video', 'control-button', 'annotate-button', 'control-label',
     'annotation-overlay','annotation-editor','annotation-note','annotation-count','annotation-undo','annotation-cancel','annotation-send','annotation-hint'];
   const elements = Object.fromEntries(ids.map(id => [id, {
     style: { setProperty(name, value) { this[name] = value; } }, dataset: {},
@@ -81,7 +81,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     callServerTool(params, options) {
       calls.push(params);
       requestOptions.push(options);
-      return reply ? reply(params) : Promise.resolve({ structuredContent: preview() });
+      return reply ? reply(params, options) : Promise.resolve({ structuredContent: preview() });
     }
   }
   const document = {
@@ -97,7 +97,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     removeEventListener: name => listeners.delete(name),
   };
   await vm.runInNewContext(code, {
-    MockApp, document, Image:class { async decode() {} },
+    MockApp, document, Error, AbortController, Image:class { async decode() {} },
     matchMedia: () => ({ matches: reducedMotion }),
     performance: { now: () => now },
     ResizeObserver: class { constructor(callback) { this.callback = callback; resize = this; } observe() {} disconnect() { this.disconnected = true; } },
@@ -286,7 +286,7 @@ test('a hidden panel stops polling, and slow calls never overlap', async () => {
   assert.equal(h.calls.length, 2);
 });
 
-test('paused clears the screen, errors back off silently, teardown cancels work', async () => {
+test('paused clears the screen, errors back off with a bounded retry budget, teardown cancels work', async () => {
   const h = await harness({ reply: async () => ({ isError: true }) });
   h.app.ontoolresult({ structuredContent: preview({ frame: frame(4), busy: true }) });
   h.app.ontoolresult({ structuredContent: preview({ paused: true }) });
@@ -302,7 +302,8 @@ test('paused clears the screen, errors back off silently, teardown cancels work'
   await h.tick();
   assert.equal([...h.timers.values()][0].delay, 1000);
   await h.tick(); await h.tick(); await h.tick();
-  assert.equal([...h.timers.values()][0].delay, 2000);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.calls.length, 3);
   await h.app.onteardown();
   assert.equal(h.timers.size, 0);
   assert.equal(h.resize.disconnected, true);
@@ -798,4 +799,35 @@ test('a display rotation between pointer down and up does not send stale coordin
   pointerDispatch(h,'pointerup',300,450);await flush();
   assert.equal(h.calls.filter(c=>c.arguments?.action==='tap'||c.arguments?.action==='swipe').length,0);
   assert.match(h.elements.toast.textContent,/画面已变化/);
+});
+test('failed frame requests stop after three attempts and the visible retry reconnects with a short timeout',async()=>{
+  let fail=true;
+  const h=await harness({reply:async params=>{
+    if(params.name==='screen_action'){fail=false;return {structuredContent:preview({frame_available:true})};}
+    if(fail)throw new Error('App server request queue is full');
+    return {structuredContent:preview({frame:frame(1),frame_available:true})};
+  }});
+  for(let i=0;i<3;i++)await h.tick();
+  assert.equal(h.calls.length,3);assert.equal(h.timers.size,0);
+  assert.equal(h.elements['empty-retry'].hidden,false);
+  assert.equal(h.elements['empty-retry'].disabled,false);
+  assert.match(h.elements['empty-state-text'].textContent,/queue is full/);
+  h.elements['empty-retry'].click();await flush();
+  const action=h.calls.findIndex(c=>c.name==='screen_action');
+  assert.equal(h.requestOptions[action].timeout,10000);
+  assert.equal(h.elements['empty-retry'].disabled,false);
+  await h.tick();
+  assert.equal(h.elements.image.hidden,false);assert.equal(h.elements.app.dataset.live,'live');
+});
+test('manual reconnect aborts the old poll and does not strand polling behind it',async()=>{
+  let first=true;let aborted=false;
+  const h=await harness({reply:(params,options)=>{
+    if(params.name==='screen_frame'&&first){first=false;return new Promise((_,reject)=>options.signal.addEventListener('abort',()=>{aborted=true;reject(new Error('Cancelled'));}));}
+    return Promise.resolve({structuredContent:preview({frame:frame(1),frame_available:true})});
+  }});
+  await h.tick();assert.equal(h.calls.length,1);
+  h.elements['tool-refresh'].click();await flush();assert.equal(aborted,true);
+  assert.equal(h.elements['tool-refresh'].disabled,false);
+  await h.tick();assert.equal(h.calls.filter(c=>c.name==='screen_frame').length,2);
+  assert.equal(h.elements.image.hidden,false);
 });

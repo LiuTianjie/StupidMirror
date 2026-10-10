@@ -3,6 +3,46 @@ import MCP
 import XCTest
 
 final class MCPServerTests: XCTestCase {
+    func testHTTPInitializationAcceptsCodexCapabilitiesAndStillRequiresAuthentication() async throws {
+        let application = MCPHTTPApplication(
+            host: "127.0.0.1", port: 17_373, endpoint: "/mcp",
+            validationPipeline: StandardValidationPipeline(validators: [
+                MCPBearerTokenValidator(tokenBox: MCPTokenBox(token: "test-token"))
+            ]),
+            serverFactory: { _ in Server(name: "http-test", version: "1") },
+            sessionCountHandler: { _ in }, startedHandler: {}
+        )
+        let body = Data(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"codex","version":"test"},"capabilities":{"experimental":{"codex/auth-change":{}}}}}"#.utf8)
+        let unauthorized = await application.handle(HTTPRequest(method: "POST", body: body))
+        XCTAssertEqual(unauthorized.statusCode, 401)
+        let response = await application.handle(HTTPRequest(
+            method: "POST", headers: ["Authorization": "Bearer test-token"], body: body
+        ))
+        XCTAssertEqual(response.statusCode, 200)
+        let completed = expectation(description: "HTTP initialize returns a successful JSON-RPC result")
+        let reader = Task {
+            do {
+                guard case let .stream(stream, _) = response else {
+                    XCTFail("Expected SSE response")
+                    completed.fulfill()
+                    return
+                }
+                var body = Data()
+                for try await chunk in stream { body.append(chunk) }
+                let text = String(decoding: body, as: UTF8.self)
+                let payload = try XCTUnwrap(text.components(separatedBy: "\n").first { $0.hasPrefix("data: {") })
+                let result = try JSONDecoder().decode(Response<Initialize>.self, from: Data(payload.dropFirst(6).utf8))
+                XCTAssertEqual(try result.result.get().serverInfo.name, "http-test")
+            } catch {
+                XCTFail("HTTP handshake failed: \(error)")
+            }
+            completed.fulfill()
+        }
+        await fulfillment(of: [completed], timeout: 5)
+        reader.cancel()
+        await application.stop()
+    }
+
     func testToolCatalogContainsTheApprovedSurfaceAndStrictSchemas() {
         let expected = Set([
             "list_devices", "refresh_devices", "get_device_status", "get_diagnostics",

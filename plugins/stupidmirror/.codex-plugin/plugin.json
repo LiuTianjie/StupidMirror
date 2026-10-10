@@ -1,6 +1,6 @@
 {
   "name": "stupidmirror",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Observe and control real iPhone and Android devices through the StupidMirror Mac app.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

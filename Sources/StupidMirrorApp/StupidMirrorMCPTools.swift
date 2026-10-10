@@ -10,6 +10,7 @@ enum StupidMirrorMCPToolCatalog {
         tool(
             "show_screen", "Open or reuse the live phone screen inside Codex. Captures in the background without opening a Mac mirror window. With multiple devices, pass device_id or choose one in the screen panel. Pause/resume controls preview only.",
             deviceProperties.merging(["action": enumeration("Preview action.", values: ["open", "pause", "resume"], defaultValue: "open")]) { _, new in new },
+            title: StupidMirrorScreenResource.displayName,
             idempotent: true,
             metadata: Metadata(additionalFields: [
                 "ui": .object(["resourceUri": .string(StupidMirrorScreenResource.uri)]),
@@ -60,7 +61,7 @@ enum StupidMirrorMCPToolCatalog {
         tool("get_ui_tree", "Read the current device accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
         tool(
             "observe_screen",
-            "Observe the latest live frame and optional local Apple Vision OCR. Full hierarchical accessibility is opt-in because native /source can be slow and may disturb text focus.",
+            "Read screen text efficiently with include_image=false, include_ocr=true, include_accessibility=false. Local Apple Vision returns text and coordinates. Request images for visual ambiguity, icons or canvas content; request accessibility for missing semantics. Native /source can be slow and may disturb text focus.",
             deviceProperties.merging([
                 "include_image": boolean("Include the latest live mirror frame as PNG.", defaultValue: true),
                 "include_accessibility": boolean("Explicitly fetch and parse the full native accessibility hierarchy. Keep false for routine navigation.", defaultValue: false),
@@ -274,6 +275,7 @@ enum StupidMirrorMCPToolCatalog {
         _ name: String,
         _ description: String,
         _ properties: [String: Value] = [:],
+        title: String? = nil,
         required: [String] = [],
         readOnly: Bool = false,
         idempotent: Bool = false,
@@ -290,7 +292,7 @@ enum StupidMirrorMCPToolCatalog {
         }
         return Tool(
             name: name,
-            title: name.replacingOccurrences(of: "_", with: " ").capitalized,
+            title: title ?? name.replacingOccurrences(of: "_", with: " ").capitalized,
             description: description,
             inputSchema: .object(schema),
             annotations: .init(

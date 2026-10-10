@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>StupidMirror 手机屏幕</title>
+  <title>StupidMirror</title>
   <style>/*__STYLE__*/</style>
 </head>
 <body>
@@ -32,7 +32,8 @@
         <div class="empty-state-content">
           <div class="empty-symbol"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="8.5" y="3.5" width="15" height="25" rx="4"/><path d="M13 6.5h6M14 24.5h4"/></svg></div>
           <span id="empty-state-text">正在连接</span>
-          <span class="empty-hint">保持手机已连接并解锁</span>
+          <span id="empty-hint" class="empty-hint">保持手机已连接并解锁</span>
+          <button id="empty-retry" type="button" hidden>重试连接</button>
         </div>
       </div>
     </div>

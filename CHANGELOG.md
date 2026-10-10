@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.1 - 2026-10-10
+
+- Fix Codex initialization failing with JSON-RPC `-32603` when the client sends
+  object-valued experimental capabilities. Apply the compatibility fix to both
+  the bundled stdio helper and the authenticated Streamable HTTP endpoint.
+- Serialize complete MCP stdio messages under backpressure so concurrent image
+  responses cannot corrupt preview metadata or WebRTC signaling.
+- Keep supported hosts on local WebRTC, report signaling/first-frame errors,
+  bound automatic reconnects, and add a visible retry action with a short timeout.
+- Prefer local OCR for text reading in the device skill and MCP guidance; fetch
+  accessibility or images only when their additional evidence is needed.
+- Name the embedded phone panel **StupidMirror** instead of the tool action
+  **Show Screen**, and align the widget and resource display names.
+- Clarify that users can reconnect the plugin or start a new chat after updating;
+  restarting Codex does not repair a malformed-capability decoding failure.
+- Add regression coverage for raw MCP initialization, tool discovery, capability
+  preservation and HTTP authentication.
+
 ## 0.3.0 - 2026-10-10
 
 - Bundle a Codex plugin with one-click installation from MCP Automation settings.
