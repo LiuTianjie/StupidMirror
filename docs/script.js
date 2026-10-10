@@ -45,7 +45,7 @@ const chineseText = new Map([
   ["Standalone mirror", "独立镜像窗口"],
   ["True device proportions for debugging, capture, and demos.", "按真实设备比例展示，适合调试、录屏与演示。"],
   ["Multiple iPhones", "多台 iPhone"],
-  ["Sign in with Google, GitHub, or email, buy an SM- code on 链动小铺, then redeem it onto your account.", "用 Google、GitHub 或邮箱登录，在链动小铺购买 SM- 激活码，再兑换到该账号。"],
+  ["Enter an SM- activation code to unlock multiple devices. No sign-in required.", "输入 SM- 激活码即可解锁多设备功能，无需登录。"],
   ["Native speed", "原生速度"],
   ["Swift, AVFoundation, and CoreMediaIO — without a heavyweight browser shell.", "Swift + AVFoundation / CoreMediaIO，不套一层笨重的浏览器壳。"],
   ["Wireless freedom", "无线自由"],

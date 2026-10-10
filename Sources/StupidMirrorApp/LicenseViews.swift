@@ -36,13 +36,6 @@ struct LicenseActivationView: View {
 
             VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
                 licenseStatus
-                accountSection
-
-                if licenseManager.needsClaim {
-                    claimBanner
-                }
-
-                purchaseLinks
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text(store.t("license.code"))
@@ -50,7 +43,7 @@ struct LicenseActivationView: View {
                     TextField(store.t("license.code.placeholder"), text: $code)
                         .textFieldStyle(.roundedBorder)
                         .font(.body.monospaced())
-                        .disabled(licenseManager.authSession == nil)
+                        .disabled(licenseManager.isActivating || licenseManager.isSigningIn)
                         .onSubmit(submit)
                     Text(store.t("license.code.help"))
                         .font(.caption)
@@ -84,11 +77,22 @@ struct LicenseActivationView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.Palette.accent)
                     .disabled(
-                        licenseManager.authSession == nil
-                            || code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || licenseManager.isActivating
                             || licenseManager.isSigningIn
                     )
+                }
+
+                purchaseLinks
+
+                DisclosureGroup(store.t("license.account.optional")) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        accountSection
+                        if licenseManager.needsClaim {
+                            claimBanner
+                        }
+                    }
+                    .padding(.top, 8)
                 }
             }
             .padding(20)
@@ -210,7 +214,6 @@ struct LicenseActivationView: View {
                 Link(store.t("license.purchase.online"), destination: LicensePurchaseURLs.buyURL)
             }
             .font(.caption.weight(.medium))
-            .disabled(licenseManager.authSession == nil)
         }
         .padding(12)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
@@ -242,11 +245,12 @@ struct LicenseActivationView: View {
     }
 
     private func submit() {
-        guard !licenseManager.isActivating, licenseManager.authSession != nil else { return }
+        guard !licenseManager.isActivating, !licenseManager.isSigningIn,
+              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         errorMessage = nil
         Task { @MainActor in
             do {
-                try await store.redeemLicense(code: code)
+                try await store.activateLicense(code: code)
             } catch {
                 errorMessage = localizedActivationError(error)
             }

@@ -6,30 +6,24 @@ thumbnails, floating windows, diagnostics, settings, device removal, and
 non-control MCP operations remain available. That free one-device path does
 not require signing in.
 
-Activation unlocks two capabilities:
+Activation unlocks simultaneous mirroring and control of multiple devices.
+Without activation, one mirror and one control session remain available. If a
+second session is requested, the existing session keeps running and the license
+sheet offers direct code activation.
 
-- Mirroring multiple iPhones at the same time.
-- Controlling iPhones from the Mac, including control MCP tools.
+## Buy and activate
 
-If a second mirror is requested before activation, the existing mirror keeps
-running and the license sheet explains the device limit. The WDA agent may
-still be prepared on an unactivated installation because wireless video uses
-its H.264 stream (with MJPEG fallback), but taps, swipes, typing, buttons, app
-actions, screenshots, and UI-tree access remain blocked until activation.
+Enter an **SM-** activation code to unlock multiple devices. No sign-in is
+required to open the store, enter a code, or activate this Mac.
 
-## Buy, sign in, and redeem
-
-New purchases bind to a StupidMirror user account (`auth.uid()`), not to a Mac
-installation ID.
-
-1. Sign in with the existing **iTool** identity: **Google**, **GitHub**, or
-   **email** (Supabase Auth on `mkbeusztkzffnzjdwmqk.supabase.co`). There is
-   no second user database.
-2. Buy a StupidMirror **SM-** activation code on 链动小铺 using the replaceable
+1. Buy a StupidMirror **SM-** activation code on 链动小铺 using the replaceable
    in-app constant `LicensePurchaseURLs.buyURL`
    (<https://wzyp.cn/item/exords>).
-3. Paste the SM- code into the app. Redeem attaches that code to the same
-   `auth.uid()`.
+2. Paste the code into the app and choose **Activate**. Signed-out activation
+   binds the receipt to the current Mac installation.
+3. Account sign-in is optional: use the existing **iTool** Google / GitHub /
+   email identity to restore an account license or bind this Mac's license.
+   If already signed in, activation preserves account-based redemption.
 
 StupidMirror never redeems iTool `IT-` Pro codes. Buying iTool Pro does not
 activate mirroring; redeeming SM- does not grant iTool Pro. Only `SM-` codes
@@ -64,26 +58,24 @@ redeem here.
   days.
 - Activation codes are generated with 120 bits of CSPRNG entropy. Supabase
   stores only SHA-256 hashes of normalized codes, never the plaintext codes.
-- One live seat per code. Unused `available` codes redeem onto an account
-  after login. An already-activated Mac-bound code cannot be redeemed again;
+- One live seat per code. Unused `available` codes activate this Mac without login, or redeem
+  onto an account when already signed in. An already-activated Mac-bound code cannot be redeemed again;
   the signed-in owner claims it from the Keychain receipt instead.
 
 ## Existing Mac-bound receipts
 
-Builds through v0.2.x activated a code onto the Mac installation ID and stored
-a Keychain receipt. The cutover must not brick those receipts:
+Valid installation receipts continue working without signing in. Account binding
+is optional and one-way: possession of the receipt binds the existing activation
+to `auth.uid()` on the same row without minting a second seat. After optional
+binding, sign in to that account to restore its license on another Mac.
 
-1. A valid old receipt is honored without login at least until the user can
-   claim it. Free one-device mirroring also stays available without login.
-2. Claim is one-way: possession of that receipt binds the existing activation
-   to `auth.uid()` on the same row. It does not mint a second seat.
-3. After claim, the account is the principal. The Keychain receipt alone does
-   not keep paid features forever; grandfather the old receipt, then require
-   claim. New clients stop granting paid features from an unclaimed receipt
-   after 2026-12-02T00:00:00Z.
-4. v0.2.x `validate` / `activate` keep working during the grace period so old
-   clients do not break. New redeem still refuses an already-activated
-   Mac-bound code.
+v0.3.3 no longer expires a local installation receipt at the historical claim
+deadline. For existing servers, manually apply
+`supabase/licensing-code-activation.sql` before the former grace period ends.
+This additive migration removes the server deadline without changing code hashes,
+receipts, revocation, rate limits, or account ownership checks. It supports both
+historical schema layouts; do not re-run the greenfield schema on live data.
+The app release does not deploy this SQL automatically.
 
 ## Human follow-ups (iTool project)
 
@@ -93,13 +85,12 @@ Verified: SM tables and Edge Functions target the **iTool** Supabase project
 1. **Do not enable extra Auth providers** if Google / GitHub / email already
    work for iTool. Only add the redirect URL `stupidmirror://auth-callback`
    under Authentication > URL Configuration.
-2. Apply `supabase/licensing-account-cutover.sql` in the SQL editor (do not
-   re-run greenfield `licensing-schema.sql` against existing data).
-3. Deploy `supabase/functions/stupidmirror-license` (and keep admin function as
-   needed). Private schema + `service_role` RPCs stay private.
-
-
-5. When Alex sends a new SM 链动小铺 link, change only `LicensePurchaseURLs.buyURL`
+2. For an existing deployment, apply `supabase/licensing-code-activation.sql`
+   in the SQL editor. Do not re-run a greenfield schema or the historical
+   account cutover for this app update.
+3. This release does not change the deployed Edge Function. Installation
+   activation still uses its existing `activate` endpoint.
+4. When Alex sends a new SM 链动小铺 link, change only `LicensePurchaseURLs.buyURL`
    and the matching site button in `docs/index.html`.
 
 ## Generate activation codes
@@ -131,7 +122,7 @@ the same code.
 
 A normal uninstall/reinstall on the same Mac user keeps the Keychain record.
 Unclaimed Mac-bound receipts still restore that installation idempotently
-during the grace period.
+without signing in.
 
 Admin reset now revokes every live seat for that code (Mac-bound and
 account-bound) before making the hash available again. If the code was ever

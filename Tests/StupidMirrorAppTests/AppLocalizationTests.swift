@@ -81,6 +81,7 @@ final class AppLocalizationTests: XCTestCase {
             "license.purchase.help",
             "license.purchase.online",
             "license.signIn.google",
+            "license.account.optional",
             "license.signIn.github",
             "license.signIn.email",
             "license.signIn.password",

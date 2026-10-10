@@ -31,7 +31,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 
 同一个工作台也可以通过 **MCP** 交给 AI Agent：观察当前画面，用本地 OCR 或原生无障碍信息定位目标，执行操作，再检查结果。整个过程都能在 Mac 镜像窗口中看到。
 
-**无需登录，即可镜像和控制一台设备。** 账号激活后可同时连接多台设备。源码采用 PolyForm Noncommercial 许可证，商业用途需要单独授权，详见[许可证说明](#许可证)。
+**无需登录，即可镜像和控制一台设备。** 输入 SM- 激活码后可同时连接多台设备，无需登录。源码采用 PolyForm Noncommercial 许可证，商业用途需要单独授权，详见[许可证说明](#许可证)。
 
 ## 核心能力
 
@@ -204,6 +204,6 @@ open dist/StupidMirror.app
 
 StupidMirror 以 **source-available（源码可用）** 形式采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 发布，允许许可证约定的非商业用途，不属于 OSI 认可的开源许可证。商业用途需要单独书面授权，详见[商业授权说明](COMMERCIAL-LICENSE.md)。
 
-当前应用在未激活时允许一个镜像会话和一个控制会话。需要同时连接多台设备时，可使用 Google、GitHub 或邮箱登录，并兑换[官方商店](https://wzyp.cn/item/exords)提供的 `SM-` 激活码；不接受 iTool `IT-` 码。功能激活与商业授权是两件独立的事。
+当前应用在未激活时允许一个镜像会话和一个控制会话。需要同时连接多台设备时，直接输入[官方商店](https://wzyp.cn/item/exords)提供的 `SM-` 激活码即可，无需登录。账号登录仅用于按需恢复已有账号许可或绑定这台 Mac 的许可；不接受 iTool `IT-` 码。功能激活与商业授权是两件独立的事。
 
 第三方组件仍遵循各自许可证，详见 [NOTICE](NOTICE)。
