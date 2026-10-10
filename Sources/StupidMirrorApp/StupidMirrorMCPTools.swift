@@ -61,7 +61,7 @@ enum StupidMirrorMCPToolCatalog {
         tool("get_ui_tree", "Read the current device accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
         tool(
             "observe_screen",
-            "Observe the latest live frame and optional local Apple Vision OCR. Full hierarchical accessibility is opt-in because native /source can be slow and may disturb text focus.",
+            "Read screen text efficiently with include_image=false, include_ocr=true, include_accessibility=false. Local Apple Vision returns text and coordinates. Request images for visual ambiguity, icons or canvas content; request accessibility for missing semantics. Native /source can be slow and may disturb text focus.",
             deviceProperties.merging([
                 "include_image": boolean("Include the latest live mirror frame as PNG.", defaultValue: true),
                 "include_accessibility": boolean("Explicitly fetch and parse the full native accessibility hierarchy. Keep false for routine navigation.", defaultValue: false),

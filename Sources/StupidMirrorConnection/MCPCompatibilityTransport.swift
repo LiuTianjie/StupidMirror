@@ -2,11 +2,12 @@ import Foundation
 import Logging
 import MCP
 
-/// Adapts client initialization for Swift MCP SDK 0.12.1 without changing tool traffic.
-/// Remove once Client.Capabilities.experimental supports arbitrary JSON values:
+/// Works around Swift MCP SDK 0.12.1 capability decoding and reentrant stdio writes.
 /// https://github.com/modelcontextprotocol/swift-sdk/issues/287
+/// https://github.com/modelcontextprotocol/swift-sdk/issues/263
 public actor MCPCompatibilityTransport: Transport {
     private let wrapped: any Transport
+    private var pendingSend: (id: UUID, task: Task<Void, Error>)?
 
     public nonisolated let logger: Logger
 
@@ -24,7 +25,23 @@ public actor MCPCompatibilityTransport: Transport {
     }
 
     public func send(_ data: Data) async throws {
-        try await wrapped.send(data)
+        // The SDK yields when stdout fills, allowing another send to splice its
+        // bytes into a partially written JSON line. Queue whole messages before
+        // yielding. An individual request's cancellation must not truncate a line.
+        let previous = pendingSend?.task
+        let id = UUID()
+        let task = Task { [wrapped] in
+            _ = try? await previous?.value
+            try await wrapped.send(data)
+        }
+        pendingSend = (id, task)
+        do {
+            try await task.value
+            if pendingSend?.id == id { pendingSend = nil }
+        } catch {
+            if pendingSend?.id == id { pendingSend = nil }
+            throw error
+        }
     }
 
     public func receive() -> AsyncThrowingStream<Data, Error> {

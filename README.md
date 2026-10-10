@@ -97,7 +97,7 @@ Mirror gestures reproduce what the mouse did: a slow drag replays its recorded p
 
 **Interaction and annotation:** Enable **操作** to connect device control, then tap or drag the preview. AI actions continue to use the existing MCP tools. **标注** freezes the displayed frame, lets you draw regions and add a note, then sends the image, device, capture time and coordinates to the current Codex chat. Drawing annotations never sends gestures to the phone.
 
-Video uses encrypted local WebRTC without a cloud relay. Unsupported hosts fall back to native-resolution PNG; annotation delivery requires the host’s image-message capability.
+Video uses encrypted local WebRTC without a cloud relay. Hosts without a WebRTC API use native-resolution PNG; WebRTC failures show a reason and a retry button instead of silently switching to screenshots; annotation delivery requires the host’s image-message capability.
 
 Installation errors appear in the app and can be retried. Reconnect the plugin or start a new chat if tools have not loaded. StupidMirror 0.3.1 fixes the `-32603` initialization error caused by experimental client capabilities; restarting Codex does not fix that error in older builds. The embedded panel is named **StupidMirror**. Verify installation, discovery and control separately: `list_devices`, then `observe_screen`, then an authorized action followed by observation.
 
@@ -137,7 +137,7 @@ Try an instruction such as:
 
 - Pass `device_id` when more than one device is present.
 - `tap_text` accepts up to 16 candidate labels. By default it runs one local OCR pass, then at most one shared native hierarchy snapshot if needed. `find_any_element` performs the lookup without tapping.
-- `observe_screen` does not fetch accessibility by default. Use `include_ocr` for local text recognition and `include_accessibility` for explicit hierarchy inspection.
+- For screen text, use `observe_screen(include_image=false, include_ocr=true, include_accessibility=false)` first. Request accessibility only when OCR lacks the required semantics or is ambiguous; request an image when visual evidence is needed.
 - For icons, canvases, or custom controls, request `include_image: true`, inspect the screenshot, then use an observed coordinate.
 - Pass the observation UUID to `tap_element` to reject stale element IDs after the screen changes.
 - On iOS, accessibility snapshots can disturb focused text fields. After focusing, use `replace_text` or `clear_text` directly; use `type_text` to append. Replacement and clearing verify the resulting native value.

@@ -6,6 +6,49 @@ import XCTest
 final class MCPCompatibilityTransportTests: XCTestCase, @unchecked Sendable {
     private let initialize = Data(#"{"jsonrpc":"2.0","id":"codex-init","method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"codex","version":"test"},"capabilities":{"experimental":{"codex/auth-change":{},"openai/visibility":{"enabled":true},"legacy":"retained"},"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}},"roots":{"listChanged":true}}}}"#.utf8)
 
+    func testConcurrentLargeStdioResponsesRemainWholeJSONLinesUnderBackpressure() async throws {
+        let input = Pipe(), output = Pipe()
+        let transport = await MCPCompatibilityTransport(StdioTransport(
+            input: .init(rawValue: input.fileHandleForReading.fileDescriptor),
+            output: .init(rawValue: output.fileHandleForWriting.fileDescriptor)
+        ))
+        try await transport.connect()
+        let reader = Task.detached {
+            var data = Data()
+            // Make the pipe fill so SDK sends suspend mid-message at EAGAIN.
+            try await Task.sleep(for: .milliseconds(50))
+            while let chunk = try output.fileHandleForReading.read(upToCount: 4096), !chunk.isEmpty {
+                data.append(chunk)
+                try await Task.sleep(for: .milliseconds(1))
+            }
+            return data
+        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for id in 0..<8 {
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "jsonrpc": "2.0", "id": id,
+                    "result": ["frame": String(repeating: "frame-\(id)-", count: 20_000)]
+                ])
+                group.addTask { try await transport.send(data) }
+            }
+            try await group.waitForAll()
+        }
+        try output.fileHandleForWriting.close()
+        let data = try await reader.value
+        await transport.disconnect()
+        try input.fileHandleForWriting.close()
+        try input.fileHandleForReading.close()
+        try output.fileHandleForReading.close()
+        let lines = data.split(separator: 10)
+        XCTAssertEqual(lines.count, 8)
+        var ids = Set<Int>()
+        for line in lines {
+            let response = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line)) as? [String: Any])
+            ids.insert(try XCTUnwrap(response["id"] as? Int))
+        }
+        XCTAssertEqual(ids, Set(0..<8))
+    }
+
     func testStructuredExperimentalCapabilitiesNoLongerFailSDKDecoding() throws {
         XCTAssertThrowsError(try JSONDecoder().decode(Request<Initialize>.self, from: initialize))
         let compatible = MCPCompatibilityTransport.compatibleInitialization(initialize)

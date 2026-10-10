@@ -97,7 +97,7 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 **直接操作和标注：** 点击预览工具栏的 **操作**，控制连接就绪后可点按、拖动手机画面；AI 仍可通过 MCP 点击、滑动、输入和读取页面。点击 **标注** 会冻结当前画面，支持框选多个区域、撤销、填写说明，再将截图、设备、时间和坐标发送到当前 Codex 聊天。标注模式不会把拖动发送给手机。
 
-视频在本机通过加密 WebRTC 传输，不使用云端中转。宿主不支持视频时退回原分辨率 PNG；正式聊天的标注发送取决于宿主的图片消息能力。
+视频在本机通过加密 WebRTC 传输，不使用云端中转。宿主没有 WebRTC API 时使用原分辨率 PNG；WebRTC 连接失败会显示原因和重试按钮，不会悄悄改用截图轮询；正式聊天的标注发送取决于宿主的图片消息能力。
 
 安装失败时页面会显示原因，可处理后重试。工具未加载时，重新连接插件或新建聊天。StupidMirror 0.3.1 修复了扩展能力字段导致的 `-32603` 初始化错误；旧版遇到此错误时，重启 Codex 无法解决。嵌入面板统一显示为 **StupidMirror**。**插件安装成功、设备已发现、真机可操作是三个不同状态**：依次用 `list_devices`、`observe_screen` 和一次授权操作后的观察确认。
 
@@ -137,7 +137,7 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 - 存在多台设备时，明确传入 `device_id`。
 - `tap_text` 一次接受最多 16 个候选文案，默认先做一次本地 OCR，必要时再共享一次原生 UI 层级快照。`find_any_element` 只查找，不点击。
-- `observe_screen` 默认不抓取无障碍树。通过 `include_ocr` 启用本地文字识别，只在明确需要检查层级时使用 `include_accessibility`。
+- 读取文字时优先用 `observe_screen(include_image=false, include_ocr=true, include_accessibility=false)`；OCR 缺少所需语义或有歧义时再读取无障碍树，需要视觉判断时才返回图片。
 - 遇到图标、画布或自定义控件，使用 `include_image: true` 获取截图，观察后再选择目标坐标。
 - 向 `tap_element` 传入 observation UUID，可在界面变化后拒绝过期元素 ID。
 - iOS 无障碍快照可能影响已聚焦的输入框。聚焦后直接调用 `replace_text` 或 `clear_text`；追加内容使用 `type_text`。替换和清空都会校验最终的原生值。

@@ -69,6 +69,8 @@ let controlMode = false;
 let pointer: { id:number; start:NormalizedPoint; x:number; y:number; started:number; deviceId?:string; width?:number; height?:number } | undefined;
 const emptyState = document.getElementById('empty-state')!;
 const emptyText = document.getElementById('empty-state-text')!;
+const emptyHint = document.getElementById('empty-hint')!;
+const retryButton = document.getElementById('empty-retry')! as HTMLButtonElement;
 const cursor = document.getElementById('cursor')!;
 const stage = document.getElementById('stage')!;
 const model = document.getElementById('model')!;
@@ -106,6 +108,8 @@ let dimensions: Size | undefined;
 let viewport: Size | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let failures = 0;
+let pollBlocked = false;
+let pollRequest: AbortController | undefined;
 const cursorEffects = new Set<CursorEffect>();
 let requestedFullscreen = false;
 let connecting: Promise<void> | undefined;
@@ -148,7 +152,15 @@ const liveVideo = createVideo(app, video, {
     image.hidden = true; video.hidden = false; device.hidden = screen.hidden = false; emptyState.hidden = true;
     root.dataset.transport = 'webrtc'; setLive('live'); syncTools();
   },
-  stopped: () => { root.dataset.transport = 'fallback'; if (!annotations.active) { clearFrame(); setLive('offline'); showEmpty('unavailable'); schedule(0); } },
+  stopped: (reason, retrying) => {
+    root.dataset.transport = 'webrtc-error';
+    if (!annotations.active) {
+      clearFrame();
+      pollBlocked = !retrying;
+      setLive('offline'); showConnectionError(reason, retrying);
+      schedule(1000);
+    }
+  },
   fps: value => { root.dataset.videoFps = String(value); if (dimensions) liveText.title = `${dimensions.width} × ${dimensions.height} · ${value} fps`; },
 });
 const annotations = createAnnotations(app, {
@@ -164,6 +176,7 @@ const annotations = createAnnotations(app, {
 function syncTools() {
   const paused = root.dataset.live === 'paused';
   tools.refresh.disabled = acting || annotations.active;
+  retryButton.disabled = tools.refresh.disabled;
   picker.disabled = acting || annotations.active;
   tools.pause.disabled = acting || annotations.active || !selectedDeviceId;
   tools.pause.title = tools.pause.ariaLabel = previewPaused ? '继续预览' : '暂停预览';
@@ -183,6 +196,20 @@ function syncTools() {
 function showEmpty(state: EmptyState) {
   emptyState.dataset.state = state;
   emptyText.textContent = EMPTY_TEXT[state];
+  emptyHint.textContent = '保持手机已连接并解锁';
+  retryButton.hidden = !['offline', 'unavailable'].includes(state);
+}
+
+function showConnectionError(reason: string, retrying = false) {
+  if (!image.src && !liveVideo.active) { emptyState.hidden = false; device.hidden = screen.hidden = true; }
+  if (previewPaused) {
+    showEmpty(emptyState.dataset.state === 'locked' ? 'locked' : 'authentication');
+    emptyHint.textContent = reason; retryButton.hidden = false; return;
+  }
+  showEmpty('unavailable');
+  emptyText.textContent = reason;
+  emptyHint.textContent = retrying ? '正在自动重新连接…' : '点击重试，重新建立预览连接';
+  retryButton.hidden = false;
 }
 
 function setLive(state: LiveState) {
@@ -383,7 +410,7 @@ function consume(value: unknown) {
     }
   }
   if (preview.device?.id && preview.device.id !== selectedDeviceId) {
-    clearFrame(); selectedDeviceId = preview.device.id;
+    clearFrame(); liveVideo.retry(); selectedDeviceId = preview.device.id;
     syncDeviceSelection();
   }
   if (preview.device?.platform && preview.device.platform !== platform) {
@@ -427,7 +454,8 @@ function consume(value: unknown) {
       emptyText.textContent = preview.message;
     }
   } else if (preview.frame_available === true || preview.frame) {
-    setLive('live');
+    if (liveVideo.active || image.src || preview.frame) setLive('live');
+    else if (root.dataset.transport !== 'webrtc-error') setLive('connecting');
   }
   const frame = preview.frame;
   if (frame && validSize(frame) && Number.isInteger(frame.seq) && frame.seq > frameSeq
@@ -464,7 +492,7 @@ function consume(value: unknown) {
 }
 
 function schedule(delay: number) {
-  if (!visible() || timer) return;
+  if (!visible() || timer || pollBlocked) return;
   timer = setTimeout(() => {
     timer = undefined;
     void poll();
@@ -472,31 +500,43 @@ function schedule(delay: number) {
 }
 
 async function poll() {
-  if (!visible() || inFlight) return;
+  if (!visible() || inFlight || pollBlocked) return;
   inFlight = true;
   const started = performance.now();
   let nextDelay = FRAME_INTERVAL;
+  const controller = new AbortController(); pollRequest = controller;
   try {
     if (!ready) await connect();
     if (!visible()) return;
     const generation = frameGeneration;
     const result = await app.callServerTool({
       name: 'screen_frame',
-      arguments: { after_seq: frameSeq, ...(liveVideo.available ? { include_frame: !liveVideo.active && !liveVideo.pending && root.dataset.transport === 'fallback' && !annotations.active } : {}), ...(selectedDeviceId ? { device_id: selectedDeviceId } : {}) },
-    }, { timeout: REQUEST_TIMEOUT });
+      arguments: { after_seq: frameSeq, ...(liveVideo.available ? { include_frame: false } : {}), ...(selectedDeviceId ? { device_id: selectedDeviceId } : {}) },
+    }, { timeout: REQUEST_TIMEOUT, signal: controller.signal });
     if (!visible() || generation !== frameGeneration) return;
-    if (result.isError) throw new Error('preview unavailable');
+    if (result.isError) throw new Error((result.structuredContent as {error?:{message?:string}})?.error?.message ?? '预览服务不可用');
     consume(result.structuredContent);
     failures = 0;
     const preview = result.structuredContent as Partial<Preview> | undefined;
     nextDelay = liveVideo.active || liveVideo.pending || annotations.active ? VIDEO_STATE_INTERVAL : preview?.paused || preview?.frame_available === false
       ? 1000 : Math.max(0, FRAME_INTERVAL - (performance.now() - started));
-  } catch {
+  } catch (error) {
+    if (controller.signal.aborted) return;
     failures += 1;
+    pollBlocked = failures >= 3;
     nextDelay = Math.min(2000, 500 * failures);
-    retainFrame();
-    if (failures > 1 && root.dataset.live !== 'paused') setLive('offline');
+    if (!liveVideo.active) {
+      retainFrame();
+      if (root.dataset.live !== 'paused') {
+        setLive('offline');
+        showConnectionError(error instanceof Error ? error.message : '预览连接失败', !pollBlocked);
+      }
+    } else if (pollBlocked) {
+      liveText.textContent = '状态连接中断';
+      liveText.title = error instanceof Error ? error.message : '点击刷新重新连接';
+    }
   } finally {
+    if (pollRequest === controller) pollRequest = undefined;
     inFlight = false;
     schedule(nextDelay);
   }
@@ -504,11 +544,12 @@ async function poll() {
 
 async function act(name: ToolName) {
   if (acting || disposed || tools[name].disabled) return;
-  const previousEmptyState = emptyState.dataset.state as EmptyState;
   if (name === 'refresh') {
-    liveVideo.close(); root.dataset.transport = 'connecting';
+    pollRequest?.abort();
+    failures = 0; pollBlocked = true;
+    liveVideo.retry(); root.dataset.transport = 'connecting';
     frameGeneration++; // Ignore a poll from before this reconnect click.
-    if (!image.src) showEmpty('connecting');
+    if (!image.src) { clearFrame(); if (!previewPaused) setLive('connecting'); showEmpty('connecting'); }
   }
   acting = true;
   tools[name].dataset.busy = 'true';
@@ -518,21 +559,25 @@ async function act(name: ToolName) {
     const result = await app.callServerTool({
       name: 'screen_action',
       arguments: { action: name === 'pause' ? (previewPaused ? 'resume' : 'pause') : name, ...(selectedDeviceId ? { device_id: selectedDeviceId } : {}) },
-    }, { timeout: ACTION_TIMEOUT });
+    }, { timeout: name === 'refresh' ? 10000 : ACTION_TIMEOUT });
     const data = result.structuredContent as (Partial<Preview> & { service_ready?: boolean; error?: { code?: string; message?: string } }) | undefined;
     if (result.isError || data?.error) {
-      if (name === 'refresh' && !image.src) showEmpty(previousEmptyState);
+      if (name === 'refresh') { pollBlocked = true; if (!previewPaused) setLive('offline'); showConnectionError(data?.error?.message ?? '预览连接失败'); }
       notify(data?.error?.message ?? FAILED[data?.error?.code ?? ''] ?? '操作未完成，请重试', true);
     } else {
       // A refresh answers with the new stream identity; take the next frame at once.
+      if (name === 'refresh') pollBlocked = false;
       consume(data);
       notify(name === 'refresh' && data?.service_ready === false ? '未连接到手机，请确认连接后重试' : DONE[name], name === 'refresh' && data?.service_ready === false);
       if (timer) clearTimeout(timer);
       timer = undefined;
       schedule(0);
     }
-  } catch {
-    if (name === 'refresh' && !image.src) showEmpty(previousEmptyState);
+  } catch (error) {
+    if (name === 'refresh') {
+      pollBlocked = true; if (!previewPaused) setLive('offline');
+      showConnectionError(error instanceof Error ? error.message : '预览连接失败');
+    }
     notify('操作未完成，请重试', true);
   } finally {
     acting = false;
@@ -540,12 +585,15 @@ async function act(name: ToolName) {
     syncTools();
   }
 }
+const retryPreview = () => { void act('refresh'); };
+retryButton.addEventListener('click', retryPreview);
 picker.addEventListener('click', pickerClick);
 picker.addEventListener('keydown', pickerKeydown);
 deviceMenu.addEventListener('keydown', menuKeydown);
 document.addEventListener('pointerdown', outsidePointer);
 async function selectDevice(id: string) {
   if (!id || acting) return;
+  pollRequest?.abort(); failures = 0; pollBlocked = false; liveVideo.retry();
   selectedDeviceId = id; viewport = undefined; streamId = undefined; platform = undefined;
   syncDeviceSelection();
   clearFrame(); setLive('connecting');
@@ -682,6 +730,8 @@ function dispose() {
   controlButton.removeEventListener('click', toggleControl);
   annotateButton.removeEventListener('click', toggleAnnotations);
   for (const [name, handler] of pointerHandlers) screen.removeEventListener(name, handler);
+  pollRequest?.abort();
+  retryButton.removeEventListener('click', retryPreview);
   picker.removeEventListener('click', pickerClick);
   picker.removeEventListener('keydown', pickerKeydown);
   deviceMenu.removeEventListener('keydown', menuKeydown);

@@ -3,7 +3,7 @@ import type { App } from '@modelcontextprotocol/ext-apps';
 type Size = { width: number; height: number };
 type Answer = { type?: RTCSdpType; sdp?: string; peer_id?: string; error?: { message?: string } };
 export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
-  ready: (size: Size) => void; stopped: () => void; fps: (value: number) => void;
+  ready: (size: Size) => void; stopped: (reason: string, retrying: boolean) => void; fps: (value: number) => void;
 }) {
   let connection: RTCPeerConnection | undefined;
   let peerId: string | undefined;
@@ -12,6 +12,10 @@ export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
   let active = false;
   let pending = false;
   let retryAfter = 0;
+  let failures = 0;
+  let request: AbortController | undefined;
+  let firstFrameTimer: ReturnType<typeof setTimeout> | undefined;
+  let disconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let frameCallback: number | undefined;
   let fpsStarted = 0, rendered = 0;
   const available = typeof RTCPeerConnection !== 'undefined';
@@ -21,13 +25,22 @@ export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
   }
   function close() {
     generation++;
+    request?.abort(); request = undefined;
+    clearTimeout(firstFrameTimer); firstFrameTimer = undefined;
+    clearTimeout(disconnectTimer); disconnectTimer = undefined;
     if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
     frameCallback = undefined;
     const old = connection; connection = undefined;
     old?.close();
     if (peerId) finishPeer(peerId);
     peerId = target = undefined; active = pending = false;
-    video.srcObject = null; video.hidden = true;
+    video.onloadeddata = null; video.srcObject = null; video.hidden = true;
+  }
+  function retry() { close(); failures = 0; retryAfter = 0; }
+  function fail(reason: string) {
+    close(); failures++;
+    retryAfter = performance.now() + Math.min(3000, failures * 1000);
+    callbacks.stopped(reason, failures < 3);
   }
   function countFrame(now: number) {
     if (!active) return;
@@ -41,54 +54,65 @@ export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
     frameCallback = video.requestVideoFrameCallback?.(countFrame);
   }
   async function connect(deviceId: string) {
-    if (!available || pending || (target === deviceId && connection) || performance.now() < retryAfter) return;
+    if (!available || pending || failures >= 3 || (target === deviceId && connection) || performance.now() < retryAfter) return;
     close(); target = deviceId; pending = true;
     const ownGeneration = generation;
-    const peer = new RTCPeerConnection({ iceServers: [] });
-    connection = peer;
-    peer.addTransceiver('video', { direction: 'recvonly' });
-    peer.ontrack = event => {
-      if (generation !== ownGeneration) return;
-      video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
-      void video.play().catch(() => {});
-    };
-    video.onloadeddata = () => {
-      if (generation !== ownGeneration || !video.videoWidth) return;
-      active = true; pending = false; retryAfter = 0;
-      callbacks.ready({ width: video.videoWidth, height: video.videoHeight });
-      fpsStarted = performance.now(); rendered = 0;
-      if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
-      frameCallback = video.requestVideoFrameCallback?.(countFrame);
-    };
-    peer.onconnectionstatechange = () => {
-      if (generation !== ownGeneration) return;
-      if (['failed', 'disconnected', 'closed'].includes(peer.connectionState)) {
-        close(); retryAfter = performance.now() + 3000; callbacks.stopped();
-      }
-    };
+    let stage = '视频初始化';
     try {
+      const peer = new RTCPeerConnection({ iceServers: [] });
+      connection = peer;
+      const controller = new AbortController(); request = controller;
+      peer.addTransceiver('video', { direction: 'recvonly' });
+      peer.ontrack = event => {
+        if (generation !== ownGeneration) return;
+        video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
+        void video.play().catch(error => { if (generation === ownGeneration) fail(`视频播放失败：${error.message}`); });
+      };
+      video.onloadeddata = () => {
+        if (generation !== ownGeneration || !video.videoWidth) return;
+        clearTimeout(firstFrameTimer); firstFrameTimer = undefined;
+        active = true; pending = false; retryAfter = 0; failures = 0;
+        callbacks.ready({ width: video.videoWidth, height: video.videoHeight });
+        fpsStarted = performance.now(); rendered = 0;
+        if (frameCallback !== undefined) video.cancelVideoFrameCallback?.(frameCallback);
+        frameCallback = video.requestVideoFrameCallback?.(countFrame);
+      };
+      peer.onconnectionstatechange = () => {
+        if (generation !== ownGeneration) return;
+        clearTimeout(disconnectTimer); disconnectTimer = undefined;
+        if (peer.connectionState === 'failed') fail('本机视频连接失败');
+        // ICE can briefly disconnect when a panel or network interface changes.
+        // Give the existing connection time to recover before replacing it.
+        else if (peer.connectionState === 'disconnected') disconnectTimer = setTimeout(() => {
+          if (generation === ownGeneration && peer.connectionState === 'disconnected') fail('本机视频连接已断开');
+        }, 3000);
+      };
+      stage = '本机连接协商';
       await peer.setLocalDescription(await peer.createOffer());
       await new Promise<void>((resolve, reject) => {
         if (peer.iceGatheringState === 'complete') { resolve(); return; }
         const timer = setTimeout(() => { cleanup(); reject(new Error('ICE gathering timed out')); }, 6000);
         const changed = () => { if (peer.iceGatheringState === 'complete') { cleanup(); resolve(); } };
-        const cleanup = () => { clearTimeout(timer); peer.removeEventListener('icegatheringstatechange', changed); };
+        const aborted = () => { cleanup(); reject(new Error('Cancelled')); };
+        const cleanup = () => { clearTimeout(timer); peer.removeEventListener('icegatheringstatechange', changed); controller.signal.removeEventListener('abort', aborted); };
         peer.addEventListener('icegatheringstatechange', changed);
+        controller.signal.addEventListener('abort', aborted, { once: true });
       });
       if (generation !== ownGeneration) return;
-      const result = await app.callServerTool({ name: 'screen_signal', arguments: { action: 'offer', device_id: deviceId, sdp: peer.localDescription!.sdp } }, { timeout: 15000 });
+      stage = '视频信令';
+      const result = await app.callServerTool({ name: 'screen_signal', arguments: { action: 'offer', device_id: deviceId, sdp: peer.localDescription!.sdp } }, { timeout: 15000, signal: controller.signal });
       const answer = result.structuredContent as Answer;
       if (generation !== ownGeneration) { if (answer?.peer_id) finishPeer(answer.peer_id); return; }
       if (result.isError || !answer?.sdp || !answer.peer_id) throw new Error(answer?.error?.message ?? 'Video connection failed');
       peerId = answer.peer_id;
       await peer.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
-      // A completed signaling exchange is not proof that a frame was decoded.
-      setTimeout(() => {
-        if (generation === ownGeneration && !active) { close(); retryAfter = performance.now() + 5000; callbacks.stopped(); }
+      // Signaling/ICE success is not proof that a frame was decoded.
+      firstFrameTimer = setTimeout(() => {
+        if (generation === ownGeneration && !active) fail(`视频首帧超时（${peer.connectionState}）`);
       }, 8000);
-    } catch {
-      if (generation === ownGeneration) { close(); retryAfter = performance.now() + 5000; callbacks.stopped(); }
+    } catch (error) {
+      if (generation === ownGeneration) fail(`${stage}失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { available, connect, close, get active() { return active; }, get pending() { return pending; } };
+  return { available, connect, close, retry, get active() { return active; }, get pending() { return pending; } };
 }
