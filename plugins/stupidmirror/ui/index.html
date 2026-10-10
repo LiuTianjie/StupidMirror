@@ -38,9 +38,15 @@
       </div>
     </div>
     <section id="annotation-editor" aria-label="截图标注" hidden>
-      <div class="annotation-heading"><span id="annotation-count">拖动框选要讨论的区域</span><button id="annotation-undo" type="button">撤销</button></div>
-      <textarea id="annotation-note" aria-label="标注说明" placeholder="说明你希望 Codex 查看或操作什么" rows="2" maxlength="2000"></textarea>
-      <div class="annotation-footer"><span id="annotation-hint">画面已冻结</span><button id="annotation-cancel" type="button">返回实时画面</button><button id="annotation-send" type="button">发送给 Codex</button></div>
+      <div class="annotation-heading">
+        <span id="annotation-count">拖动框选要讨论的区域</span>
+        <div class="annotation-actions"><button id="annotation-undo" type="button" title="撤销上一次框选、移动、缩放或删除">撤销</button><button id="annotation-delete" type="button" title="删除选中的框">删除</button><button id="annotation-cancel" type="button" title="放弃当前标注，返回实时画面">退出标注</button></div>
+      </div>
+      <div class="annotation-compose">
+        <textarea id="annotation-note" aria-label="标注说明" aria-keyshortcuts="Meta+Enter Control+Enter" placeholder="给 Codex 的说明（选填）" rows="1" maxlength="2000"></textarea>
+        <button id="annotation-send" type="button" aria-label="发送给 Codex" title="发送截图和说明给 Codex（⌘↵）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button>
+      </div>
+      <div class="annotation-help"><div id="annotation-hint" role="status">空白处框选 · 框内拖动 · 边角缩放</div><span class="annotation-shortcut" aria-hidden="true">⌘↵ 发送</span></div>
     </section>
     <div id="toast" role="status" aria-live="polite" hidden></div>
     <nav id="toolbar" aria-label="手机工具">

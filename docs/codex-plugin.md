@@ -1,6 +1,6 @@
 # Codex plugin / Codex 插件
 
-Available in StupidMirror 0.3.2 (bundled plugin 0.2.2).
+Available in StupidMirror 0.3.4 (bundled plugin 0.2.3).
 
 ## Connect / 连接
 
@@ -23,14 +23,19 @@ Available in StupidMirror 0.3.2 (bundled plugin 0.2.2).
 - **操作:** explicitly enable control, then click to tap or drag to swipe. Device
   setup must finish first. This mode currently supports taps and drags; native
   mirror keyboard, long-press and multi-touch features remain separate.
-- **标注:** freeze the current frame, draw up to eight numbered rectangles, add a
-  note, and send it to the current chat. The payload includes a PNG, device ID,
-  time, image dimensions, and normalized/pixel regions. Drawing sends no taps.
-- **AI tools:** observe → act → observe. Annotation coordinates belong to an older
-  frozen frame; always reobserve before acting if the page may have changed.
+- **标注:** freeze the current frame and draw up to eight numbered rectangles in
+  empty space. Drag inside a box to move it, or use its edges and eight handles to
+  resize. Delete the selected box or undo the last edit. The compact composer
+  stays below the image and sends only the marked PNG and note to the current
+  chat. Use Command-Enter or Control-Enter to send; plain Enter inserts a newline.
+  Drawing sends no taps.
+- **AI tools:** observe → act → observe. An annotation shows a frozen frame;
+  always reobserve before acting if the page may have changed.
 
-「操作」开启后才会向手机发送点击或拖动。「标注」会冻结当前画面，支持最多八个编号框、
-撤销和文字说明；点击发送后，截图及设备、时间、坐标进入当前聊天。标注期间不会误触手机。
+「操作」开启后才会向手机发送点击或拖动。「标注」会冻结当前画面，支持最多八个编号框。
+空白处拖动新建，框内拖动移动，拖动边缘和角点缩放；支持删除选中框与撤销每次编辑。
+输入栏位于画面下方，只把标注截图和说明发到当前聊天。⌘＋回车或 Ctrl＋回车发送，
+普通回车换行；输入法选字期间不会误发送。标注期间不会误触手机。
 发送失败保留草稿，不会自动重复提交；回到实时画面可继续查看手机。
 
 ## Video and privacy / 视频与隐私
@@ -77,3 +82,7 @@ annotated images and notes arrived, and authorized device navigation and text
 input succeeded. The 0.3.2 changes add error classification and preservation;
 widget tests cover those paths. This does not prove that reopening repairs a
 host-owned composer binding in an older chat, or validate every manual gesture.
+
+The 0.3.4 annotation changes passed local browser interaction checks at narrow,
+wide and short viewport sizes, plus widget regression tests. These checks used
+a local host fixture; they do not establish real Codex delivery for this version.

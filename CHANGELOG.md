@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.4 - 2026-10-11
+
+- Move existing annotation boxes by dragging inside them instead of creating
+  nested selections. Resize from any edge or corner, with image bounds enforced.
+- Add selection deletion and undo for creation, movement, resizing and deletion.
+- Keep the compact annotation composer below the image at every window width;
+  grow multiline notes to a bounded height without covering the preview.
+- Send only the marked screenshot and note, without redundant device, timestamp
+  or coordinate metadata. Support Command-Enter and Control-Enter to send, while
+  plain Enter inserts a newline and IME composition cannot trigger submission.
+- Bundle Codex plugin 0.2.3 and extend interaction and message regression coverage.
+
 ## 0.3.3 - 2026-10-10
 
 - Restore activation by SM- code without signing in: enable code entry, purchase

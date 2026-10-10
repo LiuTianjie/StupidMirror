@@ -23,8 +23,8 @@ The app may process:
 
 Capture and OCR stay on the Mac. When you enable MCP, an external AI client can
 receive requested screenshots, OCR results, device identifiers, and action results.
-In Codex, sending an annotation includes a frozen PNG, note, selected regions,
-device identity, and capture time in the current chat. That client's model provider
+In Codex, sending an annotation includes a frozen PNG with the selected regions
+drawn on it and your note in the current chat. That client's model provider
 and data settings govern the information it receives.
 
 The embedded preview uses H.264 over encrypted WebRTC between the local app and

@@ -92,7 +92,7 @@ const tools: Record<ToolName, HTMLButtonElement> = {
   pause: document.getElementById('tool-pause') as HTMLButtonElement,
 };
 const app = new App(
-  { name: 'StupidMirror', version: '0.2.2' },
+  { name: 'StupidMirror', version: '0.2.3' },
   { availableDisplayModes: ['fullscreen'] },
   { autoResize: false },
 );
@@ -286,6 +286,7 @@ function fitFrame() {
   const cornerRatio = platform === 'ios' ? .14 : platform === 'android' ? .06 : .035;
   device.style.setProperty('--screen-radius', `${Math.min(displayWidth, displayHeight) * cornerRatio}px`);
   device.dataset.orientation = size.width > size.height ? 'landscape' : 'portrait';
+  if (annotations.active) annotations.render();
 }
 
 function setDeviceMenu(open: boolean, focus = false) {
@@ -641,7 +642,7 @@ function toggleAnnotations() {
   if (annotateButton.disabled) return;
   if (annotations.active) { annotations.end(); return; }
   if (!dimensions || !selectedDeviceId) return;
-  try { annotations.begin(liveVideo.active ? video : image, dimensions, selectedDeviceId, model.textContent ?? '手机'); }
+  try { annotations.begin(liveVideo.active ? video : image, dimensions); }
   catch { notify('当前没有可标注的画面，请等待连接', true); }
 }
 function normalizedPoint(event: PointerEvent): NormalizedPoint {
@@ -655,8 +656,18 @@ function pointerDown(event: PointerEvent) {
   screen.setPointerCapture(event.pointerId);
   if (annotations.active) annotations.pointerDown(point);
 }
-function pointerMove(event: PointerEvent) { if (pointer?.id === event.pointerId && annotations.active) annotations.pointerMove(normalizedPoint(event)); }
-function pointerCancel() { pointer = undefined; annotations.pointerCancel(); }
+function pointerMove(event: PointerEvent) {
+  if (!annotations.active || (pointer && pointer.id !== event.pointerId)) return;
+  const point = normalizedPoint(event);
+  if (pointer) annotations.pointerMove(point);
+  else annotations.pointerHover(point);
+}
+function pointerCancel() {
+  const id = pointer?.id; pointer = undefined;
+  if (id !== undefined && screen.hasPointerCapture(id)) screen.releasePointerCapture(id);
+  annotations.pointerCancel();
+}
+function lostPointerCapture(event: PointerEvent) { if (pointer?.id === event.pointerId) pointerCancel(); }
 function pointerUp(event: PointerEvent) {
   if (!pointer || pointer.id !== event.pointerId) return;
   const start = pointer; pointer = undefined;
@@ -675,7 +686,7 @@ function pointerUp(event: PointerEvent) {
     if (result.isError) notify((result.structuredContent as {error?:{message?:string}})?.error?.message ?? '操作未完成，请先查看当前画面',true);
   }).catch(() => notify('操作结果未确认，请先查看画面，避免重复点击',true)).finally(() => {acting=false;syncTools();});
 }
-const pointerHandlers = [['pointerdown',pointerDown],['pointermove',pointerMove],['pointerup',pointerUp],['pointercancel',pointerCancel]] as const;
+const pointerHandlers = [['pointerdown',pointerDown],['pointermove',pointerMove],['pointerup',pointerUp],['pointercancel',pointerCancel],['lostpointercapture',lostPointerCapture]] as const;
 for (const [name,handler] of pointerHandlers) screen.addEventListener(name,handler);
 controlButton.addEventListener('click',toggleControl); annotateButton.addEventListener('click',toggleAnnotations);
 
