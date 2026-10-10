@@ -18,7 +18,7 @@ const preview = (fields = {}) => ({ server_time: 1000, frame: null, viewport: nu
 // Fixtures exist only in this isolated DOM test, never in the shipped widget.
 const frame = (seq = 1) => ({ seq, data: 'test-image-only', mimeType: 'image/png', width: 900, height: 1800 });
 
-async function harness({ reducedMotion = false, context = { displayMode: 'inline', availableDisplayModes: ['fullscreen'] }, reply, connectReply, messageReply } = {}) {
+async function harness({ reducedMotion = false, context = { displayMode: 'inline', availableDisplayModes: ['fullscreen'] }, reply, connectReply, messageReply, messageImage = true } = {}) {
   let now = 0;
   let timerId = 0;
   let instance;
@@ -27,13 +27,15 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
   const listeners = new Map();
   const calls = [];
   const sentMessages = [];
+  const contextUpdates = [];
+  const drawnRegions = [];
   const lifecycle = [];
   const requestOptions = [];
   let layoutReads = 0;
   let imageWrites = 0;
   const ids = ['app', 'device', 'screen', 'image', 'empty-state', 'empty-state-text', 'cursor', 'stage', 'model', 'live-text', 'toast',
     'empty-hint', 'empty-retry', 'tool-refresh', 'tool-home', 'tool-screenshot', 'tool-pause', 'device-picker', 'device-menu', 'device-switcher', 'pause-label', 'video', 'control-button', 'annotate-button', 'control-label',
-    'annotation-overlay','annotation-editor','annotation-note','annotation-count','annotation-undo','annotation-cancel','annotation-send','annotation-hint'];
+    'annotation-overlay','annotation-editor','annotation-note','annotation-count','annotation-undo','annotation-delete','annotation-cancel','annotation-send','annotation-hint'];
   const elements = Object.fromEntries(ids.map(id => [id, {
     style: { setProperty(name, value) { this[name] = value; } }, dataset: {},
     hidden: ['device', 'screen', 'cursor', 'toast', 'device-menu'].includes(id), clientWidth: 400, clientHeight: 800,
@@ -74,9 +76,9 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     async connect() { lifecycle.push('connect'); if (connectReply) await connectReply(); }
     async close() { this.onclose?.(); }
     getHostContext() { return context; }
-    getHostCapabilities() { return {message:{text:{},image:{}},updateModelContext:{image:{}}}; }
+    getHostCapabilities() { return {message:{text:{},...(messageImage ? {image:{}} : {})},updateModelContext:{image:{}}}; }
     async sendMessage(params) { sentMessages.push(params); return messageReply ? messageReply(params) : {}; }
-    async updateModelContext() { return {}; }
+    async updateModelContext(params) { contextUpdates.push(params); return {}; }
     async requestDisplayMode(params) { lifecycle.push(params.mode); return { mode: params.mode }; }
     callServerTool(params, options) {
       calls.push(params);
@@ -90,7 +92,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     getElementById: id => elements[id],
     createElement: tag => tag === 'canvas' ? {
       width:0,height:0,toDataURL:()=> 'data:image/png;base64,unit-test-frozen-pixels',
-      getContext:()=>({drawImage(){},strokeRect(){},fillText(){},fill(){},arc(){},beginPath(){}}),
+      getContext:()=>({drawImage(){},strokeRect(...bounds){drawnRegions.push(bounds);},fillText(){},fill(){},arc(){},beginPath(){}}),
     } : ({ ...elements.model, style: { ...elements.model.style }, dataset: {}, handlers: new Map(), children: [] }),
     createElementNS: () => ({ ...elements.model, style: { ...elements.model.style }, dataset: {}, handlers: new Map(), children: [] }),
     addEventListener: (name, fn) => listeners.set(name, fn),
@@ -106,7 +108,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     clearTimeout: id => timers.delete(id),
   });
   return {
-    app: instance, calls, sentMessages, lifecycle, elements, document, timers, resize,
+    app: instance, calls, sentMessages, contextUpdates, drawnRegions, lifecycle, elements, document, timers, resize,
     requestOptions, stageSize,
     get layoutReads() { return layoutReads; },
     get imageWrites() { return imageWrites; },
@@ -760,7 +762,7 @@ test('manual swipes normalize against the picture and clamp the release point', 
   assert.equal(h.calls.length,before);
 });
 
-test('annotation freezes one frame and sends screenshot, device and matching regions without phone actions', async () => {
+test('annotation freezes one frame and sends only the marked screenshot and user note without phone actions', async () => {
   const h=await harness();h.app.ontoolresult({structuredContent:readyPreview()});
   h.elements['annotate-button'].click();
   const frozen=h.elements.image.src;
@@ -773,9 +775,9 @@ test('annotation freezes one frame and sends screenshot, device and matching reg
   assert.equal(h.sentMessages.length,1);
   const content=h.sentMessages[0].content;
   assert.equal(content[1].type,'image');assert.equal(content[1].mimeType,'image/png');
-  assert.match(content[0].text,/device_id: phone-a/);assert.match(content[0].text,/900 × 1800/);
-  assert.match(content[0].text,/"x":0.25,"y":0.25,"width":0.5,"height":0.5/);
-  assert.match(content[0].text,/先重新观察当前画面/);
+  assert.equal(content[0].text,'检查这个区域，不要点击。');
+  assert.equal(content.length,2);
+  assert.deepEqual(h.drawnRegions[0],[225,450,450,900]);
   assert.equal(h.calls.length,0);
 });
 
@@ -847,7 +849,7 @@ test('a second annotation has fresh regions and can be sent after the first succ
   assert.match(h.sentMessages[0].content[0].text,/第一处/);
   assert.match(h.sentMessages[1].content[0].text,/第二处/);
   assert.doesNotMatch(h.sentMessages[1].content[0].text,/第一处/);
-  assert.match(h.sentMessages[1].content[0].text,/"x":0.375/);
+  assert.deepEqual(h.drawnRegions[2],[337.5,225,112.5,225]);
 });
 
 test('a host composer rejection after the first send is shown as not sent and preserves the second annotation',async()=>{
@@ -879,4 +881,126 @@ test('a lost annotation acknowledgement remains uncertain and is never automatic
   assert.match(h.elements['annotation-hint'].textContent,/发送未确认/);
   assert.match(h.elements['annotation-hint'].textContent,/Request timed out/);
   await h.tick();await flush();assert.equal(h.sentMessages.length,1);
+});
+
+const annotationRects = h => h.elements['annotation-overlay'].children
+  .filter(node => node.class?.startsWith('annotation-region'))
+  .map(node => ['x','y','width','height'].map(key => Number(node[key])));
+const drawAnnotation = (h, from = [200,250], to = [400,650]) => {
+  pointerDispatch(h,'pointerdown',...from); pointerDispatch(h,'pointermove',...to); pointerDispatch(h,'pointerup',...to);
+};
+const beginAnnotation = async (options) => {
+  const h = await harness(options);
+  h.app.ontoolresult({ structuredContent: readyPreview() }); h.elements['annotate-button'].click();
+  return h;
+};
+
+test('dragging inside an existing region moves it instead of drawing another and undo restores geometry',async()=>{
+  const h = await beginAnnotation(); drawAnnotation(h);
+  pointerDispatch(h,'pointermove',300,450); assert.equal(h.elements.screen.style.cursor,'grab');
+  pointerDispatch(h,'pointerdown',300,450); assert.equal(h.elements.screen.style.cursor,'grabbing');
+  pointerDispatch(h,'pointermove',340,530);
+  assert.equal(h.elements['annotation-send'].disabled,true);
+  pointerDispatch(h,'pointerup',340,530);
+  assert.deepEqual(annotationRects(h),[[315,630,450,900]]);
+  assert.equal(h.elements['annotation-count'].textContent,'已标注 1 处');
+  h.elements['annotation-undo'].click(); assert.deepEqual(annotationRects(h),[[225,450,450,900]]);
+  h.elements['annotation-undo'].click(); assert.equal(annotationRects(h).length,0);
+  assert.equal(h.calls.length,0);
+});
+
+test('all eight resize handles change only their intended edges and export the edited rectangle',async()=>{
+  const cases = [
+    ['nw',[200,250],[160,170],[135,270,540,1080]],
+    ['n',[300,250],[300,170],[225,270,450,1080]],
+    ['ne',[400,250],[440,170],[225,270,540,1080]],
+    ['e',[400,450],[440,450],[225,450,540,900]],
+    ['se',[400,650],[440,730],[225,450,540,1080]],
+    ['s',[300,650],[300,730],[225,450,450,1080]],
+    ['sw',[200,650],[160,730],[135,450,540,1080]],
+    ['w',[200,450],[160,450],[135,450,540,900]],
+  ];
+  for (const [handle,from,to,expected] of cases) {
+    const h = await beginAnnotation(); drawAnnotation(h);
+    assert.equal(h.elements['annotation-overlay'].children.filter(node=>node.class==='annotation-handle').length,8);
+    pointerDispatch(h,'pointermove',...from); assert.equal(h.elements.screen.style.cursor,`${handle}-resize`);
+    drawAnnotation(h,from,to);
+    assert.deepEqual(annotationRects(h).map(box=>box.map(Math.round)),[expected],handle);
+    h.elements['annotation-send'].click(); await flush();
+    assert.deepEqual(h.drawnRegions[0].map(Math.round),expected,handle);
+    assert.equal(h.sentMessages[0].content[0].text,'请查看截图中的标注区域。');
+    assert.equal(h.calls.length,0);
+  }
+});
+
+test('moving and resizing stay inside the image and resizing cannot invert a rectangle',async()=>{
+  const h = await beginAnnotation(); drawAnnotation(h);
+  drawAnnotation(h,[300,450],[900,-100]);
+  assert.deepEqual(annotationRects(h),[[450,0,450,900]]);
+  drawAnnotation(h,[500,850],[900,1200]);
+  // A drag starting at the image boundary has zero width, so it creates no region.
+  assert.equal(annotationRects(h).length,1);
+  drawAnnotation(h,[500,450],[900,1200]);
+  assert.deepEqual(annotationRects(h),[[450,0,450,1800]]);
+  drawAnnotation(h,[300,50],[900,1200]);
+  const [x,y,width,height] = annotationRects(h)[0];
+  assert.ok(width >= 18 - 1e-8 && height >= 18 - 1e-8);
+  assert.ok(x >= 0 && y >= 0 && x+width <= 900 && y+height <= 1800);
+});
+
+test('pointer cancellation and lost capture restore the rectangle without adding an undo step',async()=>{
+  for (const event of ['pointercancel','lostpointercapture']) {
+    const h = await beginAnnotation(); drawAnnotation(h);
+    pointerDispatch(h,'pointerdown',300,450); pointerDispatch(h,'pointermove',340,530);
+    pointerDispatch(h,event,340,530); pointerDispatch(h,'pointerup',340,530);
+    assert.deepEqual(annotationRects(h),[[225,450,450,900]]);
+    assert.equal(h.elements.screen.capturedPointer,undefined);
+    h.elements['annotation-undo'].click(); assert.equal(annotationRects(h).length,0);
+  }
+});
+
+test('click selects without creating an undo step and deleting that selection is undoable',async()=>{
+  const h = await beginAnnotation(); drawAnnotation(h,[140,130],[220,290]); drawAnnotation(h,[340,530],[420,690]);
+  drawAnnotation(h,[180,210],[180,210]);
+  h.elements['annotation-delete'].click();
+  assert.deepEqual(annotationRects(h).map(box=>box.map(Math.round)),[[540,1080,180,360]]);
+  h.elements['annotation-undo'].click(); assert.equal(annotationRects(h).length,2);
+  h.elements['annotation-undo'].click(); assert.deepEqual(annotationRects(h).map(box=>box.map(Math.round)),[[90,180,180,360]]);
+});
+
+test('the eight-region limit still allows moving, resizing and deleting existing regions',async()=>{
+  const h = await beginAnnotation();
+  for(let i=0;i<8;i++) drawAnnotation(h,[130+(i%2)*180,90+Math.floor(i/2)*160],[210+(i%2)*180,170+Math.floor(i/2)*160]);
+  drawAnnotation(h,[440,750],[480,810]);
+  assert.equal(annotationRects(h).length,8);
+  drawAnnotation(h,[170,130],[190,150]);
+  assert.deepEqual(annotationRects(h)[0].map(Math.round),[113,135,180,180]);
+  drawAnnotation(h,[230,190],[250,210]);
+  assert.deepEqual(annotationRects(h)[0].map(Math.round),[113,135,225,225]);
+  h.elements['annotation-delete'].click(); assert.equal(annotationRects(h).length,7);
+});
+
+test('hosts using image context receive the screenshot without redundant region metadata',async()=>{
+  const h = await beginAnnotation({messageImage:false}); drawAnnotation(h);
+  h.elements['annotation-send'].click(); await flush();
+  assert.equal(h.contextUpdates.length,1);
+  assert.deepEqual(Object.keys(h.contextUpdates[0]),['content']);
+  assert.equal(h.contextUpdates[0].content[0].type,'image');
+  assert.equal(h.sentMessages[0].content.length,1);
+  assert.equal(h.sentMessages[0].content[0].text,'请查看截图中的标注区域。');
+});
+
+test('Command Enter sends once while Enter, IME composition, key repeat and empty selection do not',async()=>{
+  let finish;
+  const h = await beginAnnotation({messageReply:()=>new Promise(resolve=>{finish=resolve;})});
+  const key = (fields={}) => h.elements['annotation-note'].handlers.get('keydown')({key:'Enter',preventDefault(){},...fields});
+  key({metaKey:true}); await flush(); assert.equal(h.sentMessages.length,0);
+  drawAnnotation(h); h.elements['annotation-note'].value='请调整这里的间距';
+  key(); key({metaKey:true,isComposing:true}); key({metaKey:true,repeat:true});
+  await flush(); assert.equal(h.sentMessages.length,0);
+  key({metaKey:true}); key({metaKey:true}); await flush();
+  assert.equal(h.sentMessages.length,1);
+  assert.equal(h.sentMessages[0].content[0].text,'请调整这里的间距');
+  assert.equal(h.elements['annotation-note'].disabled,true);
+  finish({}); await flush(); assert.equal(h.elements['annotation-editor'].hidden,true);
 });

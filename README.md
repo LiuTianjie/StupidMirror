@@ -95,7 +95,7 @@ Mirror gestures reproduce what the mouse did: a slow drag replays its recorded p
 
 4. Codex starts StupidMirror in the background when needed. The live screen uses local WebRTC inside the Codex plugin panel, with device selection, refresh, pause/resume, Home and screenshot-copy controls. No native mirror window opens automatically. Keep the phone connected and unlocked.
 
-**Interaction and annotation:** Enable **操作** to connect device control, then tap or drag the preview. AI actions continue to use the existing MCP tools. **标注** freezes the displayed frame, lets you draw regions and add a note, then sends the image, device, capture time and coordinates to the current Codex chat. Drawing annotations never sends gestures to the phone.
+**Interaction and annotation:** Enable **操作** to connect device control, then tap or drag the preview. AI actions continue to use the existing MCP tools. **标注** freezes the displayed frame. Drag empty space to draw regions, drag inside a box to move it, or drag its edges and corners to resize. The compact composer stays below the image and supports deletion and undo. Send just the marked screenshot and your note with **⌘ Enter** (or **Ctrl Enter**); plain Enter inserts a newline. Drawing annotations never sends gestures to the phone.
 
 Video uses encrypted local WebRTC without a cloud relay. Hosts without a WebRTC API use native-resolution PNG; WebRTC failures show a reason and a retry button instead of silently switching to screenshots; annotation delivery requires the host’s image-message capability.
 

@@ -18,8 +18,28 @@
 #device-switcher{flex:1;max-width:calc(100% - 70px)}#device-picker{width:max-content;max-width:100%;min-width:145px}#model{max-width:220px}.phone-icon,.chevron{flex:none}
 #device{pointer-events:auto}#screen{touch-action:none}#video{display:block;width:100%;height:100%;object-fit:contain;pointer-events:none}#app[data-control="true"] #screen,#app[data-annotation="true"] #screen{cursor:crosshair}#annotation-overlay{position:absolute;inset:0;width:100%;height:100%;z-index:6;pointer-events:none;overflow:hidden}.annotation-region{fill:#e7832212;stroke:#db701d;stroke-width:2;vector-effect:non-scaling-stroke}.annotation-number-bg{fill:#db701d}.annotation-number{fill:white;font-family:-apple-system,sans-serif;font-weight:600;text-anchor:middle;dominant-baseline:middle}
 #toolbar button[aria-pressed="true"]{background:var(--pressed);color:var(--accent)}.toolbar-divider{height:18px;border-left:1px solid var(--line);margin:0 3px}
-#annotation-editor{flex:none;width:calc(100% - 40px);max-width:620px;align-self:center;margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}.annotation-heading{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:8px}#annotation-note{display:block;resize:vertical;min-height:52px;max-height:120px;width:100%;border:0;background:transparent;color:var(--text);font:12px/1.5 -apple-system,BlinkMacSystemFont,sans-serif;outline:none}#annotation-note::placeholder{color:var(--muted)}.annotation-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}.annotation-footer>span{flex:1 1 100%;color:var(--muted);font-size:10px}#annotation-editor button{border:0;padding:6px 9px;border-radius:7px;background:var(--hover);color:var(--text);font-size:11px;cursor:pointer}#annotation-editor button:disabled{opacity:.35;cursor:default}#annotation-editor #annotation-send{margin-left:auto;color:var(--surface);background:var(--accent)}#annotation-editor #annotation-undo{padding:3px 6px;background:transparent;color:var(--muted)}#app[data-annotation="true"] #toolbar{margin-top:10px}
+.annotation-region.is-selected{fill:#e783221c;stroke-width:2.5}.annotation-handle{fill:#fff;stroke:#db701d;stroke-width:1.5;vector-effect:non-scaling-stroke}
+#app[data-annotation="true"] #stage{margin-bottom:14px}
+#app[data-annotation="true"] #toolbar{display:none}
+#annotation-editor{flex:none;width:100%;align-self:center;padding:9px 16px 11px;border-top:1px solid var(--line);background:var(--surface)}
+.annotation-heading,.annotation-compose,.annotation-help{width:100%;max-width:620px;margin:0 auto}
+.annotation-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px;font-size:11px;color:var(--muted)}
+#annotation-count{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.annotation-actions{display:flex;align-items:center;gap:2px;flex:none}
+#annotation-editor button{display:flex;align-items:center;justify-content:center;border:0;padding:4px 7px;border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer;transition:background .12s,color .12s}
+#annotation-editor button:hover{background:var(--pressed);color:var(--text)}
+#annotation-editor button:disabled{opacity:.35;cursor:default;background:transparent;color:var(--muted)}
+#annotation-editor #annotation-cancel{color:var(--text)}
+.annotation-compose{display:flex;align-items:flex-end;gap:8px;padding:3px 4px 3px 8px;border:1px solid var(--line);border-radius:9px;background:var(--canvas)}
+.annotation-compose:focus-within{border-color:var(--accent)}
+#annotation-note{display:block;flex:1;min-width:0;resize:none;min-height:32px;max-height:72px;padding:7px 0;border:0;background:transparent;color:var(--text);font:12px/18px -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;outline:none}
+#annotation-note::placeholder{color:var(--muted)}
+#annotation-editor #annotation-send{flex:none;width:30px;height:30px;margin:1px 0;padding:6px;color:var(--surface);background:var(--accent);border-radius:7px}
+#annotation-editor #annotation-send:disabled{opacity:.35}
+#annotation-send svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.annotation-help{display:flex;align-items:flex-start;gap:8px;margin-top:5px;font-size:10px;line-height:14px;color:var(--muted)}
+#annotation-hint{flex:1;min-width:0;overflow-wrap:anywhere;max-height:56px;overflow:auto}.annotation-shortcut{flex:none;white-space:nowrap}
+@media(max-height:420px){#app[data-annotation="true"] #stage{margin-bottom:8px}#annotation-editor{padding-top:5px;padding-bottom:6px}.annotation-heading{margin-bottom:3px}.annotation-help{margin-top:3px}#annotation-hint{max-height:28px}}
 @media(max-width:520px){#toolbar button{min-width:34px;padding:0 8px}#toolbar button span{display:none}#toolbar{gap:3px}}
-@media(min-width:960px){#annotation-editor{position:absolute;right:20px;bottom:82px;width:280px;max-width:280px;margin:0;z-index:8;box-shadow:var(--shadow)}#app[data-annotation="true"] #toolbar{margin-top:18px}}
 
 #empty-retry{margin-top:8px;padding:8px 18px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--text);font:inherit;font-size:12px;cursor:pointer}#empty-retry:hover{background:var(--line)}#empty-retry:disabled{opacity:.45;cursor:wait}

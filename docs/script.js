@@ -14,7 +14,7 @@ const chineseText = new Map([
   ["You and your AI can operate", "你和 AI 都能操作"],
   ["Enable manual control to tap and drag. Ask your agent to observe, act, and verify with the existing device tools.", "开启操作模式即可点击和拖动；也可以让 AI 使用真机工具，先观察、再操作、再验证。"],
   ["Point it out with annotations", "用标注说清楚"],
-  ["Freeze a frame, draw numbered regions, and send an image with your note to Codex. Annotation mode never taps the phone.", "冻结一帧，画出编号区域并附上说明，将图片发给 Codex；标注模式不会点击手机。"],
+  ["Freeze a frame, move and resize numbered regions, then send the marked image and your note with Command-Enter. The composer stays below the picture.", "冻结画面，移动或缩放编号框，按 ⌘＋回车发送标注截图和说明。输入栏位于画面下方，不遮挡画面。"],
   ["Read the Codex setup guide", "查看 Codex 使用指南"],
   ["Video stays local. Screenshots requested by your AI and annotations you send follow your AI client’s data settings. Host support is required for image messages.", "视频在本机传输；AI 请求的截图和你发送的标注受 AI 客户端的数据设置约束。图片消息需要宿主支持。"],
 
