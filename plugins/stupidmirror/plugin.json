@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "stupidmirror",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Observe and control real iPhone and Android devices through the StupidMirror Mac app.",
   "author": { "name": "StupidMirror" },
   "homepage": "https://liutianjie.github.io/StupidMirror/",

@@ -92,7 +92,7 @@ const tools: Record<ToolName, HTMLButtonElement> = {
   pause: document.getElementById('tool-pause') as HTMLButtonElement,
 };
 const app = new App(
-  { name: 'StupidMirror', version: '0.2.1' },
+  { name: 'StupidMirror', version: '0.2.2' },
   { availableDisplayModes: ['fullscreen'] },
   { autoResize: false },
 );
