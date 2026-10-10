@@ -1,6 +1,6 @@
 # Codex plugin / Codex 插件
 
-Available in StupidMirror 0.3.1 (bundled plugin 0.2.1).
+Available in StupidMirror 0.3.2 (bundled plugin 0.2.2).
 
 ## Connect / 连接
 
@@ -59,6 +59,10 @@ WebRTC 只在本机传输；AI 请求的截图及主动发送的标注仍会交�
   runner, then re-enable 操作. Viewing and control readiness are independent.
 - Annotation unavailable: the host must support image user messages or image
   model-context updates plus text messages. Keep the draft and use a supported host.
+- Annotation reports an unavailable composer: Codex rejected the message before
+  submission. The image, regions and note remain in the panel. Return to the
+  target chat and retry; if it still fails, reopen StupidMirror from that chat.
+  A timeout instead means delivery is unconfirmed: check the chat before retrying.
 - A manual MCP entry conflicts: the installer only migrates a matching local
   StupidMirror endpoint. Resolve other entries explicitly rather than overwriting them.
 
@@ -67,5 +71,9 @@ WebRTC 只在本机传输；AI 请求的截图及主动发送的标注仍会交�
 The release preparation verified tool/resource discovery through the Codex
 app-server, widget and native tests, and a local MCP Apps SDK host with a real
 iPhone at 1260 × 2736 and sampled 26–27 fps. This is a sample, not a performance
-guarantee. Formal Codex-panel rendering, annotation arrival in a real chat, and
-end-to-end manual gestures still require host/device acceptance before publication.
+guarantee. On 2026-10-10, the installed 0.3.1 app / 0.2.1 plugin also passed
+real Codex acceptance in a fresh chat: the iPhone panel rendered, two consecutive
+annotated images and notes arrived, and authorized device navigation and text
+input succeeded. The 0.3.2 changes add error classification and preservation;
+widget tests cover those paths. This does not prove that reopening repairs a
+host-owned composer binding in an older chat, or validate every manual gesture.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.2 - 2026-10-10
+
+- Distinguish a rejected annotation message from an unconfirmed delivery.
+  Preserve the frozen image, regions and note, and explain how to reopen the
+  panel when Codex reports that the chat composer is unavailable.
+- Keep delivery timeouts uncertain and never automatically replay an annotation.
+- Add regression coverage for consecutive sends, a second-send composer
+  rejection and a lost acknowledgement. Bundle Codex plugin 0.2.2.
+- Verify the installed 0.3.1 app / 0.2.1 plugin in a fresh Codex chat: the live
+  iPhone panel opened, two consecutive annotated image messages arrived, and
+  authorized native navigation and text input worked. This does not establish
+  that an older chat with a detached composer has been repaired.
+
 ## 0.3.1 - 2026-10-10
 
 - Fix Codex initialization failing with JSON-RPC `-32603` when the client sends

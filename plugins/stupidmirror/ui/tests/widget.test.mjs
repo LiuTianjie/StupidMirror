@@ -786,7 +786,7 @@ test('a rejected annotation send preserves the frozen frame and never retries au
   const frozen=h.elements.image.src;
   h.elements['annotation-send'].click();await flush();
   assert.equal(h.elements['annotation-editor'].hidden,false);assert.equal(h.elements.image.src,frozen);
-  assert.match(h.elements['annotation-hint'].textContent,/标注已保留/);
+  assert.match(h.elements['annotation-hint'].textContent,/已保留/);
   await h.tick();await flush();
   assert.equal(h.sentMessages.length,1);
 });
@@ -830,4 +830,53 @@ test('manual reconnect aborts the old poll and does not strand polling behind it
   assert.equal(h.elements['tool-refresh'].disabled,false);
   await h.tick();assert.equal(h.calls.filter(c=>c.name==='screen_frame').length,2);
   assert.equal(h.elements.image.hidden,false);
+});
+
+test('a second annotation has fresh regions and can be sent after the first succeeds',async()=>{
+  const h=await harness();h.app.ontoolresult({structuredContent:readyPreview()});
+  for(const [index,label] of ['第一处','第二处'].entries()){
+    h.elements['annotate-button'].click();
+    pointerDispatch(h,'pointerdown',150+index*100,150);
+    pointerDispatch(h,'pointerup',200+index*100,250);
+    h.elements['annotation-note'].value=label;
+    h.elements['annotation-send'].click();await flush();
+    assert.equal(h.elements['annotation-editor'].hidden,true);
+    assert.equal(h.elements['annotate-button'].disabled,false);
+  }
+  assert.equal(h.sentMessages.length,2);
+  assert.match(h.sentMessages[0].content[0].text,/第一处/);
+  assert.match(h.sentMessages[1].content[0].text,/第二处/);
+  assert.doesNotMatch(h.sentMessages[1].content[0].text,/第一处/);
+  assert.match(h.sentMessages[1].content[0].text,/"x":0.375/);
+});
+
+test('a host composer rejection after the first send is shown as not sent and preserves the second annotation',async()=>{
+  let attempts=0;
+  const h=await harness({messageReply:async()=>{
+    if(++attempts===1)return {};
+    throw Object.assign(new Error('MCP error -32601: MCP app messages require an available composer'),{code:-32601});
+  }});
+  h.app.ontoolresult({structuredContent:readyPreview()});
+  for(const label of ['第一处','第二处']){
+    h.elements['annotate-button'].click();
+    pointerDispatch(h,'pointerdown',200,250);pointerDispatch(h,'pointerup',400,650);
+    h.elements['annotation-note'].value=label;
+    h.elements['annotation-send'].click();await flush();
+  }
+  assert.equal(h.elements['annotation-editor'].hidden,false);
+  assert.equal(h.elements['annotation-note'].value,'第二处');
+  assert.equal(h.elements['annotation-count'].textContent,'已标注 1 处');
+  assert.match(h.elements['annotation-hint'].textContent,/标注未发送.*聊天发送入口不可用/);
+  assert.doesNotMatch(h.elements['annotation-hint'].textContent,/未确认/);
+  await h.tick();await flush();assert.equal(h.sentMessages.length,2);
+});
+
+test('a lost annotation acknowledgement remains uncertain and is never automatically replayed',async()=>{
+  const h=await harness({messageReply:async()=>{throw new Error('MCP error -32001: Request timed out');}});
+  h.app.ontoolresult({structuredContent:readyPreview()});h.elements['annotate-button'].click();
+  pointerDispatch(h,'pointerdown',200,250);pointerDispatch(h,'pointerup',400,650);
+  h.elements['annotation-send'].click();await flush();
+  assert.match(h.elements['annotation-hint'].textContent,/发送未确认/);
+  assert.match(h.elements['annotation-hint'].textContent,/Request timed out/);
+  await h.tick();await flush();assert.equal(h.sentMessages.length,1);
 });
