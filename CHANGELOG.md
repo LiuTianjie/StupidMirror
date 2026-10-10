@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.0 - 2026-10-10
+
+- Bundle a Codex plugin with one-click installation from MCP Automation settings.
+  Codex can launch StupidMirror in the background and display the phone inside
+  its MCP Apps panel without opening a separate native mirror window.
+- Stream native-resolution H.264 video over encrypted, loopback-only WebRTC;
+  use PNG snapshots when the host cannot establish video. Add device selection,
+  pause/resume, refresh, Home, and screenshot controls.
+- Add explicit manual control mode for taps and drags in the embedded preview,
+  alongside the existing AI observation and device-control tools.
+- Freeze a frame, draw numbered regions, add a note, and send the annotated
+  image with device/time/coordinate context to Codex. Annotation mode never
+  sends pointer gestures to the phone; delivery depends on host capabilities.
+- Keep connection credentials in a private local file, reconnect after port or
+  token changes, and clean up inactive video sessions.
+- Preserve modern macOS styling by pinning the native Swift build system and
+  checking the linked SDK when packaging.
+- Update bilingual setup, privacy, architecture, contributor, release and website
+  documentation. Extend CI to cover the plugin widget and WebRTC sidecar.
+
+
 ## 0.2.31 - 2026-10-03
 
 - A launch that stalls because the iPhone is waiting for its passcode to

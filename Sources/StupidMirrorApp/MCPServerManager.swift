@@ -3,6 +3,7 @@ import Foundation
 import LocalAuthentication
 import MCP
 import Security
+import StupidMirrorConnection
 
 enum MCPServerStatus: Equatable, Sendable {
     case stopped
@@ -53,8 +54,8 @@ private actor MCPServerEventSink {
         await manager?.setConnectedClientCount(count)
     }
 
-    func markRunning(generation: UInt64) async {
-        await manager?.markRunning(generation: generation)
+    func markRunning(generation: UInt64) async throws {
+        try await manager?.markRunning(generation: generation)
     }
 }
 
@@ -211,6 +212,8 @@ final class MCPServerManager: ObservableObject {
     private var serverTask: Task<Void, Never>?
     private var generation: UInt64 = 0
     private var isShuttingDown = false
+    private let connectionFile = MCPConnectionFile()
+    private var connectionInstanceID: UUID?
 
     init(
         automation: DeviceAutomationService,
@@ -273,6 +276,7 @@ final class MCPServerManager: ObservableObject {
             ])
             let router = StupidMirrorMCPToolRouter(automation: automation)
             let eventSink = MCPServerEventSink(manager: self)
+            connectionInstanceID = UUID()
             let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
                 ?? "development"
             let app = MCPHTTPApplication(
@@ -286,8 +290,14 @@ final class MCPServerManager: ObservableObject {
                         version: appVersion,
                         title: "StupidMirror Device Automation",
                         instructions: Self.instructions,
-                        capabilities: .init(tools: .init(listChanged: false))
+                        capabilities: .init(resources: .init(subscribe: false, listChanged: false), tools: .init(listChanged: false))
                     )
+                    await server.withMethodHandler(ListResources.self) { _ in
+                        ListResources.Result(resources: [StupidMirrorScreenResource.resource])
+                    }
+                    await server.withMethodHandler(ReadResource.self) { request in
+                        try StupidMirrorScreenResource.read(request.uri)
+                    }
                     await server.withMethodHandler(ListTools.self) { _ in
                         ListTools.Result(tools: StupidMirrorMCPToolCatalog.tools)
                     }
@@ -301,6 +311,7 @@ final class MCPServerManager: ObservableObject {
                             .objectValue?["error"]?
                             .objectValue?["code"]?
                             .stringValue
+                        if request.name != "screen_frame" {
                         await eventSink.recordCall(
                             tool: request.name,
                             deviceID: request.arguments?["device_id"]?.stringValue,
@@ -308,6 +319,7 @@ final class MCPServerManager: ObservableObject {
                             succeeded: result.isError != true,
                             errorCode: result.isError == true ? (errorCode ?? "tool_error") : nil
                         )
+                        }
                         return result
                     }
                     return server
@@ -316,7 +328,7 @@ final class MCPServerManager: ObservableObject {
                     await eventSink.setClientCount(count)
                 },
                 startedHandler: {
-                    await eventSink.markRunning(generation: currentGeneration)
+                    try await eventSink.markRunning(generation: currentGeneration)
                 }
             )
             application = app
@@ -329,12 +341,14 @@ final class MCPServerManager: ObservableObject {
                 }
             }
         } catch {
+            removeConnectionFile()
             status = .failed(error.localizedDescription)
         }
     }
 
     func stop() async {
         generation &+= 1
+        removeConnectionFile()
         let app = application
         application = nil
         await app?.stop()
@@ -354,6 +368,18 @@ final class MCPServerManager: ObservableObject {
         let token = try tokenStore.rotate()
         bearerToken = token
         tokenBox?.replace(with: token)
+        if status.isRunning, let instanceID = connectionInstanceID {
+            // Remove the old credentials before writing so a failure cannot leave a stale token.
+            connectionFile.remove(ifOwnedBy: instanceID)
+            try connectionFile.write(MCPConnectionRecord(
+                endpoint: URL(string: endpoint)!, bearerToken: token, instanceID: instanceID
+            ))
+        }
+    }
+
+    private func removeConnectionFile() {
+        if let instanceID = connectionInstanceID { connectionFile.remove(ifOwnedBy: instanceID) }
+        connectionInstanceID = nil
     }
 
     var codexConfiguration: String {
@@ -369,13 +395,21 @@ final class MCPServerManager: ObservableObject {
         "claude mcp add --transport http --scope user --header \"Authorization: Bearer \(bearerToken)\" stupidmirror \(endpoint)"
     }
 
-    fileprivate func markRunning(generation: UInt64) {
+    fileprivate func markRunning(generation: UInt64) throws {
         guard generation == self.generation, !isShuttingDown else { return }
+        if let instanceID = connectionInstanceID {
+            // Publish credentials only after binding successfully. A second app
+            // failing to bind must not replace the running app's connection.
+            try connectionFile.write(MCPConnectionRecord(
+                endpoint: URL(string: endpoint)!, bearerToken: bearerToken, instanceID: instanceID
+            ))
+        }
         status = .running
     }
 
     private func serverExited(generation: UInt64, error: Error?) {
         guard generation == self.generation else { return }
+        removeConnectionFile()
         application = nil
         serverTask = nil
         connectedClientCount = 0
@@ -413,6 +447,6 @@ final class MCPServerManager: ObservableObject {
     }
 
     nonisolated private static let instructions = """
-    Automate iOS and Android devices through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror and control one device at a time; activation unlocks simultaneous devices. Start the mirror for a live frame and connect control for native accessibility and actions. For routine navigation use tap_text with all candidate labels in one call; use find_any_element when inspection is needed before tapping. With include_ocr=true these tools inspect the live mirror with local Apple Vision first, then fetch at most one native hierarchy when pixels do not expose a label. Never probe synonyms with repeated find_element calls. Use observe_screen with include_image=true when neither OCR nor accessibility describes an icon, canvas, or custom control; inspect the screenshot and use a targeted normalized coordinate. Request include_accessibility=true or get_ui_tree only for explicit hierarchy debugging because native source snapshots can take seconds; on iOS they may also disturb a focused text field. Once a field is focused, use replace_text to overwrite it or clear_text to empty it without an intermediate accessibility query; use type_text only to append. For user-guided operation, use highlight_clickable_elements to number every clickable target or highlight_elements for selected observed targets; these overlays never tap or change the device. Prefer fast OCR unless small or ambiguous text needs accurate mode. AI actions are visibly highlighted on the Mac mirror. Perform one targeted observation after actions that need verification.
+    Automate iOS and Android devices through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror and control one device at a time; activation unlocks simultaneous devices. In Codex call show_screen for a live embedded preview; it starts capture without a native mirror window. Use start_mirror only when the user explicitly requests a separate Mac mirror. Connect control for native accessibility and actions. For routine navigation use tap_text with all candidate labels in one call; use find_any_element when inspection is needed before tapping. With include_ocr=true these tools inspect the live frame with local Apple Vision first, then fetch at most one native hierarchy when pixels do not expose a label. Never probe synonyms with repeated find_element calls. Use observe_screen with include_image=true when neither OCR nor accessibility describes an icon, canvas, or custom control; inspect the screenshot and use a targeted normalized coordinate. Request include_accessibility=true or get_ui_tree only for explicit hierarchy debugging because native source snapshots can take seconds; on iOS they may also disturb a focused text field. Once a field is focused, use replace_text to overwrite it or clear_text to empty it without an intermediate accessibility query; use type_text only to append. When a native mirror was explicitly opened, highlight_clickable_elements can number clickable targets and highlight_elements can mark selected targets; these native overlays never tap the device. In the embedded preview, users can freeze the screen and send their own screenshot annotations. Treat annotated coordinates as a frozen reference and reobserve before acting. Prefer fast OCR unless small or ambiguous text needs accurate mode. The Codex preview shows the live device; native mirror windows also show action highlights when explicitly opened. Perform one targeted observation after actions that need verification.
     """
 }

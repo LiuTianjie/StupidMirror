@@ -39,16 +39,17 @@ Environment:
   ALLOW_UNNOTARIZED=true
   RELEASE_NAME="StupidMirror v0.1.0"
   RELEASE_NOTES="Release notes..."
+  # Publication is a manual maintainer action. This script creates drafts only.
   DRAFT=true
   PRERELEASE=true
   COMMIT_RELEASE=false
-  PUSH_RELEASE=false
+  PUSH_RELEASE=true  # Only on a non-Pages branch, to create a draft
 MSG
   exit 0
 fi
 
 commit_release="${COMMIT_RELEASE:-true}"
-push_release="${PUSH_RELEASE:-true}"
+push_release="${PUSH_RELEASE:-false}"
 
 if [ -n "${BUMP:-}" ] && [ "$commit_release" != "true" ]; then
   echo "BUMP requires COMMIT_RELEASE=true so the release tag records the packaged version." >&2
@@ -65,6 +66,19 @@ if [ -n "${TEAM_ID:-}" ] && [ "$TEAM_ID" != "$official_team_id" ]; then
 fi
 
 if [ "$push_release" = "true" ]; then
+  if [ "${DRAFT:-true}" != "true" ]; then
+    echo "This script only prepares draft releases. Publish manually on GitHub." >&2
+    exit 1
+  fi
+  current_branch="$(git branch --show-current)"
+  if [ -z "$current_branch" ] || [ "$current_branch" = "main" ]; then
+    echo "Prepare uploads from a non-main branch; main automatically deploys Pages." >&2
+    exit 1
+  fi
+  if gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx false; then
+    echo "Refusing to replace artifacts on a published release." >&2
+    exit 1
+  fi
   if ! command -v gh >/dev/null 2>&1; then
     echo "GitHub CLI is required. Install it first: https://cli.github.com/" >&2
     exit 1
@@ -250,6 +264,20 @@ assert_release_app() {
     echo "Release does not contain a signed bundled Node/Appium runtime." >&2
     exit 1
   fi
+
+  # The Codex plugin requires both signed helpers and the self-contained widget.
+  for helper in StupidMirrorMCPBridge StupidMirrorPreview; do
+    local helper_path="${app}/Contents/Helpers/${helper}"
+    [ -x "$helper_path" ] || { echo "Missing ${helper}" >&2; exit 1; }
+    codesign --verify --strict "$helper_path"
+    local helper_team
+    helper_team="$(codesign -dv --verbose=4 "$helper_path" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+    [ "$helper_team" = "$official_team_id" ] || { echo "Wrong helper signing team" >&2; exit 1; }
+  done
+  for arch in arm64 x86_64; do
+    lipo -archs "${app}/Contents/Helpers/StupidMirrorPreview" | tr ' ' '\n' | grep -qx "$arch" || exit 1
+  done
+  [ -s "${app}/Contents/Resources/CodexPlugin/plugins/stupidmirror/assets/phone-screen.html" ] || exit 1
 
   # iPhone mirroring and control both run through the tunnel sidecar.
   bundled_smtunnel="${app}/Contents/Resources/smtunnel/smtunnel"
@@ -465,7 +493,7 @@ release_create_args=(
   --title "$release_name"
   --notes "$release_notes"
 )
-if [ "${DRAFT:-false}" = "true" ]; then
+if [ "${DRAFT:-true}" = "true" ]; then
   release_create_args+=(--draft)
 fi
 if [ "${PRERELEASE:-false}" = "true" ]; then

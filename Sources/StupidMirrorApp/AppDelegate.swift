@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         installSignalHandlers()
+        guard !CommandLine.arguments.contains("--mcp-background") else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             guard let store = Self.store else { return }
             DashboardWindowRegistry.shared.open(store: store)

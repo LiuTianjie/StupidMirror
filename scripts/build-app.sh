@@ -5,6 +5,10 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
 configuration="${CONFIGURATION:-release}"
+# Swift 6.3+ defaults to Swift Build; the current macOS linker integration can
+# stamp the deployment target as the SDK version, opting AppKit into old UI.
+# Keep the established build engine and validate the linked SDK below.
+build_system="${SWIFT_BUILD_SYSTEM:-native}"
 app_name="${APP_NAME:-StupidMirror}"
 product_name="${PRODUCT_NAME:-StupidMirrorApp}"
 official_bundle_id="com.gaojiua.StupidMirror"
@@ -50,11 +54,18 @@ license_endpoint_xml="$(xml_escape "$license_endpoint")"
 license_publishable_key_xml="$(xml_escape "$license_publishable_key")"
 
 echo "Building ${product_name} (${configuration})..."
-swift build -c "$configuration" --product "$product_name"
+swift build --build-system "$build_system" -c "$configuration" --product "$product_name"
+swift build --build-system "$build_system" -c "$configuration" --product StupidMirrorMCPBridge
 
-bin_path="$(swift build -c "$configuration" --show-bin-path)/${product_name}"
+bin_path="$(swift build --build-system "$build_system" -c "$configuration" --show-bin-path)/${product_name}"
 if [ ! -x "$bin_path" ]; then
   echo "Built binary not found: $bin_path" >&2
+  exit 1
+fi
+linked_sdk="$(xcrun vtool -show-build "$bin_path" | awk '$1 == "sdk" { print $2; exit }')"
+selected_sdk="$(xcrun --sdk macosx --show-sdk-version)"
+if [ "${linked_sdk%%.*}" != "${selected_sdk%%.*}" ]; then
+  echo "Linked SDK ${linked_sdk:-unknown} does not match selected SDK $selected_sdk; refusing a build with changed AppKit compatibility styling." >&2
   exit 1
 fi
 
@@ -63,6 +74,15 @@ contents_path="${build_app_path}/Contents"
 macos_path="${contents_path}/MacOS"
 mkdir -p "$macos_path"
 cp "$bin_path" "${macos_path}/${app_name}"
+mkdir -p "${contents_path}/Helpers"
+cp "$(dirname "$bin_path")/StupidMirrorMCPBridge" "${contents_path}/Helpers/StupidMirrorMCPBridge"
+bash scripts/build-preview.sh "${contents_path}/Helpers/StupidMirrorPreview"
+plugin_resources="${contents_path}/Resources/CodexPlugin"
+mkdir -p "${plugin_resources}/.agents/plugins" "${plugin_resources}/plugins" "${plugin_resources}/scripts"
+cp .agents/plugins/marketplace.json "${plugin_resources}/.agents/plugins/marketplace.json"
+mkdir -p "${plugin_resources}/plugins/stupidmirror"
+/usr/bin/rsync -a --exclude=node_modules --exclude=.DS_Store plugins/stupidmirror/ "${plugin_resources}/plugins/stupidmirror/"
+cp scripts/install-codex-plugin.sh "${plugin_resources}/scripts/install-codex-plugin.sh"
 if [ -f "$icon_path" ]; then
   mkdir -p "${contents_path}/Resources"
   cp "$icon_path" "${contents_path}/Resources/AppIcon.icns"
@@ -82,7 +102,7 @@ fi
 
 # Mach-O files nested under Resources that need their own signature.
 nested_binaries() {
-  local roots=()
+  local roots=("${contents_path}/Helpers")
   if [ "$bundle_appium" = "true" ]; then
     roots+=("${contents_path}/Resources/Appium")
   fi

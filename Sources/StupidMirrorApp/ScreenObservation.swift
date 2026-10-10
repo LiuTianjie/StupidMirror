@@ -20,13 +20,25 @@ final class MirrorFrameStore: @unchecked Sendable {
     private let context = CIContext(options: [.cacheIntermediates: false])
     private var latestSampleBuffer: CMSampleBuffer?
     private var sequence: UInt64 = 0
+    private var observers: [UUID: @Sendable (CMSampleBuffer) -> Void] = [:]
 
     func submit(_ sampleBuffer: CMSampleBuffer) {
-        lock.withLock {
+        let callbacks = lock.withLock {
             sequence &+= 1
             latestSampleBuffer = sampleBuffer
+            return Array(observers.values)
         }
+        for callback in callbacks { callback(sampleBuffer) }
     }
+
+    func addObserver(_ callback: @escaping @Sendable (CMSampleBuffer) -> Void) -> UUID {
+        let id = UUID()
+        let current = lock.withLock { observers[id] = callback; return latestSampleBuffer }
+        if let current { callback(current) }
+        return id
+    }
+
+    func removeObserver(_ id: UUID) { _ = lock.withLock { observers.removeValue(forKey: id) } }
 
     func clear() {
         lock.withLock {
@@ -69,6 +81,27 @@ final class MirrorFrameStore: @unchecked Sendable {
 
     func pngSnapshot() -> MirrorFrameSnapshot? {
         snapshot(includePNG: true)
+    }
+
+    /// Preserve every pixel of the existing decoded frame for the embedded UI. This never
+    /// queries WDA, changes focus, or acquires the device action lock.
+    func previewPNG(afterSequence: UInt64) -> CodexPreviewFrame? {
+        guard let snapshot = snapshot(includePNG: false),
+              let buffer = CMSampleBufferGetImageBuffer(snapshot.sampleBuffer) else { return nil }
+        var data: Data?
+        if snapshot.sequence != afterSequence {
+            let image = CIImage(cvPixelBuffer: buffer)
+            data = renderLock.withLock {
+                context.pngRepresentation(
+                    of: image, format: .RGBA8,
+                    colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:]
+                )
+            }
+        }
+        return CodexPreviewFrame(
+            seq: snapshot.sequence, data: data?.base64EncodedString(),
+            width: snapshot.width, height: snapshot.height
+        )
     }
 }
 

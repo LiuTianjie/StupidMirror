@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StupidMirror 手机屏幕</title>
+  <style>/*__STYLE__*/</style>
+</head>
+<body>
+  <main id="app" data-frame-seq="0" data-busy="false" data-operating="false" data-live="connecting" aria-label="手机实时屏幕">
+    <header id="status">
+      <div id="device-switcher">
+        <button id="device-picker" type="button" aria-label="选择手机" aria-haspopup="listbox" aria-expanded="false" aria-controls="device-menu">
+          <svg class="phone-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="3"/><path d="M10 5h4M10.5 18.5h3"/></svg>
+          <span id="model">选择设备</span>
+          <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>
+        </button>
+        <div id="device-menu" role="listbox" aria-label="可用设备" hidden></div>
+      </div>
+      <span id="live"><i class="dot" aria-hidden="true"></i><span id="live-text">连接中</span></span>
+    </header>
+    <div id="stage">
+      <div id="device" data-orientation="portrait" hidden>
+        <div id="screen" hidden>
+          <video id="video" aria-label="手机实时视频" autoplay muted playsinline hidden></video>
+          <img id="image" alt="手机实时屏幕" draggable="false" hidden>
+          <svg id="annotation-overlay" aria-label="标注区域" hidden></svg>
+          <div id="cursor" class="gesture-cursor" aria-hidden="true" hidden></div>
+        </div>
+      </div>
+      <div id="empty-state" data-state="connecting" role="status" aria-live="polite">
+        <div class="empty-state-content">
+          <div class="empty-symbol"><svg viewBox="0 0 32 32" aria-hidden="true"><rect x="8.5" y="3.5" width="15" height="25" rx="4"/><path d="M13 6.5h6M14 24.5h4"/></svg></div>
+          <span id="empty-state-text">正在连接</span>
+          <span class="empty-hint">保持手机已连接并解锁</span>
+        </div>
+      </div>
+    </div>
+    <section id="annotation-editor" aria-label="截图标注" hidden>
+      <div class="annotation-heading"><span id="annotation-count">拖动框选要讨论的区域</span><button id="annotation-undo" type="button">撤销</button></div>
+      <textarea id="annotation-note" aria-label="标注说明" placeholder="说明你希望 Codex 查看或操作什么" rows="2" maxlength="2000"></textarea>
+      <div class="annotation-footer"><span id="annotation-hint">画面已冻结</span><button id="annotation-cancel" type="button">返回实时画面</button><button id="annotation-send" type="button">发送给 Codex</button></div>
+    </section>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <nav id="toolbar" aria-label="手机工具">
+      <button id="control-button" type="button" aria-label="操作手机" aria-pressed="false" title="启用点按和拖动操作">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 3 14 10-7 1-3 7Z"/></svg><span id="control-label">操作</span>
+      </button>
+      <button id="annotate-button" type="button" aria-label="标注截图" aria-pressed="false" title="冻结画面，框选并发送给 Codex">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4H4v5M15 4h5v5M4 15v5h5M20 15v5h-5M8 12h8M12 8v8"/></svg><span>标注</span>
+      </button>
+      <span class="toolbar-divider" aria-hidden="true"></span>
+      <button id="tool-refresh" type="button" aria-label="刷新连接" title="重新连接；认证完成后点击可恢复预览">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.5 8.25A7.5 7.5 0 1 0 19.5 12"/><path d="M18.5 4.25v4h-4"/></svg>
+      <span>刷新</span></button>
+      <button id="tool-pause" type="button" aria-label="暂停预览" title="暂停预览">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><g class="pause-symbol"><path d="M9 6v12M15 6v12"/></g><g class="play-symbol"><path d="m8 5 10 7-10 7Z"/></g></svg>
+      <span id="pause-label">暂停</span></button>
+      <button id="tool-home" type="button" aria-label="回到主屏幕" title="回到主屏幕">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 10.75 6.3-5.3a1.85 1.85 0 0 1 2.4 0l6.3 5.3"/><path d="M6.5 9.15V18A1.5 1.5 0 0 0 8 19.5h8a1.5 1.5 0 0 0 1.5-1.5V9.15"/><path d="M10 19.5v-5.75h4v5.75"/></svg>
+      <span>主屏幕</span></button>
+      <button id="tool-screenshot" type="button" aria-label="截图到剪贴板" title="截图到剪贴板">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 6.5 1.2-1.75h4.6l1.2 1.75H18a1.75 1.75 0 0 1 1.75 1.75v9.5A1.75 1.75 0 0 1 18 19.5H6a1.75 1.75 0 0 1-1.75-1.75v-9.5A1.75 1.75 0 0 1 6 6.5Z"/><circle cx="12" cy="12.75" r="3.25"/></svg>
+      <span>截图</span></button>
+    </nav>
+  </main>
+  <script type="module">/*__SCRIPT__*/</script>
+</body>
+</html>

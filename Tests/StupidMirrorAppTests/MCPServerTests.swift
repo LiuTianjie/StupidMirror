@@ -6,6 +6,7 @@ final class MCPServerTests: XCTestCase {
     func testToolCatalogContainsTheApprovedSurfaceAndStrictSchemas() {
         let expected = Set([
             "list_devices", "refresh_devices", "get_device_status", "get_diagnostics",
+            "show_screen", "screen_frame", "screen_action", "screen_signal",
             "start_mirror", "stop_mirror", "set_mirror_floating",
             "connect_control", "disconnect_control", "screenshot", "get_ui_tree",
             "observe_screen", "find_element", "find_any_element", "tap_text",
@@ -24,6 +25,7 @@ final class MCPServerTests: XCTestCase {
             XCTAssertEqual(tool.annotations.openWorldHint, false, tool.name)
         }
         let destructive = Set([
+            "screen_action",
             "tap_text", "tap_element", "tap", "double_tap", "long_press", "swipe", "scroll",
             "type_text", "clear_text", "replace_text", "press_button", "back", "app_switcher", "activate_app", "terminate_app"
         ])
@@ -33,6 +35,12 @@ final class MCPServerTests: XCTestCase {
     }
 
     func testSemanticObservationSchemasExposeSafeDefaultsAndBounds() throws {
+        let screen = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "show_screen" })
+        XCTAssertEqual(screen._meta?["ui"]?.objectValue?["resourceUri"]?.stringValue, StupidMirrorScreenResource.uri)
+        for name in ["screen_frame", "screen_action"] {
+            let widgetTool = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == name })
+            XCTAssertEqual(widgetTool._meta?["ui"]?.objectValue?["visibility"]?.arrayValue, [.string("app")])
+        }
         let observe = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "observe_screen" })
         let observeProperties = try XCTUnwrap(observe.inputSchema.objectValue?["properties"]?.objectValue)
         XCTAssertEqual(observeProperties["include_image"]?.objectValue?["default"]?.boolValue, true)

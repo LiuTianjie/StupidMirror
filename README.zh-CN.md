@@ -37,7 +37,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 
 - **原生设备工作台。** 使用 SwiftUI 与 AppKit 构建，提供菜单栏入口、设备面板、实时缩略图与独立镜像窗口。
 - **三条画面接入路径。** USB iPhone 使用 AVFoundation；无线 iPhone 通过局域网传输 H.264；Android 使用固定版本的 scrcpy server 传输画面与声音。
-- **按需连接真机控制。** 通过 Appium 点击、滑动、输入、按键、切换和启停 App。打开 USB 或 Android 镜像不会自动建立控制会话。
+- **按需连接真机控制。** iPhone 直接连接 WDA，Android 通过 Appium / UiAutomator2，实现点击、滑动、输入、按键和 App 启停。打开 USB 或 Android 镜像不会自动建立控制会话。
 - **Agent 可以观察操作对象。** 实时帧、Apple Vision OCR、按需无障碍树、语义定位、等待与断言都围绕同一台真机工作。
 - **自动化过程可见。** Agent 的点击、滑动路径和目标高亮显示在 Mac 镜像上，不改变手机画面，也不写入编码后的视频。
 - **接入已有 AI 客户端。** 内置 Codex 与 Claude Code 配置向导；StupidMirror 本身无需模型 API Key，也不内置模型。
@@ -85,6 +85,32 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 ## 连接 AI Agent
 
+### Codex 插件：从应用内一键接入
+
+1. 将包含 Codex 插件的新构建安装到 Applications，打开 StupidMirror。首次使用 iPhone，先通过 USB 连接并完成应用内的 **iPhone 连接引导**；Android 需开启 USB 调试并授权此 Mac。
+2. 打开 **设置 → MCP 自动化**，点击 **接入 Codex**。应用会启用本地 MCP、安装随 App 附带的插件，并复用 Codex / ChatGPT 桌面端内置的 CLI；无需克隆仓库、安装 Python / Node.js 或复制 Token。
+3. 在 Codex 新建聊天，选择 **StupidMirror** 插件，发送：
+
+   > 用 StupidMirror 在 Codex 中显示我的手机屏幕，并读取当前页面，先不要点击。
+
+4. Codex 会按需在后台启动 StupidMirror。实时手机画面通过本机 WebRTC 直接显示在 Codex 插件面板内，支持选择设备、刷新、暂停/继续、返回主屏幕和复制截图；不会自动打开原生镜像窗口。保持手机已连接并解锁。
+
+**直接操作和标注：** 点击预览工具栏的 **操作**，控制连接就绪后可点按、拖动手机画面；AI 仍可通过 MCP 点击、滑动、输入和读取页面。点击 **标注** 会冻结当前画面，支持框选多个区域、撤销、填写说明，再将截图、设备、时间和坐标发送到当前 Codex 聊天。标注模式不会把拖动发送给手机。
+
+视频在本机通过加密 WebRTC 传输，不使用云端中转。宿主不支持视频时退回原分辨率 PNG；正式聊天的标注发送取决于宿主的图片消息能力。
+
+安装失败时页面会显示原因，可处理后重试。新聊天没有加载工具时，重新连接聊天或重启 Codex。**插件安装成功、设备已发现、真机可操作是三个不同状态**：依次用 `list_devices`、`observe_screen` 和一次授权操作后的观察确认。
+
+更新 App 后再次点击 **更新或重新安装插件**（重新打开设置时显示 **接入 Codex**）即可刷新安装副本。支持插件的 Codex CLI 也可使用 `bash scripts/install-codex-plugin.sh` 安装；开发者先运行 `bash scripts/build-app.sh` 并安装生成的 App。
+
+插件复用同一个设备引擎，不单独启动 WDA。端口和 Token 轮换自动读取；应用启用 MCP 时将连接信息写入当前用户的 `~/Library/Application Support/StupidMirror/MCP/connection.json`（目录 `0700`、文件 `0600`），停止服务时移除。该文件不包含在插件包中，也不应被上传或粘贴到聊天。
+
+如果已有手动配置的 `stupidmirror` MCP，安装器仅在其 URL 与当前应用端点一致时迁移这一条配置，并在本机保留私有恢复副本；其他配置保持不变。不匹配的同名连接会显示提示，避免覆盖。
+
+### 手动 MCP 接入 / Claude Code
+
+展开 **高级连接设置 · 其他 AI 客户端**：
+
 1. 打开**设置 → MCP**，启用本地 MCP Server。
 2. 在连接向导中选择 **Codex** 或 **Claude Code**。
 3. 将生成的配置或命令复制到客户端，其中包含地址、Bearer 认证和准备超时。
@@ -100,7 +126,7 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 | 阶段 | 工具 | 行为 |
 | --- | --- | --- |
-| 连接 | `list_devices`、`start_mirror`、`connect_control` | 发现目标，准备所需会话 |
+| 连接 | `list_devices`、`show_screen`、`connect_control` | 发现目标，准备所需会话 |
 | 观察 | `observe_screen`、`find_any_element` | 读取实时帧，使用本地 OCR，按需获取无障碍信息 |
 | 操作 | `tap_text`、`tap_element`、`replace_text`、`swipe` | 操作已观察到的目标，或执行明确的手势 |
 | 验证 | `wait_for`、`assert_screen`、`observe_screen` | 检查操作后的状态 |
@@ -125,15 +151,11 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 ## 架构与隐私
 
 ```text
-iPhone USB ── AVFoundation ──────────────┐
-iPhone LAN ── H.264 / SRT ───────────────┼── Native macOS mirror
-Android    ── ADB / scrcpy ──────────────┘        │
-                                                  ├── Vision OCR / observations
-AI client  ── localhost MCP ── device actions ────┘
-                                  │
-                         Appium: XCUITest / UiAutomator2
-                                  │
-                              Real device
+iPhone USB → AVFoundation ─┐
+iPhone LAN → H.264 / SRT ──┼→ 采集 → 原生镜像 / Vision OCR
+Android → ADB / scrcpy ────┘    └→ H.264 → 本机 WebRTC → Codex 面板
+Codex → 内置 stdio 桥接 → 本机鉴权 MCP → 观察 / 操作
+iOS 操作 → smtunnel / WDA；Android 操作 → Appium / UiAutomator2
 ```
 
 采集、播放和 OCR 均在本地完成。StupidMirror 不会自行将镜像内容上传到模型服务商。**外部 AI 客户端可以通过 MCP 获取截图和工具结果**；后续如何处理这些信息，取决于该客户端的账号、模型服务商和数据设置。
@@ -142,7 +164,7 @@ AI client  ── localhost MCP ── device actions ────┘
 
 ## 从源码构建
 
-需要 macOS 15+ 与 Swift 6 工具链：
+需要 macOS 15+、Swift 6 工具链和 Go（版本见 sidecar 的 `go.mod`）；插件界面开发另需 Node.js 22+：
 
 ```bash
 git clone https://github.com/LiuTianjie/StupidMirror.git
@@ -151,8 +173,8 @@ make run
 ```
 
 ```bash
-swift build        # 编译
-swift test         # 运行测试
+swift build --build-system native # 编译
+swift test --build-system native  # 运行测试
 make app           # 生成 dist/StupidMirror.app
 open dist/StupidMirror.app
 ```
@@ -173,6 +195,10 @@ open dist/StupidMirror.app
 | [发布流程](RELEASING.md) | 签名、公证、固定应用身份与产物上传 |
 | [更新日志](CHANGELOG.md) | 版本历史 |
 | [账号许可](LICENSING.md) | 激活、账号迁移与许可服务实现 |
+
+## Codex 插件完整指南
+
+参见 [Codex 插件指南](docs/codex-plugin.md)：内嵌视频、直接操作、标注、隐私和排障。插件开发需 Node.js 22+，原生打包需 Go；提交前运行 `npm ci --prefix plugins/stupidmirror/ui`、`npm run build --prefix plugins/stupidmirror/ui` 和 `npm test --prefix plugins/stupidmirror/ui`，将生成的内嵌 HTML 一并提交。
 
 ## 许可证
 

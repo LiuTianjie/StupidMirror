@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .executable(name: "StupidMirrorApp", targets: ["StupidMirrorApp"])
+        .executable(name: "StupidMirrorApp", targets: ["StupidMirrorApp"]),
+        .executable(name: "StupidMirrorMCPBridge", targets: ["StupidMirrorMCPBridge"])
     ],
     dependencies: [
         .package(
@@ -20,6 +21,19 @@ let package = Package(
         )
     ],
     targets: [
+        .target(name: "StupidMirrorConnection"),
+        .target(
+            name: "StupidMirrorBridgeCore",
+            dependencies: ["StupidMirrorConnection", .product(name: "MCP", package: "swift-sdk")]
+        ),
+        .executableTarget(
+            name: "StupidMirrorMCPBridge",
+            dependencies: ["StupidMirrorBridgeCore", "StupidMirrorConnection", .product(name: "MCP", package: "swift-sdk")]
+        ),
+        .testTarget(
+            name: "StupidMirrorBridgeTests",
+            dependencies: ["StupidMirrorBridgeCore", "StupidMirrorConnection", .product(name: "MCP", package: "swift-sdk")]
+        ),
         .binaryTarget(
             name: "libsrt",
             url: "https://github.com/HaishinKit/libsrt-xcframework/releases/download/v1.5.4/libsrt.xcframework.zip",
@@ -28,6 +42,7 @@ let package = Package(
         .executableTarget(
             name: "StupidMirrorApp",
             dependencies: [
+                "StupidMirrorConnection",
                 "libsrt",
                 .product(name: "MCP", package: "swift-sdk"),
                 .product(name: "NIOCore", package: "swift-nio"),

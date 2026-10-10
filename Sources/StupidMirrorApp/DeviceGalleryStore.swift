@@ -159,6 +159,10 @@ final class DeviceGalleryStore: ObservableObject {
 
     private static let languageDefaultsKey = "StupidMirror.language"
     private static let autoStartMirrorsDefaultsKey = "StupidMirror.autoStartMirrors"
+    private var embeddedPreviewIDs = Set<String>()
+    private var shouldAutoStartMirrors: Bool {
+        autoStartMirrors && !CommandLine.arguments.contains("--mcp-background")
+    }
     private static let wirelessMirroringEnabledDefaultsKey = "StupidMirror.wirelessMirroringEnabled"
     private static let wirelessSetupGuideSeenDefaultsKey = "StupidMirror.wirelessSetupGuideSeen"
     private static let audioPlaybackEnabledDefaultsKey = "StupidMirror.audioPlaybackEnabled"
@@ -883,7 +887,7 @@ final class DeviceGalleryStore: ObservableObject {
                 ))
                 nextSessions.append(session)
                 claim(session)
-                if autoStartMirrors, identity.connectionState == .connected {
+                if shouldAutoStartMirrors, identity.connectionState == .connected {
                     autoStartIDs.insert(session.id)
                 }
             }
@@ -948,7 +952,7 @@ final class DeviceGalleryStore: ObservableObject {
                     let session = DeviceSession(device: identity, wirelessDevice: wirelessDevice)
                     nextSessions.append(session)
                     claim(session)
-                    if autoStartMirrors, identity.connectionState == .connected {
+                    if shouldAutoStartMirrors, identity.connectionState == .connected {
                         autoStartIDs.insert(session.id)
                     }
                 }
@@ -1006,7 +1010,7 @@ final class DeviceGalleryStore: ObservableObject {
                     let session = DeviceSession(device: identity, androidDevice: androidDevice)
                     session.mirrorSession.setAudioEnabled(audioPlaybackEnabled)
                     nextSessions.append(session)
-                    if autoStartMirrors, identity.connectionState == .connected {
+                    if shouldAutoStartMirrors, identity.connectionState == .connected {
                         autoStartIDs.insert(session.id)
                     }
                 }
@@ -1183,6 +1187,7 @@ final class DeviceGalleryStore: ObservableObject {
     private func migrateSessionID(from oldID: String, to newID: String) {
         guard oldID != newID else { return }
         if desiredMirrorIDs.remove(oldID) != nil { desiredMirrorIDs.insert(newID) }
+        if embeddedPreviewIDs.remove(oldID) != nil { embeddedPreviewIDs.insert(newID) }
         if pendingActivationMirrorIDs.remove(oldID) != nil { pendingActivationMirrorIDs.insert(newID) }
         if floatingMirrorIDs.remove(oldID) != nil { floatingMirrorIDs.insert(newID) }
         if removedDeviceIDs.remove(oldID) != nil { removedDeviceIDs.insert(newID) }
@@ -1303,11 +1308,11 @@ final class DeviceGalleryStore: ObservableObject {
                   || session.transport == .wireless
                   || permissionStatus == .authorized else { return }
         select(session)
-        requestMirrorStarts([session.id])
+        requestMirrorStarts([session.id], showWindow: true)
     }
 
     func startAll() {
-        requestMirrorStarts(Set(connectedSessions.map(\.id)))
+        requestMirrorStarts(Set(connectedSessions.map(\.id)), showWindow: true)
     }
 
     func presentActivation() {
@@ -1383,6 +1388,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     func stop(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
+        embeddedPreviewIDs.remove(session.id)
         pendingActivationMirrorIDs.remove(session.id)
         wirelessTransportTasks[session.id]?.cancel()
         wirelessTransportTasks[session.id] = nil
@@ -1391,6 +1397,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     func stopAll() {
         desiredMirrorIDs.removeAll()
+        embeddedPreviewIDs.removeAll()
         pendingActivationMirrorIDs.removeAll()
         dismissActivationSheetIfPresented()
         MirrorWindowRegistry.shared.closeAll(sessions: sessions)
@@ -1421,6 +1428,7 @@ final class DeviceGalleryStore: ObservableObject {
         // Stop accepting automation first. In-flight MCP calls are allowed to
         // finish or are cancelled before the underlying WDA/Appium sessions.
         await mcpServer.shutdown()
+        await automationService.shutdownPreview()
         refreshGeneration &+= 1
         refreshTask?.cancel()
         refreshTask = nil
@@ -1492,7 +1500,8 @@ final class DeviceGalleryStore: ObservableObject {
     @discardableResult
     private func requestMirrorStarts(
         _ sessionIDs: Set<String>,
-        presentActivationWhenBlocked: Bool = true
+        presentActivationWhenBlocked: Bool = true,
+        showWindow: Bool? = nil
     ) -> MirrorStartPolicyDecision {
         guard !isShuttingDown, !sessionIDs.isEmpty else {
             return MirrorStartPolicyDecision(allowedIDs: [], blockedIDs: [])
@@ -1514,6 +1523,10 @@ final class DeviceGalleryStore: ObservableObject {
             requestedIDs: requestedIDs,
             preferredID: selectedSessionID
         )
+        if let showWindow {
+            if showWindow { embeddedPreviewIDs.subtract(decision.allowedIDs) }
+            else { embeddedPreviewIDs.formUnion(decision.allowedIDs) }
+        }
         performAuthorizedStarts(decision.allowedIDs)
         if !decision.blockedIDs.isEmpty {
             pendingActivationMirrorIDs.formUnion(decision.blockedIDs)
@@ -1537,7 +1550,11 @@ final class DeviceGalleryStore: ObservableObject {
             thumbnailCaptures[session.id]?.cancel()
             thumbnailCaptures[session.id] = nil
             prepareWirelessTransportIfNeeded(for: session)
-            MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+            if embeddedPreviewIDs.contains(session.id) {
+                session.mirrorSession.start()
+            } else {
+                MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+            }
         }
     }
 
@@ -1839,17 +1856,31 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
-    func startMirrorForAutomation(for session: DeviceSession) async throws {
+    func startMirrorForAutomation(
+        for session: DeviceSession, showWindow: Bool = true, waitUntilRunning: Bool = true
+    ) async throws {
         guard !isShuttingDown,
               let session = beginConnectionAttemptIfNeeded(for: session) else {
             throw DeviceAutomationError.deviceUnavailable
         }
-        if session.mirrorSession.state == .running { return }
+        if session.mirrorSession.state == .running {
+            if showWindow {
+                embeddedPreviewIDs.remove(session.id)
+                MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
+            }
+            return
+        }
+        if session.platform == .iOS, session.transport == .usb, permissionStatus != .authorized {
+            throw DeviceAutomationError.mirrorFailed(t("permission.usbBanner.body"))
+        }
 
-        let decision = requestMirrorStarts([session.id])
+        let decision = requestMirrorStarts([session.id], presentActivationWhenBlocked: showWindow, showWindow: showWindow)
         if decision.blockedIDs.contains(session.id) {
             throw DeviceAutomationError.activationRequired
         }
+        // Embedded views poll the capture state while wireless setup proceeds.
+        // Returning promptly keeps first-time WDA setup outside the host's tool timeout.
+        guard waitUntilRunning else { return }
 
         let deadline = ContinuousClock.now + .seconds(
             session.isIOSWireless ? 120 : 20

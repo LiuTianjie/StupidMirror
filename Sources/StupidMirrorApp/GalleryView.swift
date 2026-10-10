@@ -872,6 +872,7 @@ private enum MCPTutorialClient: String, CaseIterable, Identifiable {
 struct MCPAutomationSettingsView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject var manager: MCPServerManager
+    @StateObject private var codexInstaller = CodexPluginInstaller()
     @State private var portDraft = ""
     @State private var tutorialClient: MCPTutorialClient = .codex
     @State private var showToken = false
@@ -881,99 +882,107 @@ struct MCPAutomationSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                GroupBox(store.t("mcp.server")) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle(
-                            store.t("mcp.enabled"),
-                            isOn: Binding(
-                                get: { manager.enabled },
-                                set: { value in Task { await manager.setEnabled(value) } }
-                            )
-                        )
-                        HStack {
-                            StatusPill(title: statusTitle, color: statusColor)
-                            Text(manager.endpoint)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                            Spacer()
-                            Text(String(format: store.t("mcp.clients"), manager.connectedClientCount))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        if case let .failed(message) = manager.status {
-                            Text(message)
-                                .font(.caption)
-                                .foregroundStyle(Theme.Palette.danger)
-                                .textSelection(.enabled)
-                        }
-                        HStack {
-                            TextField(store.t("mcp.port"), text: $portDraft)
-                                .frame(width: 110)
-                            Button(store.t("mcp.applyPort")) {
-                                applyPort()
+                codexSetup
+
+                DisclosureGroup(store.t("mcp.advanced")) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        GroupBox(store.t("mcp.server")) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle(
+                                    store.t("mcp.enabled"),
+                                    isOn: Binding(
+                                        get: { manager.enabled },
+                                        set: { value in Task { await manager.setEnabled(value) } }
+                                    )
+                                )
+                                HStack {
+                                    StatusPill(title: statusTitle, color: statusColor)
+                                    Text(manager.endpoint)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled)
+                                    Spacer()
+                                    Text(String(format: store.t("mcp.clients"), manager.connectedClientCount))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                if case let .failed(message) = manager.status {
+                                    Text(message)
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.Palette.danger)
+                                        .textSelection(.enabled)
+                                }
+                                HStack {
+                                    TextField(store.t("mcp.port"), text: $portDraft)
+                                        .frame(width: 110)
+                                    Button(store.t("mcp.applyPort")) {
+                                        applyPort()
+                                    }
+                                    Text(store.t("mcp.localOnly"))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
-                            Text(store.t("mcp.localOnly"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            .padding(8)
                         }
-                    }
-                    .padding(8)
-                }
 
-                GroupBox(store.t("mcp.token")) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text(showToken ? manager.bearerToken : String(repeating: "•", count: 32))
-                                .font(.system(.caption, design: .monospaced))
-                                .lineLimit(1)
-                                .textSelection(.enabled)
-                            Spacer()
-                            Button(showToken ? store.t("mcp.hide") : store.t("mcp.show")) {
-                                showToken.toggle()
+                        GroupBox(store.t("mcp.token")) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                HStack {
+                                    Text(showToken ? manager.bearerToken : String(repeating: "•", count: 32))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .lineLimit(1)
+                                        .textSelection(.enabled)
+                                    Spacer()
+                                    Button(showToken ? store.t("mcp.hide") : store.t("mcp.show")) {
+                                        showToken.toggle()
+                                    }
+                                    Button(store.t("mcp.copyToken")) { copy(manager.bearerToken) }
+                                    Button(store.t("mcp.rotateToken"), role: .destructive) {
+                                        confirmRotation = true
+                                    }
+                                }
+                                Text(store.t("mcp.tokenHelp"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            Button(store.t("mcp.copyToken")) { copy(manager.bearerToken) }
-                            Button(store.t("mcp.rotateToken"), role: .destructive) {
-                                confirmRotation = true
-                            }
+                            .padding(8)
                         }
-                        Text(store.t("mcp.tokenHelp"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(8)
-                }
 
-                GroupBox(store.t("mcp.connect")) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Picker("", selection: $tutorialClient) {
-                            Text("Codex").tag(MCPTutorialClient.codex)
-                            Text("Claude Code").tag(MCPTutorialClient.claude)
-                        }
-                        .pickerStyle(.segmented)
+                        GroupBox(store.t("mcp.connect")) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Picker("", selection: $tutorialClient) {
+                                    Text("Codex").tag(MCPTutorialClient.codex)
+                                    Text("Claude Code").tag(MCPTutorialClient.claude)
+                                }
+                                .pickerStyle(.segmented)
 
-                        Text(tutorialClient == .codex ? store.t("mcp.codexSteps") : store.t("mcp.claudeSteps"))
-                            .font(.callout)
-                            .fixedSize(horizontal: false, vertical: true)
+                                Text(tutorialClient == .codex ? store.t("mcp.codexSteps") : store.t("mcp.claudeSteps"))
+                                    .font(.callout)
+                                    .fixedSize(horizontal: false, vertical: true)
 
-                        HStack(alignment: .top) {
-                            ScrollView(.horizontal) {
-                                Text(connectionText)
-                                    .font(.system(.caption, design: .monospaced))
+                                HStack(alignment: .top) {
+                                    ScrollView(.horizontal) {
+                                        Text(connectionText)
+                                            .font(.system(.caption, design: .monospaced))
+                                            .textSelection(.enabled)
+                                            .padding(10)
+                                    }
+                                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+                                    Button(store.t("mcp.copyConfig")) { copy(connectionText) }
+                                }
+
+                                Text(store.t("mcp.verify"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("“\(store.t("mcp.testPrompt"))”")
+                                    .font(.caption)
                                     .textSelection(.enabled)
-                                    .padding(10)
                             }
-                            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
-                            Button(store.t("mcp.copyConfig")) { copy(connectionText) }
+                            .padding(8)
                         }
 
-                        Text(store.t("mcp.verify"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("“\(store.t("mcp.testPrompt"))”")
-                            .font(.caption)
-                            .textSelection(.enabled)
                     }
-                    .padding(8)
+                    .padding(.top, 8)
                 }
 
                 GroupBox(store.t("mcp.logs")) {
@@ -1032,6 +1041,67 @@ struct MCPAutomationSettingsView: View {
 
     private var connectionText: String {
         tutorialClient == .codex ? manager.codexConfiguration : manager.claudeCommand
+    }
+
+    private var codexSetup: some View {
+        GroupBox(store.t("mcp.codex.title")) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(store.t("mcp.codex.intro"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(store.t("mcp.codex.step1")).font(.headline)
+                    Text(store.sessions.isEmpty ? store.t("mcp.codex.noDevice") : String(format: store.t("mcp.codex.devices"), store.sessions.count))
+                        .font(.callout).foregroundStyle(.secondary)
+                    Button(store.t("mcp.codex.phoneSetup")) { store.presentIPhoneSetup() }
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(store.t("mcp.codex.step2")).font(.headline)
+                    HStack(spacing: 10) {
+                        Button {
+                            Task {
+                                await manager.setEnabled(true)
+                                await codexInstaller.install()
+                            }
+                        } label: {
+                            Label(store.t(codexInstaller.installedThisSession ? "mcp.codex.reinstall" : "mcp.codex.install"), systemImage: "puzzlepiece.extension")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(codexInstaller.isInstalling)
+                        if codexInstaller.isInstalling {
+                            ProgressView().controlSize(.small)
+                            Text(store.t("mcp.codex.installing")).font(.caption)
+                        }
+                    }
+                    if let error = codexInstaller.error {
+                        Text(store.t("mcp.codex.failed")).font(.callout).foregroundStyle(Theme.Palette.danger)
+                        Text(error).font(.caption).textSelection(.enabled)
+                    } else if codexInstaller.installedThisSession {
+                        Label(store.t("mcp.codex.installed"), systemImage: "checkmark.circle.fill")
+                            .font(.callout).foregroundStyle(.green)
+                    }
+                    if manager.connectedClientCount > 0 {
+                        Label(store.t("mcp.codex.connected"), systemImage: "link")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(store.t("mcp.codex.step3")).font(.headline)
+                    Text(store.t("mcp.codex.newChat")).font(.callout).foregroundStyle(.secondary)
+                    Text("“\(store.t("mcp.codex.prompt"))”")
+                        .font(.callout).textSelection(.enabled)
+                    HStack {
+                        Button(store.t("mcp.codex.open")) { codexInstaller.openCodex() }
+                        Button(store.t("mcp.codex.copyPrompt")) { copy(store.t("mcp.codex.prompt")) }
+                    }
+                    Text(store.t("mcp.codex.screen"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(8)
+        }
     }
 
     private var statusTitle: String {

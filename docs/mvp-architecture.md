@@ -1,5 +1,7 @@
 # StupidMirror MVP 架构草案
 
+> 本文保留早期设计背景。当前实现以 [README](../README.zh-CN.md#架构与隐私) 和 [Codex 插件指南](codex-plugin.md) 为准：iOS 已通过 smtunnel 直连 WDA，Codex 使用 stdio MCP 桥接及本机 WebRTC 内嵌预览。
+
 ## 产品边界
 
 MVP 先服务内测/自用场景：

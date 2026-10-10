@@ -31,33 +31,36 @@ commercial distribution or use requires a separate written commercial license.
    scripts/setup-notary-profile.sh
    ```
 
-## Release
+## Prepare a release
 
-Patch release:
+Final publication is a manual maintainer action. The script defaults to a local
+signed/notarized artifact and tag. It never publishes a GitHub Release. The
+website deploys automatically from `main/docs`, so prepare changes on a release
+branch and open a PR; do not push main during preparation.
 
-```sh
-NOTARY_PROFILE=stupidmirror-notary make release-local BUMP=patch
-```
+1. Update `VERSION`, `CHANGELOG.md`, both READMEs, and website copy/translations.
+2. Rebuild and test the widget, test both Go sidecars, and run Swift tests.
+3. Commit all release source on a `codex/` release branch.
+4. Build and notarize (the existing version must match the tag):
 
-Specific version:
+   ```sh
+   NOTARY_PROFILE=stupidmirror-notary COMMIT_RELEASE=false PUSH_RELEASE=false \
+     bash scripts/build-and-upload-release.sh v0.3.0
+   ```
 
-```sh
-NOTARY_PROFILE=stupidmirror-notary make release-local BUMP=0.2.0
-```
+5. Push the release branch and exact tag, create a PR, wait for CI, then create
+   a **draft** Release and upload the zip and SHA-256 checksums. Alternatively,
+   `PUSH_RELEASE=true` on the release branch prepares a draft; published releases
+   are protected from artifact replacement. Use a notes file with `gh --notes-file`.
+6. Verify uploaded asset size/digest and complete real-host/device acceptance.
+7. The maintainer personally merges the PR (deploying Pages) and publishes the
+   draft Release. Preparation does not count as either of these actions.
 
-Public GitHub releases must be notarized. Without `NOTARY_PROFILE`, the release
-script refuses to upload because downloaded, quarantined apps can be blocked by
-Gatekeeper even when they are Developer ID signed. For private/local test builds
-only, set `ALLOW_UNNOTARIZED=true`.
-
-When `BUMP` is set, the script updates `VERSION`, commits `Release vX.Y.Z`, tags
-the commit, pushes the branch and tag, verifies that the tag on `origin` points
-to the packaged commit, then uploads the zip to GitHub Release.
-
-`BUMP` requires `COMMIT_RELEASE=true`; otherwise the tag would not record the
-version packaged in the artifact, so the script rejects that combination.
-Set `PUSH_RELEASE=false` for a local-only run: the signed artifact and local tag
-are created, but nothing is pushed and no GitHub Release is created or updated.
+Apple notarization is mandatory for distribution. Without `NOTARY_PROFILE`, the
+script refuses to continue unless `ALLOW_UNNOTARIZED=true` is explicitly used
+for a private test build. Do not publish that build. After upload verification,
+clean this run's duplicate artifacts and temporary build data; retain source,
+installed apps, shared caches, and remote artifacts.
 
 Public releases are intentionally locked to bundle ID
 `com.gaojiua.StupidMirror` and Apple Team `L95PYLFT86`. Do not override either
@@ -88,10 +91,10 @@ Before an artifact is uploaded, the release script asserts:
 - `NOTARY_PROFILE`: Keychain profile for `xcrun notarytool`.
 - `ALLOW_UNNOTARIZED=true`: Allow uploading a non-notarized build. Use only for
   private testing.
-- `DRAFT=true`: Create a draft GitHub Release.
+- `DRAFT=true`: Default and required for uploads; publishing is always manual.
 - `PRERELEASE=true`: Mark the GitHub Release as a prerelease.
 - `ALLOW_DIRTY=true`: Allow release with uncommitted working tree changes.
 - `COMMIT_RELEASE=false`: Allowed only without `BUMP`; `BUMP` must commit the
   updated `VERSION` before tagging.
-- `PUSH_RELEASE=false`: Keep the artifact and tag local; skip all pushes and
+- `PUSH_RELEASE=false`: Default. Keep the artifact and tag local; skip all pushes and
   GitHub Release creation or upload.

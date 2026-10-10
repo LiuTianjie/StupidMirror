@@ -1788,3 +1788,8 @@ button {
     transform: none;
   }
 }
+
+/* Codex guide shares the existing website typography and card system. */
+#codex .scenes-heading p, .codex-privacy { max-width: 760px; line-height: 1.7; }
+.codex-guide { margin-top: 28px; text-decoration: underline; text-underline-offset: 4px; }
+.codex-privacy { margin-top: 18px; opacity: .72; font-size: 14px; }

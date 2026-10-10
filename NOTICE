@@ -14,3 +14,10 @@ go-ios (github.com/danielpaulus/go-ios, MIT License) and gVisor's netstack
 (gvisor.dev/gvisor, Apache License 2.0), plus their Go module dependencies.
 Those components remain subject to their own licenses; see
 tools/smtunnel/go.mod for the exact versions.
+
+The Codex preview UI adapts iPhone Use (https://github.com/zhongerxin/iPhone-use,
+MIT License) and bundles the MCP Apps SDK. Attribution and license texts are in
+plugins/stupidmirror/THIRD_PARTY_NOTICES.md and assets/widget-licenses.txt.
+The smpreview WebRTC sidecar uses Pion and its Go dependencies; exact versions
+are in tools/smpreview/go.mod and license texts in
+plugins/stupidmirror/assets/webrtc-licenses.txt.
