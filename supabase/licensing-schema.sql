@@ -155,12 +155,9 @@ stable
 security definer
 set search_path = pg_catalog
 as $$
-  select exists (
-    select 1
-      from stupidmirror_licensing.cutover_config c
-     where c.id
-       and p_now < c.grace_ends_at
-  );
+  -- Kept for existing RPC compatibility. Installation activation is permanent;
+  -- signing in to bind or restore an account license is optional.
+  select true;
 $$;
 
 create or replace function stupidmirror_licensing.is_legacy_app_version(p_app_version text)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.3 - 2026-10-10
+
+- Restore activation by SM- code without signing in: enable code entry, purchase
+  links and submission, and use installation activation for signed-out users.
+- Put code activation first and keep account sign-in and binding in an optional
+  section. Preserve redemption and restore for existing account users.
+- Remove the client-side mandatory account-claim deadline from Mac receipts.
+  Include a separate server migration to keep installation activation available
+  after the historical account-migration grace period.
+- Cover signed-out activation, cached receipt restoration and signed-in redemption
+  with regression tests.
+
 ## 0.3.2 - 2026-10-10
 
 - Distinguish a rejected annotation message from an unconfirmed delivery.

@@ -109,6 +109,7 @@ struct LocalLicenseRecord: Codable, Equatable, Sendable {
     var licensePrincipal: LicensePrincipal?
     var claimedUserID: UUID?
     var claimDeadline: Date?
+    var accountClaimRequired: Bool?
 
     init(installationID: UUID = UUID()) {
         self.installationID = installationID
@@ -197,7 +198,7 @@ enum LicenseServiceError: LocalizedError, Equatable, Sendable {
         case .invalidResponse:
             "The license server returned an invalid response."
         case .loginRequired:
-            "Sign in with Google, GitHub, or email to buy, redeem, or claim a license."
+            "Sign in to restore or bind an account license. Code activation does not require sign-in."
         case .iToolCodeNotAccepted:
             "iTool Pro codes cannot be redeemed in StupidMirror. Use an SM- activation code."
         case let .rejected(_, message):
@@ -265,7 +266,7 @@ final class LicenseManager: ObservableObject {
     }
 
     var showsDashboardActivationEntry: Bool {
-        needsClaim || state.showsDashboardActivationEntry
+        state.showsDashboardActivationEntry
     }
 
     func bootstrap() async {
@@ -292,6 +293,12 @@ final class LicenseManager: ObservableObject {
 
     func activate(code: String) async throws {
         await bootstrap()
+        // Account owners keep account redemption; a fresh installation only
+        // needs the code and never starts an authentication flow.
+        if authSession != nil {
+            try await redeem(code: code)
+            return
+        }
         guard !isActivating else { throw LicenseServiceError.requestInProgress }
         guard var record else { throw LicenseServiceError.storage(unavailableStateMessage) }
 
@@ -315,7 +322,8 @@ final class LicenseManager: ObservableObject {
         record.lastTrustedTime = max(record.lastTrustedTime ?? validatedAt, validatedAt)
         record.licensePrincipal = .installation
         record.claimedUserID = nil
-        record.claimDeadline = LicenseManager.defaultClaimDeadline
+        record.claimDeadline = nil
+        record.accountClaimRequired = false
         try save(record)
         principal = .installation
         needsClaim = true
@@ -451,6 +459,7 @@ final class LicenseManager: ObservableObject {
                 self.apply(validation: validation, originalReceipt: receipt)
             } catch {
                 guard !Task.isCancelled else { return }
+                guard self.record?.activationReceipt == receipt else { return }
                 if case let LicenseServiceError.rejected(code, _) = error {
                     if code == "login_required" {
                         try? self.authStore.clear()
@@ -460,13 +469,16 @@ final class LicenseManager: ObservableObject {
                     }
                     if ["license_revoked", "invalid_receipt", "claim_required"].contains(code) {
                         if code == "claim_required" {
+                            guard self.record?.activationReceipt == receipt else { return }
                             self.needsClaim = true
                             self.principal = .installation
                             if var record = self.record {
-                                record.claimDeadline = self.clock.now.addingTimeInterval(-1)
+                                record.accountClaimRequired = true
                                 try? self.save(record)
                             }
-                            self.refreshStateFromLocalRecord()
+                            // An explicit server rejection still takes effect;
+                            // only the historical local deadline is optional.
+                            self.state = .unlicensed
                             return
                         }
                         if let receipt {
@@ -503,15 +515,11 @@ final class LicenseManager: ObservableObject {
         normalize(code: code).hasPrefix("IT")
     }
 
-    static let defaultClaimDeadline = Date(timeIntervalSince1970: 1_796_169_600)
-
     private func apply(validation: LicenseValidation, originalReceipt: String?) {
         guard var record else { return }
         // An older validation request must never overwrite or revoke a receipt
         // installed by a newer activation request.
-        if let originalReceipt, record.activationReceipt != originalReceipt {
-            return
-        }
+        guard record.activationReceipt == originalReceipt else { return }
         guard validation.isValid else {
             if let originalReceipt {
                 revokeLocalReceipt(matching: originalReceipt)
@@ -534,6 +542,7 @@ final class LicenseManager: ObservableObject {
         record.lastTrustedTime = max(record.lastTrustedTime ?? validatedAt, validatedAt)
         record.licensePrincipal = validation.principal
         record.claimDeadline = validation.claimDeadline
+        record.accountClaimRequired = false
         if validation.principal == .account {
             record.claimedUserID = authSession?.userID
         }
@@ -584,12 +593,13 @@ final class LicenseManager: ObservableObject {
         }
 
         if hasValidReceipt {
-            if let deadline = record.claimDeadline, clock.now >= deadline {
-                needsClaim = true
+            // Binding an installation license to an account is optional. Old
+            // migration deadlines must not expire a valid local activation.
+            needsClaim = record.principal == .installation
+            if record.accountClaimRequired == true {
                 state = .unlicensed
                 return
             }
-            needsClaim = record.principal == .installation
             state = .licensed(lastValidatedAt: record.lastValidatedAt)
             return
         }

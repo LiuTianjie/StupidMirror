@@ -135,6 +135,21 @@ final class LicenseManagerTests: XCTestCase {
         XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
         XCTAssertEqual(manager.state, .licensed(lastValidatedAt: baseDate))
         XCTAssertEqual(manager.state.capabilities, .activated)
+        XCTAssertNil(manager.authSession)
+        XCTAssertNil(try store.load()?.claimDeadline)
+        XCTAssertFalse(manager.showsDashboardActivationEntry)
+        let redemption = await remote.lastRedeemCall()
+        XCTAssertNil(redemption)
+
+        let restored = LicenseManager(
+            store: store,
+            remote: FakeLicenseRemote(validationError: .rejected(code: "temporarily_unavailable", message: "offline")),
+            clock: TestLicenseClock(now: baseDate.addingTimeInterval(86_400))
+        )
+        await restored.bootstrap()
+        await restored.waitForBackgroundValidation()
+        XCTAssertNil(restored.authSession)
+        XCTAssertEqual(restored.state.capabilities, .activated)
     }
 
     func testActivatedReceiptAllowsOfflineStartWhileValidationFails() async {
@@ -323,7 +338,7 @@ final class LicenseManagerTests: XCTestCase {
         XCTAssertEqual(manager.state.capabilities, .activated)
     }
 
-    func testExpiredUnclaimedReceiptDoesNotGrantPaidFeatures() async throws {
+    func testHistoricalClaimDeadlineDoesNotExpireInstallationLicense() async throws {
         var record = LocalLicenseRecord(installationID: UUID())
         record.activationReceipt = receipt1
         record.licensePrincipal = .installation
@@ -335,9 +350,9 @@ final class LicenseManagerTests: XCTestCase {
             clock: TestLicenseClock(now: baseDate)
         )
         await manager.bootstrap()
-        XCTAssertEqual(manager.state, .unlicensed)
+        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: nil))
         XCTAssertTrue(manager.needsClaim)
-        XCTAssertEqual(manager.state.capabilities, .unactivated)
+        XCTAssertEqual(manager.state.capabilities, .activated)
         XCTAssertNotNil(manager.installationID)
         XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
     }
@@ -356,6 +371,23 @@ final class LicenseManagerTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+
+    func testExplicitServerClaimRequirementStillRestrictsLicense() async throws {
+        var record = LocalLicenseRecord(installationID: UUID())
+        record.activationReceipt = receipt1
+        let store = MemoryLicenseStore(record: record)
+        let manager = LicenseManager(
+            store: store,
+            remote: FakeLicenseRemote(validationError: .rejected(code: "claim_required", message: "Claim required")),
+            clock: TestLicenseClock(now: baseDate)
+        )
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        manager.checkpointTrustedTime()
+        XCTAssertEqual(manager.state, .unlicensed)
+        XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
+        XCTAssertEqual(try store.load()?.accountClaimRequired, true)
     }
 
     func testRedeemToAccountPersistsAccountPrincipal() async throws {
@@ -378,7 +410,9 @@ final class LicenseManagerTests: XCTestCase {
             authStore: MemoryLicenseAuthStore(session: session),
             authFlow: FakeLicenseAuthFlow(session: session)
         )
-        try await manager.redeem(code: " sm-2345 ")
+        try await manager.activate(code: " sm-2345 ")
+        let installationActivation = await remote.lastActivationCall()
+        XCTAssertNil(installationActivation)
         XCTAssertEqual(try store.load()?.activationReceipt, receipt2)
         XCTAssertEqual(try store.load()?.licensePrincipal, .account)
         XCTAssertEqual(manager.principal, .account)

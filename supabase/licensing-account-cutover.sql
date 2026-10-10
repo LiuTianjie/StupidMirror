@@ -14,9 +14,8 @@ language sql
 immutable
 set search_path = pg_catalog
 as $$
-  -- New clients honor a Mac-bound Keychain receipt until this instant, then
-  -- require a one-way claim onto auth.uid(). v0.2.x validate/activate ignore it.
-  select timestamptz '2026-12-02 00:00:00+00';
+  -- Account binding is optional; installation receipts have no claim deadline.
+  select null::timestamptz;
 $$;
 
 revoke all on function stupidmirror_licensing.installation_claim_deadline()

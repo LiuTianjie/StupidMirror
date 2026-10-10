@@ -1354,7 +1354,8 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func activateLicense(code: String) async throws {
-        try await redeemLicense(code: code)
+        try await licenseManager.activate(code: code)
+        finishSuccessfulLicenseChange()
     }
 
     func redeemLicense(code: String) async throws {

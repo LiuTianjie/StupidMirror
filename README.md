@@ -31,7 +31,7 @@ StupidMirror brings real mobile devices into a native macOS workspace. View an i
 
 The same workspace is available to AI agents over **MCP**: observe the current screen, locate a target with local OCR or native accessibility, act on the device, and inspect the result. Watch the phone inside Codex with the bundled plugin, or use the native Mac mirror.
 
-**One device can be mirrored and controlled without signing in.** Account activation unlocks simultaneous devices. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
+**One device can be mirrored and controlled without signing in.** An SM- activation code unlocks simultaneous devices without signing in. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
 
 ## What makes it useful
 
@@ -203,6 +203,6 @@ Device bugs are most useful with macOS/device OS versions, connection type, repr
 
 StupidMirror is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE). It permits the noncommercial uses described in that license and is not an OSI-approved open-source license. Commercial use requires separate written authorization; see [commercial licensing](COMMERCIAL-LICENSE.md).
 
-The current app allows one mirror and one control session without activation. To unlock simultaneous devices, sign in with Google, GitHub, or email and redeem an `SM-` activation code from the [official store](https://wzyp.cn/item/exords). iTool `IT-` codes are not accepted. Feature activation and commercial authorization are separate matters.
+The current app allows one mirror and one control session without activation. To unlock simultaneous devices, enter an `SM-` activation code from the [official store](https://wzyp.cn/item/exords). No sign-in is required. Account sign-in remains optional for restoring an existing account license or binding a Mac license. iTool `IT-` codes are not accepted. Feature activation and commercial authorization are separate matters.
 
 Third-party components retain their own licenses. See [NOTICE](NOTICE).
