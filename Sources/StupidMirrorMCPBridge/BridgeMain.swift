@@ -25,7 +25,7 @@ enum BridgeMain {
                 }
             }
             guard let server else { return }
-            try await server.start(transport: StdioTransport())
+            try await server.start(transport: MCPCompatibilityTransport(StdioTransport()))
             await server.waitUntilCompleted()
             await server.stop()
             await bridge.disconnect()

@@ -1,5 +1,6 @@
 import Foundation
 import MCP
+import StupidMirrorConnection
 @preconcurrency import NIOCore
 @preconcurrency import NIOHTTP1
 @preconcurrency import NIOPosix
@@ -140,7 +141,7 @@ actor MCPHTTPApplication {
         )
         do {
             let server = try await serverFactory(sessionID)
-            try await server.start(transport: transport)
+            try await server.start(transport: MCPCompatibilityTransport(transport))
             sessions[sessionID] = SessionContext(
                 server: server,
                 transport: transport,

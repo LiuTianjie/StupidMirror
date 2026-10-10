@@ -44,6 +44,7 @@ struct CodexPreviewState: Codable, Sendable {
 }
 
 enum StupidMirrorScreenResource {
+    static let displayName = "StupidMirror"
     static let uri = "ui://stupidmirror/phone-screen-v2.html"
     static let mimeType = "text/html;profile=mcp-app"
     static let metadata = Metadata(additionalFields: [
@@ -57,7 +58,7 @@ enum StupidMirrorScreenResource {
         ])
     ])
     static let resource = Resource(
-        name: "StupidMirror Screen", uri: uri, title: "手机屏幕",
+        name: displayName, uri: uri, title: displayName,
         description: "Live iPhone and Android preview inside Codex.",
         mimeType: mimeType, _meta: metadata
     )

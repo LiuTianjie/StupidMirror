@@ -99,7 +99,7 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 视频在本机通过加密 WebRTC 传输，不使用云端中转。宿主不支持视频时退回原分辨率 PNG；正式聊天的标注发送取决于宿主的图片消息能力。
 
-安装失败时页面会显示原因，可处理后重试。新聊天没有加载工具时，重新连接聊天或重启 Codex。**插件安装成功、设备已发现、真机可操作是三个不同状态**：依次用 `list_devices`、`observe_screen` 和一次授权操作后的观察确认。
+安装失败时页面会显示原因，可处理后重试。工具未加载时，重新连接插件或新建聊天。StupidMirror 0.3.1 修复了扩展能力字段导致的 `-32603` 初始化错误；旧版遇到此错误时，重启 Codex 无法解决。嵌入面板统一显示为 **StupidMirror**。**插件安装成功、设备已发现、真机可操作是三个不同状态**：依次用 `list_devices`、`observe_screen` 和一次授权操作后的观察确认。
 
 更新 App 后再次点击 **更新或重新安装插件**（重新打开设置时显示 **接入 Codex**）即可刷新安装副本。支持插件的 Codex CLI 也可使用 `bash scripts/install-codex-plugin.sh` 安装；开发者先运行 `bash scripts/build-app.sh` 并安装生成的 App。
 

@@ -99,7 +99,7 @@ Mirror gestures reproduce what the mouse did: a slow drag replays its recorded p
 
 Video uses encrypted local WebRTC without a cloud relay. Unsupported hosts fall back to native-resolution PNG; annotation delivery requires the host’s image-message capability.
 
-Installation errors appear in the app and can be retried. Reconnect the chat or restart Codex if tools have not loaded. Verify installation, discovery and control separately: `list_devices`, then `observe_screen`, then an authorized action followed by observation.
+Installation errors appear in the app and can be retried. Reconnect the plugin or start a new chat if tools have not loaded. StupidMirror 0.3.1 fixes the `-32603` initialization error caused by experimental client capabilities; restarting Codex does not fix that error in older builds. The embedded panel is named **StupidMirror**. Verify installation, discovery and control separately: `list_devices`, then `observe_screen`, then an authorized action followed by observation.
 
 After updating StupidMirror, click **Update or reinstall plugin** (shown as **Connect Codex** after reopening settings) to refresh the installed copy. Developers can also run `bash scripts/install-codex-plugin.sh` with a compatible Codex CLI, after building with `bash scripts/build-app.sh` and installing the resulting app.
 

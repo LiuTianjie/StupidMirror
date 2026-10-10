@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1 - 2026-10-10
+
+- Fix Codex initialization failing with JSON-RPC `-32603` when the client sends
+  object-valued experimental capabilities. Apply the compatibility fix to both
+  the bundled stdio helper and the authenticated Streamable HTTP endpoint.
+- Name the embedded phone panel **StupidMirror** instead of the tool action
+  **Show Screen**, and align the widget and resource display names.
+- Clarify that users can reconnect the plugin or start a new chat after updating;
+  restarting Codex does not repair a malformed-capability decoding failure.
+- Add regression coverage for raw MCP initialization, tool discovery, capability
+  preservation and HTTP authentication.
+
 ## 0.3.0 - 2026-10-10
 
 - Bundle a Codex plugin with one-click installation from MCP Automation settings.

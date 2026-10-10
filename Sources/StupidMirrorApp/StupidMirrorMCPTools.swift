@@ -10,6 +10,7 @@ enum StupidMirrorMCPToolCatalog {
         tool(
             "show_screen", "Open or reuse the live phone screen inside Codex. Captures in the background without opening a Mac mirror window. With multiple devices, pass device_id or choose one in the screen panel. Pause/resume controls preview only.",
             deviceProperties.merging(["action": enumeration("Preview action.", values: ["open", "pause", "resume"], defaultValue: "open")]) { _, new in new },
+            title: StupidMirrorScreenResource.displayName,
             idempotent: true,
             metadata: Metadata(additionalFields: [
                 "ui": .object(["resourceUri": .string(StupidMirrorScreenResource.uri)]),
@@ -274,6 +275,7 @@ enum StupidMirrorMCPToolCatalog {
         _ name: String,
         _ description: String,
         _ properties: [String: Value] = [:],
+        title: String? = nil,
         required: [String] = [],
         readOnly: Bool = false,
         idempotent: Bool = false,
@@ -290,7 +292,7 @@ enum StupidMirrorMCPToolCatalog {
         }
         return Tool(
             name: name,
-            title: name.replacingOccurrences(of: "_", with: " ").capitalized,
+            title: title ?? name.replacingOccurrences(of: "_", with: " ").capitalized,
             description: description,
             inputSchema: .object(schema),
             annotations: .init(
