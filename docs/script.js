@@ -6,6 +6,18 @@ const lightboxImage = document.querySelector("[data-lightbox-image]");
 const lightboxClose = document.querySelector("[data-lightbox-close]");
 
 const chineseText = new Map([
+  ["Your phone, inside Codex.", "把手机，放进 Codex。"],
+  ["Connect once. View, operate, annotate.", "连接一次，查看、操作、标注。"],
+  ["Open MCP Automation settings and click Connect Codex. Select StupidMirror in a new chat to open the embedded phone panel.", "在 MCP 自动化设置中点击「连接 Codex」，新建聊天并选中 StupidMirror，即可打开内嵌手机面板。"],
+  ["Live video in your chat", "聊天里的实时画面"],
+  ["Local WebRTC carries the phone video into Codex. Switch devices, pause, or resume without a separate mirror window.", "通过本机 WebRTC 在 Codex 中查看手机画面；切换设备、暂停或继续，无需另开镜像窗口。"],
+  ["You and your AI can operate", "你和 AI 都能操作"],
+  ["Enable manual control to tap and drag. Ask your agent to observe, act, and verify with the existing device tools.", "开启操作模式即可点击和拖动；也可以让 AI 使用真机工具，先观察、再操作、再验证。"],
+  ["Point it out with annotations", "用标注说清楚"],
+  ["Freeze a frame, draw numbered regions, and send an image with your note to Codex. Annotation mode never taps the phone.", "冻结一帧，画出编号区域并附上说明，将图片发给 Codex；标注模式不会点击手机。"],
+  ["Read the Codex setup guide", "查看 Codex 使用指南"],
+  ["Video stays local. Screenshots requested by your AI and annotations you send follow your AI client’s data settings. Host support is required for image messages.", "视频在本机传输；AI 请求的截图和你发送的标注受 AI 客户端的数据设置约束。图片消息需要宿主支持。"],
+
   ["Skip to content", "跳到正文"],
   ["Open navigation", "打开导航"],
   ["Mirror", "镜像"],

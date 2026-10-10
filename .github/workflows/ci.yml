@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -20,7 +21,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: tools/smtunnel/go.mod
-          cache-dependency-path: tools/smtunnel/go.sum
+          cache-dependency-path: |
+            tools/smtunnel/go.sum
+            tools/smpreview/go.sum
       - name: Vet and test the smtunnel sidecar
         working-directory: tools/smtunnel
         run: |
@@ -28,7 +31,27 @@ jobs:
           go test ./...
       - name: Build the smtunnel sidecar
         run: bash scripts/build-smtunnel.sh
+      - name: Vet and test the WebRTC sidecar
+        working-directory: tools/smpreview
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: Build the WebRTC sidecar
+        run: bash scripts/build-preview.sh .build/smpreview/StupidMirrorPreview
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: plugins/stupidmirror/ui/package-lock.json
+      - name: Validate the Codex widget
+        run: |
+          npm ci --prefix plugins/stupidmirror/ui
+          npm run build --prefix plugins/stupidmirror/ui
+          npm test --prefix plugins/stupidmirror/ui
+          git diff --exit-code -- plugins/stupidmirror/assets/phone-screen.html
+          node --check docs/script.js
+          bash -n scripts/build-app.sh scripts/build-and-upload-release.sh scripts/install-codex-plugin.sh scripts/build-preview.sh
       - name: Build
-        run: swift build
+        run: swift build --build-system native
       - name: Test
-        run: swift test
+        run: swift test --build-system native

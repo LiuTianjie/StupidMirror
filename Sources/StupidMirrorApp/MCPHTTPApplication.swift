@@ -7,7 +7,7 @@ import MCP
 actor MCPHTTPApplication {
     typealias ServerFactory = @Sendable (String) async throws -> Server
     typealias SessionCountHandler = @Sendable (Int) async -> Void
-    typealias StartedHandler = @Sendable () async -> Void
+    typealias StartedHandler = @Sendable () async throws -> Void
 
     private struct SessionContext {
         let server: Server
@@ -62,7 +62,7 @@ actor MCPHTTPApplication {
 
             let channel = try await bootstrap.bind(host: host, port: port).get()
             self.channel = channel
-            await startedHandler()
+            try await startedHandler()
             cleanupTask = Task { [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(60))
@@ -73,6 +73,8 @@ actor MCPHTTPApplication {
         } catch {
             cleanupTask?.cancel()
             cleanupTask = nil
+            try? await channel?.close()
+            channel = nil
             try? await group.shutdownGracefully()
             eventLoopGroup = nil
             throw error

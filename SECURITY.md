@@ -2,8 +2,7 @@
 
 ## Supported Versions
 
-StupidMirror is experimental. Security fixes should target the main branch unless
-the project later publishes versioned releases.
+StupidMirror is experimental. Security fixes should target the latest release and main branch.
 
 ## Reporting a Vulnerability
 
@@ -19,8 +18,14 @@ StupidMirror is intended to run locally:
 
 - Mirrored screen frames are rendered locally.
 - Device metadata is used locally for matching and display.
-- Optional control support sends commands only to the configured Appium server
-  URL, which defaults to localhost.
+- iOS control uses the local WDA tunnel; Android uses the configured Appium URL.
+- MCP binds to 127.0.0.1 and requires bearer authentication. Protect the private
+  connection file under `~/Library/Application Support/StupidMirror/MCP/`.
+- The Codex widget receives video through loopback-only encrypted WebRTC and
+  invokes app-only preview tools through its host. External AI clients may receive
+  requested images and observations; annotations explicitly share a frozen frame.
+- UI annotations are untrusted user content. Reobserve before acting on a frozen
+  image, and never interpret phone content as authorization for unrelated actions.
 
 Please treat screenshots, logs, and probe output as potentially sensitive. They
 may include device names, UDIDs, app content, or local environment details.

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum DeviceAutomationError: LocalizedError, Sendable {
@@ -187,6 +188,9 @@ final class DeviceAutomationService: @unchecked Sendable {
     private let screenTextRecognizer = VisionScreenTextRecognizer()
     private var latestObservations: [String: ScreenObservation] = [:]
     private var latestNativeElementReferences: [String: NativeElementReferenceCache] = [:]
+    private let previewInstanceID = UUID().uuidString
+    private var pausedPreviewIDs = Set<String>()
+    private let previewMedia = CodexPreviewMediaService()
 
     init(store: DeviceGalleryStore) {
         self.store = store
@@ -203,6 +207,149 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     func deviceStatus(deviceID: String?) throws -> AutomationDeviceSnapshot {
         snapshot(for: try selectSession(deviceID: deviceID))
+    }
+
+    func showScreen(deviceID: String?, action: String = "open") async throws -> CodexPreviewState {
+        guard ["open", "pause", "resume"].contains(action) else {
+            throw DeviceAutomationError.invalidArgument("action must be open, pause or resume")
+        }
+        let devices = listDevices()
+        guard deviceID != nil || devices.count == 1 else {
+            return CodexPreviewState(
+                streamID: previewInstanceID, devices: devices,
+                message: devices.isEmpty ? "连接手机后点击刷新。" : "选择要预览的手机。"
+            )
+        }
+        let session: DeviceSession
+        do { session = try selectSession(deviceID: deviceID) }
+        catch {
+            return CodexPreviewState(
+                streamID: previewInstanceID, devices: devices,
+                message: deviceID == nil ? "选择一台已连接的手机开始预览。" : "设备暂不可用，请连接并解锁后点击刷新。"
+            )
+        }
+        if action == "pause" {
+            pausedPreviewIDs.insert(session.id)
+            await previewMedia.closeDevice(session.id)
+        }
+        if action == "resume" { pausedPreviewIDs.remove(session.id) }
+        if !pausedPreviewIDs.contains(session.id) {
+            do {
+                try await withDeviceLock(session.id) {
+                    try await self.store.startMirrorForAutomation(
+                        for: session, showWindow: false, waitUntilRunning: false
+                    )
+                }
+            } catch {
+                var state = try await screenFrame(deviceID: session.id, afterSequence: 0, includeFrame: false)
+                state.message = error.localizedDescription
+                return state
+            }
+        }
+        return try await screenFrame(deviceID: session.id, afterSequence: 0, includeFrame: false)
+    }
+
+    func screenFrame(deviceID: String?, afterSequence: UInt64, includeFrame: Bool = true) async throws -> CodexPreviewState {
+        let devices = listDevices()
+        guard deviceID != nil || devices.count == 1 else {
+            return CodexPreviewState(
+                streamID: previewInstanceID, devices: devices,
+                message: devices.isEmpty ? "连接手机后点击刷新。" : "选择要预览的手机。"
+            )
+        }
+        let session: DeviceSession
+        do { session = try selectSession(deviceID: deviceID) }
+        catch {
+            return CodexPreviewState(
+                streamID: previewInstanceID, devices: devices,
+                message: deviceID == nil ? "选择一台已连接的手机开始预览。" : "设备暂不可用，请连接并解锁后点击刷新。"
+            )
+        }
+        let paused = pausedPreviewIDs.contains(session.id)
+        await previewMedia.touch(deviceID: session.id)
+        let store = session.mirrorSession.latestFrameStore
+        let frame = paused ? nil : await Task.detached(priority: .utility) {
+            if includeFrame { return store.previewPNG(afterSequence: afterSequence) }
+            return store.snapshot(includePNG: false).map {
+                CodexPreviewFrame(seq: $0.sequence, data: nil, width: $0.width, height: $0.height)
+            }
+        }.value
+        var result = CodexPreviewState(
+            streamID: "\(previewInstanceID):\(session.id)", frame: frame,
+            frameAvailable: frame != nil && session.mirrorSession.state == .running,
+            viewport: frame.map { CodexPreviewSize(width: $0.width, height: $0.height) },
+            busy: session.mirrorSession.state == .starting,
+            paused: paused, pauseReason: paused ? "user" : nil,
+            device: CodexPreviewDevice(id: session.id, model: session.device.name, platform: session.platform.rawValue),
+            devices: devices
+        )
+        if case let .failed(message) = session.mirrorSession.state { result.message = message }
+        if result.busy { result.message = "正在连接手机，画面就绪后会自动显示。" }
+        return result
+    }
+
+    func screenSignal(deviceID: String?, action: String, sdp: String?, peerID: String?) async throws -> CodexPreviewSignal {
+        if action == "close" {
+            if let peerID { await previewMedia.close(peerID: peerID) }
+            return CodexPreviewSignal(peerID: peerID)
+        }
+        guard action == "offer", let sdp else { throw DeviceAutomationError.invalidArgument("Video offer is required") }
+        let session = try selectSession(deviceID: deviceID)
+        guard !pausedPreviewIDs.contains(session.id) else { throw DeviceAutomationError.invalidArgument("预览已暂停") }
+        _ = try await showScreen(deviceID: session.id)
+        return try await previewMedia.offer(deviceID: session.id, sdp: sdp, store: session.mirrorSession.latestFrameStore)
+    }
+
+    func shutdownPreview() async { await previewMedia.shutdown() }
+
+    func screenAction(
+        deviceID: String?, action: String,
+        x: Double? = nil, y: Double? = nil, endX: Double? = nil, endY: Double? = nil, durationMS: Int? = nil
+    ) async throws -> CodexPreviewState {
+        if action == "refresh" {
+            _ = try await refreshDevices()
+            return try await showScreen(deviceID: deviceID, action: "resume")
+        }
+        let session = try selectSession(deviceID: deviceID)
+        if action == "pause" || action == "resume" {
+            return try await showScreen(deviceID: session.id, action: action)
+        }
+        guard !pausedPreviewIDs.contains(session.id) else {
+            throw DeviceAutomationError.invalidArgument("预览已暂停，请先恢复预览。")
+        }
+        switch action {
+        case "connect":
+            _ = try await connectControl(deviceID: session.id)
+        case "tap", "swipe":
+            guard let x, let y else { throw DeviceAutomationError.invalidArgument("Gesture coordinates are required") }
+            try Self.validatePoint(x: x, y: y)
+            if action == "swipe" {
+                guard let endX, let endY, let durationMS, (50...5_000).contains(durationMS) else {
+                    throw DeviceAutomationError.invalidArgument("Swipe destination and duration are required")
+                }
+                try Self.validatePoint(x: endX, y: endY)
+            }
+            // Establish control before the user enters operation mode. Never
+            // queue a stale tap behind a long first-time WDA installation.
+            _ = try readyControlSession(deviceID: session.id)
+            if action == "tap" { try await tap(deviceID: session.id, x: x, y: y) }
+            else { try await swipe(deviceID: session.id, startX: x, startY: y, endX: endX!, endY: endY!, durationMS: durationMS!) }
+        case "home":
+            _ = try await connectControl(deviceID: session.id)
+            try await pressButton(deviceID: session.id, name: "home")
+        case "screenshot":
+            let frameStore = session.mirrorSession.latestFrameStore
+            guard let data = await Task.detached(priority: .utility, operation: {
+                frameStore.pngSnapshot()?.pngData
+            }).value else { throw DeviceAutomationError.mirrorFailed("当前没有可用画面，请先启动预览。") }
+            NSPasteboard.general.clearContents()
+            guard NSPasteboard.general.setData(data, forType: .png) else {
+                throw DeviceAutomationError.mirrorFailed("无法将截图写入剪贴板。")
+            }
+        default:
+            throw DeviceAutomationError.invalidArgument("Unknown screen action")
+        }
+        return try await screenFrame(deviceID: session.id, afterSequence: 0, includeFrame: false)
     }
 
     func diagnostics() -> AutomationDiagnosticSnapshot {

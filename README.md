@@ -29,7 +29,7 @@
 
 StupidMirror brings real mobile devices into a native macOS workspace. View an iPhone over USB or Wi-Fi, mirror an Android device through ADB, and interact with either through an explicit control session.
 
-The same workspace is available to AI agents over **MCP**: observe the current screen, locate a target with local OCR or native accessibility, act on the device, and inspect the result. You can watch those actions on the Mac mirror as they happen.
+The same workspace is available to AI agents over **MCP**: observe the current screen, locate a target with local OCR or native accessibility, act on the device, and inspect the result. Watch the phone inside Codex with the bundled plugin, or use the native Mac mirror.
 
 **One device can be mirrored and controlled without signing in.** Account activation unlocks simultaneous devices. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
 
@@ -37,7 +37,7 @@ The same workspace is available to AI agents over **MCP**: observe the current s
 
 - **A native place for your devices.** Menu bar access, a device dashboard, live thumbnails, and independent mirror windows built with SwiftUI and AppKit.
 - **Three capture paths.** USB iPhone capture through AVFoundation, wireless iPhone H.264 over the local network, and Android H.264/audio through a pinned scrcpy server.
-- **Control when you ask for it.** Tap, swipe, type, press device buttons, switch apps, and launch or terminate apps through Appium. Opening a USB or Android mirror does not start a control session.
+- **Control when you ask for it.** Tap, swipe, type, press device buttons, switch apps, and launch or terminate apps through native WebDriverAgent on iOS or Appium on Android. Opening a USB or Android mirror does not start a control session.
 - **An agent can see what it is doing.** Live frames, Apple Vision OCR, optional accessibility trees, semantic targeting, waits, and assertions share the same device workspace.
 - **Automation stays visible.** Agent taps, swipe paths, and selected targets appear on the Mac mirror. These overlays do not alter the phone screen or encoded video.
 - **Bring your own AI client.** Built-in connection guides for Codex and Claude Code. StupidMirror itself needs no model API key and runs no embedded model.
@@ -85,6 +85,32 @@ Mirror gestures reproduce what the mouse did: a slow drag replays its recorded p
 
 ## Connect an AI agent
 
+### Codex plugin: connect from the app
+
+1. Install a build that includes the Codex plugin in Applications and open StupidMirror. For a first iPhone connection, connect by USB and complete the app's **iPhone setup guide**. Android needs USB debugging and authorization for this Mac.
+2. Open **Settings → MCP Automation** and click **Connect Codex**. The app enables local MCP and installs its bundled plugin using the Codex / ChatGPT desktop app's CLI. No repository clone, Python / Node.js install, token copying or manual configuration is required.
+3. Start a new Codex chat, choose **StupidMirror**, and send:
+
+   > Use StupidMirror to show my phone screen inside Codex and read the current page without tapping anything.
+
+4. Codex starts StupidMirror in the background when needed. The live screen uses local WebRTC inside the Codex plugin panel, with device selection, refresh, pause/resume, Home and screenshot-copy controls. No native mirror window opens automatically. Keep the phone connected and unlocked.
+
+**Interaction and annotation:** Enable **操作** to connect device control, then tap or drag the preview. AI actions continue to use the existing MCP tools. **标注** freezes the displayed frame, lets you draw regions and add a note, then sends the image, device, capture time and coordinates to the current Codex chat. Drawing annotations never sends gestures to the phone.
+
+Video uses encrypted local WebRTC without a cloud relay. Unsupported hosts fall back to native-resolution PNG; annotation delivery requires the host’s image-message capability.
+
+Installation errors appear in the app and can be retried. Reconnect the chat or restart Codex if tools have not loaded. Verify installation, discovery and control separately: `list_devices`, then `observe_screen`, then an authorized action followed by observation.
+
+After updating StupidMirror, click **Update or reinstall plugin** (shown as **Connect Codex** after reopening settings) to refresh the installed copy. Developers can also run `bash scripts/install-codex-plugin.sh` with a compatible Codex CLI, after building with `bash scripts/build-app.sh` and installing the resulting app.
+
+The plugin reuses the app's device engine and automatically reads port and token changes. While MCP is enabled, the app maintains `~/Library/Application Support/StupidMirror/MCP/connection.json` with directory permissions `0700` and file permissions `0600`, removing it when the service stops. Never include this credential file in plugin packages or chat messages.
+
+The installer migrates an existing manual `stupidmirror` MCP entry only when its URL matches this app's current endpoint, retaining a private local recovery copy. Other MCP entries are untouched; a conflicting connection produces an actionable error.
+
+### Manual MCP setup / Claude Code
+
+Expand **Advanced connection settings · Other AI clients**:
+
 1. Open **Settings → MCP** and enable the local MCP server.
 2. Choose **Codex** or **Claude Code** in the connection guide.
 3. Copy the generated configuration or command into that client. It includes the endpoint, bearer authentication, and setup timeout.
@@ -100,7 +126,7 @@ Try an instruction such as:
 
 | Step | Tools | Behavior |
 | --- | --- | --- |
-| Connect | `list_devices`, `start_mirror`, `connect_control` | Discover the target and prepare the required sessions |
+| Connect | `list_devices`, `show_screen`, `connect_control` | Discover the target and prepare the required sessions |
 | Observe | `observe_screen`, `find_any_element` | Read a live frame; use local OCR and request accessibility only when needed |
 | Act | `tap_text`, `tap_element`, `replace_text`, `swipe` | Target observed content or an explicit gesture |
 | Verify | `wait_for`, `assert_screen`, `observe_screen` | Check the resulting state |
@@ -125,15 +151,11 @@ The [tool definitions](Sources/StupidMirrorApp/StupidMirrorMCPTools.swift) are t
 ## Architecture and privacy
 
 ```text
-iPhone USB ── AVFoundation ──────────────┐
-iPhone LAN ── H.264 / SRT ───────────────┼── Native macOS mirror
-Android    ── ADB / scrcpy ──────────────┘        │
-                                                  ├── Vision OCR / observations
-AI client  ── localhost MCP ── device actions ────┘
-                                  │
-                         Appium: XCUITest / UiAutomator2
-                                  │
-                              Real device
+iPhone USB → AVFoundation ─┐
+iPhone LAN → H.264 / SRT ──┼→ Capture → native mirror / Vision OCR
+Android → ADB / scrcpy ────┘     └→ VideoToolbox H.264 → local WebRTC → Codex panel
+Codex → bundled stdio bridge → authenticated localhost MCP → observations/actions
+iOS actions → WDA through smtunnel; Android actions → Appium / UiAutomator2
 ```
 
 Capture, playback, and OCR run locally. StupidMirror does not independently upload mirrored content to a model provider. **An external AI client can receive screenshots and tool results through MCP**; its account, model provider, and data settings determine what happens to that information afterward.
@@ -142,7 +164,7 @@ Account sign-in and license validation contact the configured Supabase service. 
 
 ## Build from source
 
-Use macOS 15+ and a Swift 6 toolchain:
+Use macOS 15+, a Swift 6 toolchain, Go (see the sidecar `go.mod` files), and Node.js 22+ for widget development:
 
 ```bash
 git clone https://github.com/LiuTianjie/StupidMirror.git
@@ -151,11 +173,13 @@ make run
 ```
 
 ```bash
-swift build        # Compile
-swift test         # Run tests
+swift build --build-system native # Compile
+swift test --build-system native  # Run tests
 make app           # Create dist/StupidMirror.app
 open dist/StupidMirror.app
 ```
+
+Before packaging widget changes, run `npm ci --prefix plugins/stupidmirror/ui`, then `npm run build --prefix plugins/stupidmirror/ui` and `npm test --prefix plugins/stupidmirror/ui`. The generated self-contained HTML is bundled in the app. `make app` builds both Go sidecars and the stdio bridge.
 
 For a host Appium installation, use `make setup-appium` and `make run-appium`. Source execution and packaged apps have separate macOS permission identities; grant permissions to the process you are actually running.
 
@@ -168,6 +192,7 @@ Device bugs are most useful with macOS/device OS versions, connection type, repr
 | Document | Scope |
 | --- | --- |
 | [Contributing](CONTRIBUTING.md) | Development setup and pull request expectations |
+| [Codex plugin guide](docs/codex-plugin.md) | Embedded video, manual control, annotation, troubleshooting |
 | [Architecture notes](docs/mvp-architecture.md) | Original design and implementation context |
 | [Research notes](docs/research.md) | Capture and device-integration research |
 | [Release process](RELEASING.md) | Signing, notarization, fixed app identity, and artifact upload |

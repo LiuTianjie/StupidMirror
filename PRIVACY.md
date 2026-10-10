@@ -1,6 +1,6 @@
 # Privacy
 
-StupidMirror mirrors a connected iPhone screen locally on macOS.
+StupidMirror mirrors connected iOS and Android devices locally on macOS.
 
 ## Data Processed Locally
 
@@ -21,15 +21,28 @@ The app may process:
 
 ## Network Behavior
 
-StupidMirror does not intentionally upload screen frames, thumbnails, device
-metadata, or control events to a remote service.
+Capture and OCR stay on the Mac. When you enable MCP, an external AI client can
+receive requested screenshots, OCR results, device identifiers, and action results.
+In Codex, sending an annotation includes a frozen PNG, note, selected regions,
+device identity, and capture time in the current chat. That client's model provider
+and data settings govern the information it receives.
+
+The embedded preview uses H.264 over encrypted WebRTC between the local app and
+host panel, with loopback ICE candidates only and no STUN/TURN or cloud relay.
+PNG snapshots are the fallback. This video path does not prevent the AI host from
+processing images explicitly requested through tools or sent as annotations.
+
+The local MCP bearer token is stored in Keychain and exported while the service
+is running to a private connection file (0700 directory, 0600 file). The bundled
+stdio bridge reads it locally; the widget and plugin manifests contain no token.
 
 Wireless mirroring receives screen frames directly from WebDriverAgent on the
 same local network. The preferred stream is hardware-encoded H.264; MJPEG is
 used only as a compatibility fallback. Neither path requires ReplayKit or an
 iPhone companion app.
 
-Optional control support talks to the configured Appium server URL. The default
+iOS control talks to WebDriverAgent through a local device tunnel. Android
+control talks to the configured Appium server URL. The default
 is `http://127.0.0.1:4723`.
 
 License activation, redeem, claim, and periodic validation send the random

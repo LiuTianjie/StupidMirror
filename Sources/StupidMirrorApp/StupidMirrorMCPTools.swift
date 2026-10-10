@@ -7,6 +7,44 @@ enum StupidMirrorMCPToolCatalog {
         tool("refresh_devices", "Refresh iOS and Android discovery and return the updated device list."),
         tool("get_device_status", "Get detailed state for one mobile device.", deviceProperties, readOnly: true),
         tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, control-agent, and device diagnostics.", readOnly: true),
+        tool(
+            "show_screen", "Open or reuse the live phone screen inside Codex. Captures in the background without opening a Mac mirror window. With multiple devices, pass device_id or choose one in the screen panel. Pause/resume controls preview only.",
+            deviceProperties.merging(["action": enumeration("Preview action.", values: ["open", "pause", "resume"], defaultValue: "open")]) { _, new in new },
+            idempotent: true,
+            metadata: Metadata(additionalFields: [
+                "ui": .object(["resourceUri": .string(StupidMirrorScreenResource.uri)]),
+                "openai/ui": .object(["entrypoints": .array([.object(["type": "thread"])])])
+            ])
+        ),
+        tool(
+            "screen_frame", "App-only cached preview frame. Never captures through WDA, queries accessibility or acquires the device action lock.",
+            deviceProperties.merging([
+                "after_seq": integer("Last displayed frame sequence.", minimum: 0, maximum: Int.max, defaultValue: 0),
+                "include_frame": boolean("Include a native PNG fallback. False while WebRTC video is active.", defaultValue: true)
+            ]) { _, new in new },
+            readOnly: true, metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
+        ),
+        tool(
+            "screen_action", "App-only user controls: refresh, connect control, tap/swipe, Home, screenshot copy, or pause/resume preview.",
+            deviceProperties.merging([
+                "action": enumeration("User action.", values: ["refresh", "home", "screenshot", "pause", "resume", "connect", "tap", "swipe"]),
+                "x": number("Normalized start X.", minimum: 0, maximum: 1),
+                "y": number("Normalized start Y.", minimum: 0, maximum: 1),
+                "end_x": number("Normalized destination X.", minimum: 0, maximum: 1),
+                "end_y": number("Normalized destination Y.", minimum: 0, maximum: 1),
+                "duration_ms": integer("Swipe duration.", minimum: 50, maximum: 5_000, defaultValue: 300)
+            ]) { _, new in new },
+            required: ["action"], destructive: true,
+            metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
+        ),
+        tool(
+            "screen_signal", "App-only WebRTC signaling. Media is sent over encrypted local loopback; no STUN/TURN or cloud relay is used.",
+            deviceProperties.merging([
+                "action": enumeration("Signal action.", values: ["offer", "close"], defaultValue: "offer"),
+                "sdp": string("Browser SDP offer."), "peer_id": string("Peer to close.")
+            ]) { _, new in new },
+            metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
+        ),
         tool("start_mirror", "Open and start the device mirror. Unactivated installations can mirror one device at a time.", deviceProperties),
         tool("stop_mirror", "Stop and close the device mirror.", deviceProperties, idempotent: true),
         tool(
@@ -16,7 +54,7 @@ enum StupidMirrorMCPToolCatalog {
             required: ["floating"],
             idempotent: true
         ),
-        tool("connect_control", "Start or reuse Appium with WDA on iOS or UiAutomator2 on Android, then wait until control is ready.", deviceProperties),
+        tool("connect_control", "Start or reuse the direct WDA connection on iOS or Appium/UiAutomator2 on Android, then wait until control is ready.", deviceProperties),
         tool("disconnect_control", "Disconnect the device control session while keeping its agent warm for quick reuse.", deviceProperties, idempotent: true),
         tool("screenshot", "Capture the current device screen as a native PNG. Control must be ready.", deviceProperties, readOnly: true),
         tool("get_ui_tree", "Read the current device accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
@@ -239,7 +277,8 @@ enum StupidMirrorMCPToolCatalog {
         required: [String] = [],
         readOnly: Bool = false,
         idempotent: Bool = false,
-        destructive: Bool = false
+        destructive: Bool = false,
+        metadata: Metadata? = nil
     ) -> Tool {
         var schema: [String: Value] = [
             "type": "object",
@@ -259,7 +298,8 @@ enum StupidMirrorMCPToolCatalog {
                 destructiveHint: destructive,
                 idempotentHint: idempotent,
                 openWorldHint: false
-            )
+            ),
+            _meta: metadata
         )
     }
 
@@ -380,6 +420,39 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 return try success(try automation.deviceStatus(deviceID: optionalString("device_id", args)))
             case "get_diagnostics":
                 return try success(automation.diagnostics())
+            case "show_screen":
+                var preview = try await automation.showScreen(
+                    deviceID: optionalString("device_id", args), action: optionalString("action", args) ?? "open"
+                )
+                preview.frame = nil
+                return CallTool.Result(
+                    content: [.text(preview.message ?? "The embedded phone preview is ready.")],
+                    structuredContent: Optional.some(try Value(preview)), isError: false,
+                    _meta: Metadata(additionalFields: ["openai/widgetSessionId": "stupidmirror-screen"])
+                )
+            case "screen_frame":
+                let afterSequence = args["after_seq"]?.intValue ?? 0
+                guard afterSequence >= 0 else { throw DeviceAutomationError.invalidArgument("after_seq must be nonnegative") }
+                return CallTool.Result(
+                    content: [], structuredContent: Optional.some(try Value(try await automation.screenFrame(
+                        deviceID: optionalString("device_id", args), afterSequence: UInt64(afterSequence),
+                        includeFrame: optionalBool("include_frame", args) ?? true
+                    ))), isError: false
+                )
+            case "screen_action":
+                return CallTool.Result(
+                    content: [], structuredContent: Optional.some(try Value(try await automation.screenAction(
+                        deviceID: optionalString("device_id", args), action: try requiredString("action", args),
+                        x: optionalDouble("x", args), y: optionalDouble("y", args),
+                        endX: optionalDouble("end_x", args), endY: optionalDouble("end_y", args),
+                        durationMS: args["duration_ms"]?.intValue
+                    ))), isError: false
+                )
+            case "screen_signal":
+                return CallTool.Result(content: [], structuredContent: Optional.some(try Value(try await automation.screenSignal(
+                    deviceID: optionalString("device_id", args), action: optionalString("action", args) ?? "offer",
+                    sdp: optionalString("sdp", args), peerID: optionalString("peer_id", args)
+                ))), isError: false)
             case "start_mirror":
                 return try success(try await automation.startMirror(deviceID: optionalString("device_id", args)))
             case "stop_mirror":

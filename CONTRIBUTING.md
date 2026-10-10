@@ -8,13 +8,18 @@ Requirements:
 
 - macOS 15 or newer.
 - Xcode or Swift 6 toolchain.
+- Go matching the sidecar `go.mod` files; Node.js 22+ for the Codex widget.
 - A USB-connected iPhone for end-to-end mirror testing.
 
 Common commands:
 
 ```sh
-swift build
-swift test
+swift build --build-system native
+swift test --build-system native
+npm ci --prefix plugins/stupidmirror/ui
+npm run build --prefix plugins/stupidmirror/ui
+npm test --prefix plugins/stupidmirror/ui
+(cd tools/smpreview && go test -race ./...)
 make app
 ```
 
@@ -36,7 +41,11 @@ Please keep pull requests focused. A good PR usually includes:
 Before opening a PR, run:
 
 ```sh
-swift test
+swift test --build-system native
+npm ci --prefix plugins/stupidmirror/ui
+npm run build --prefix plugins/stupidmirror/ui
+npm test --prefix plugins/stupidmirror/ui
+(cd tools/smpreview && go test -race ./...)
 make app
 ```
 
