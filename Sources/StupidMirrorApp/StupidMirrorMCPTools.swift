@@ -61,11 +61,12 @@ enum StupidMirrorMCPToolCatalog {
         tool("get_ui_tree", "Read the current device accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
         tool(
             "observe_screen",
-            "Read screen text efficiently with include_image=false, include_ocr=true, include_accessibility=false. Local Apple Vision returns text and coordinates. Request images for visual ambiguity, icons or canvas content; request accessibility for missing semantics. Native /source can be slow and may disturb text focus.",
+            "Read the screen with an image and compact local OCR by default, without a native hierarchy. Keep the image for visual or ambiguous tasks; set include_image=false for text-only reads. Keeps actionable ids and normalized centers. Request include_accessibility=true for control state, response_format=full for diagnostics.",
             deviceProperties.merging([
-                "include_image": boolean("Include the latest live mirror frame as PNG.", defaultValue: true),
+                "response_format": enumeration("Compact keeps actionable ids, text, state and normalized centers; full returns original metadata and geometry.", values: ScreenResponseFormat.allCases.map(\.rawValue), defaultValue: "compact"),
+                "include_image": boolean("Include the latest live mirror frame as PNG. Defaults to true; disable for explicitly text-only reads.", defaultValue: ScreenMCPResponse.defaultIncludeImage),
                 "include_accessibility": boolean("Explicitly fetch and parse the full native accessibility hierarchy. Keep false for routine navigation.", defaultValue: false),
-                "include_ocr": boolean("Run local Apple Vision OCR on the latest frame.", defaultValue: false),
+                "include_ocr": boolean("Run local Apple Vision OCR on the latest frame.", defaultValue: ScreenMCPResponse.defaultIncludeOCR),
                 "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
                 "ocr_languages": stringArray("OCR language identifiers in priority order.", defaultValues: DeviceAutomationService.defaultOCRLanguages, maximumItems: 8)
             ]) { _, new in new },
@@ -73,8 +74,9 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "find_element",
-            "Find visible text with local mirror OCR first, then at most one native hierarchy snapshot for labels pixels do not expose.",
+            "Locate one text target with compact matches by default. Uses local OCR first, then one native hierarchy fallback. Use response_format=full only for raw match diagnostics.",
             deviceProperties.merging([
+                "response_format": enumeration("Compact keeps actionable ids, text, state and normalized centers; full returns original metadata and geometry.", values: ScreenResponseFormat.allCases.map(\.rawValue), defaultValue: "compact"),
                 "query": string("Text to locate across type, name, label, and value."),
                 "include_ocr": boolean("Use local OCR when accessibility has no match.", defaultValue: true),
                 "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
@@ -85,8 +87,9 @@ enum StupidMirrorMCPToolCatalog {
         ),
         tool(
             "find_any_element",
-            "Find the first visible match among alternative texts in one MCP call. Uses one local OCR pass first, then at most one shared native hierarchy snapshot.",
+            "Inspect a target among alternative texts in one call. Returns compact matches and observationID for tap_element. Uses local OCR first, then one shared native hierarchy fallback. Use tap_text directly when ready to tap; response_format=full is for diagnostics.",
             deviceProperties.merging([
+                "response_format": enumeration("Compact keeps actionable ids, text, state and normalized centers; full returns original metadata and geometry.", values: ScreenResponseFormat.allCases.map(\.rawValue), defaultValue: "compact"),
                 "queries": stringList("Alternative texts in priority order.", minimumItems: 1, maximumItems: 16),
                 "include_ocr": boolean("Inspect the live mirror with local OCR before the shared accessibility fallback.", defaultValue: true),
                 "ocr_mode": enumeration("OCR speed and accuracy mode.", values: ScreenOCRMode.allCases.map(\.rawValue), defaultValue: "fast"),
@@ -490,49 +493,39 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     isError: false
                 )
             case "observe_screen":
+                let format = try ScreenResponseFormat(arguments: args)
                 let result = try await automation.observeScreen(
                     deviceID: optionalString("device_id", args),
-                    includeImage: optionalBool("include_image", args) ?? true,
+                    includeImage: optionalBool("include_image", args) ?? ScreenMCPResponse.defaultIncludeImage,
                     includeAccessibility: optionalBool("include_accessibility", args) ?? false,
-                    includeOCR: optionalBool("include_ocr", args) ?? false,
+                    includeOCR: optionalBool("include_ocr", args) ?? ScreenMCPResponse.defaultIncludeOCR,
                     ocrMode: try ocrMode(args),
                     ocrLanguages: try optionalStringArray("ocr_languages", args)
                         ?? DeviceAutomationService.defaultOCRLanguages
                 )
-                let structured = try Value(result.observation)
-                var content: [Tool.Content] = [
-                    .text(String(decoding: try JSONEncoder.stupidMirrorMCP.encode(result.observation), as: UTF8.self))
-                ]
-                if let imageData = result.imageData {
-                    content.append(.image(
-                        data: imageData.base64EncodedString(),
-                        mimeType: "image/png",
-                        metadata: nil
-                    ))
-                }
-                return CallTool.Result(
-                    content: content,
-                    structuredContent: Optional.some(structured),
-                    isError: false
-                )
+                return try ScreenMCPResponse.observation(result, format: format)
             case "find_element":
-                return try success(try await automation.findElements(
+                let format = try ScreenResponseFormat(arguments: args)
+                let result = try await automation.findElements(
                     deviceID: optionalString("device_id", args),
                     query: try requiredString("query", args),
                     includeOCR: optionalBool("include_ocr", args) ?? true,
                     ocrMode: try ocrMode(args),
                     ocrLanguages: try optionalStringArray("ocr_languages", args)
                         ?? DeviceAutomationService.defaultOCRLanguages
-                ))
+                )
+                return try success(ScreenMCPResponse.search(result, format: format))
             case "find_any_element":
-                return try success(try await automation.findAnyElements(
+                let format = try ScreenResponseFormat(arguments: args)
+                let result = try await automation.findAnyElements(
                     deviceID: optionalString("device_id", args),
                     queries: try optionalStringArray("queries", args) ?? [],
                     includeOCR: optionalBool("include_ocr", args) ?? true,
                     ocrMode: try ocrMode(args),
                     ocrLanguages: try optionalStringArray("ocr_languages", args)
                         ?? DeviceAutomationService.defaultOCRLanguages
-                ))
+                )
+                return try success(ScreenMCPResponse.search(result, format: format))
             case "tap_text":
                 return try success(try await automation.tapText(
                     deviceID: optionalString("device_id", args),
@@ -800,7 +793,7 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
     }
 }
 
-private extension JSONEncoder {
+extension JSONEncoder {
     static let stupidMirrorMCP: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

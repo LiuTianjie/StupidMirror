@@ -1,6 +1,6 @@
 # Codex plugin / Codex 插件
 
-Available in StupidMirror 0.3.4 (bundled plugin 0.2.3).
+Available in StupidMirror 0.3.5 (bundled plugin 0.2.4).
 
 ## Connect / 连接
 
@@ -37,6 +37,18 @@ Available in StupidMirror 0.3.4 (bundled plugin 0.2.3).
 输入栏位于画面下方，只把标注截图和说明发到当前聊天。⌘＋回车或 Ctrl＋回车发送，
 普通回车换行；输入法选字期间不会误发送。标注期间不会误触手机。
 发送失败保留草稿，不会自动重复提交；回到实时画面可继续查看手机。
+
+## Compact observations / 精简观察
+
+Screen observation includes an image and compact OCR by default. Element IDs,
+text, normalized center hints and available native control state remain usable;
+raw bounds and hierarchy are available with `response_format="full"`. Use
+`include_image=false` for clearly text-only reads. The skill prefers direct
+`tap_text`, targeted lookup and specific verification before a full-screen read.
+
+默认观察仍带图片，OCR 和文字查找返回精简信息，保留可操作的元素 ID、文字、归一化中心
+位置提示及可用的原生控件状态。`response_format="full"` 可获取完整边界和层级；明确
+只读文字时可传 `include_image=false`。Skill 优先直接点击文字、定位单个目标和验证特定结果。
 
 ## Video and privacy / 视频与隐私
 

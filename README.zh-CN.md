@@ -153,7 +153,8 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 - 存在多台设备时，明确传入 `device_id`。
 - `tap_text` 一次接受最多 16 个候选文案，默认先做一次本地 OCR，必要时再共享一次原生 UI 层级快照。`find_any_element` 只查找，不点击。
-- 读取文字时优先用 `observe_screen(include_image=false, include_ocr=true, include_accessibility=false)`；OCR 缺少所需语义或有歧义时再读取无障碍树，需要视觉判断时才返回图片。
+- `observe_screen` 默认返回图片和精简 OCR，不读取原生层级。视觉任务或需求不明确时保留图片，明确只读文字时传 `include_image=false`；`find_element`、`find_any_element` 也默认精简。保留元素 ID 和观察 ID，可直接交给 `tap_element`；`center: [x, y]` 是四舍五入后的归一化位置提示，实际点击仍使用内部原始精度坐标。
+- 这三个工具可传 `response_format="full"` 获取原有完整元数据、边界和层级格式。该参数不改变图片或无障碍查询开关：视觉判断保留默认的 `include_image=true`；读取开关值、选中状态等原生语义用 `include_accessibility=true, include_ocr=false`。
 - 遇到图标、画布或自定义控件，使用 `include_image: true` 获取截图，观察后再选择目标坐标。
 - 向 `tap_element` 传入 observation UUID，可在界面变化后拒绝过期元素 ID。
 - iOS 无障碍快照可能影响已聚焦的输入框。聚焦后直接调用 `replace_text` 或 `clear_text`；追加内容使用 `type_text`。替换和清空都会校验最终的原生值。

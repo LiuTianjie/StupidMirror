@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.5 - 2026-10-12
+
+- Default screen observation to an image plus compact local OCR. Keep actionable
+  element IDs, native state and normalized center hints without verbose geometry.
+- Return compact text-search matches by default, with `response_format="full"`
+  available for the original observation/search metadata and hierarchy.
+- Bundle Codex plugin 0.2.4 with the updated device skill.
+- Guide the device skill toward direct text taps and targeted checks; disable
+  images only for clearly text-only reads, keeping visual evidence by default.
+
 ## 0.3.4 - 2026-10-11
 
 - Move existing annotation boxes by dragging inside them instead of creating

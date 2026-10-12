@@ -153,7 +153,8 @@ Try an instruction such as:
 
 - Pass `device_id` when more than one device is present.
 - `tap_text` accepts up to 16 candidate labels. By default it runs one local OCR pass, then at most one shared native hierarchy snapshot if needed. `find_any_element` performs the lookup without tapping.
-- For screen text, use `observe_screen(include_image=false, include_ocr=true, include_accessibility=false)` first. Request accessibility only when OCR lacks the required semantics or is ambiguous; request an image when visual evidence is needed.
+- `observe_screen` defaults to an image plus compact local OCR, without a native hierarchy. Keep the image for visual or ambiguous tasks; pass `include_image=false` for text-only reads. `find_element` and `find_any_element` also return compact matches. Element IDs and observation IDs remain usable with `tap_element`; `center: [x, y]` is a rounded normalized hint, while taps use stored full-precision geometry.
+- Set `response_format="full"` on these tools for the original metadata/bounds/hierarchy format. The format does not change image/accessibility flags: keep `include_image=true` for visual evidence, or `include_accessibility=true, include_ocr=false` for native switch values and control state.
 - For icons, canvases, or custom controls, request `include_image: true`, inspect the screenshot, then use an observed coordinate.
 - Pass the observation UUID to `tap_element` to reject stale element IDs after the screen changes.
 - On iOS, accessibility snapshots can disturb focused text fields. After focusing, use `replace_text` or `clear_text` directly; use `type_text` to append. Replacement and clearing verify the resulting native value.

@@ -85,7 +85,7 @@ final class MCPServerTests: XCTestCase {
         let observeProperties = try XCTUnwrap(observe.inputSchema.objectValue?["properties"]?.objectValue)
         XCTAssertEqual(observeProperties["include_image"]?.objectValue?["default"]?.boolValue, true)
         XCTAssertEqual(observeProperties["include_accessibility"]?.objectValue?["default"]?.boolValue, false)
-        XCTAssertEqual(observeProperties["include_ocr"]?.objectValue?["default"]?.boolValue, false)
+        XCTAssertEqual(observeProperties["include_ocr"]?.objectValue?["default"]?.boolValue, true)
         XCTAssertEqual(observeProperties["ocr_mode"]?.objectValue?["default"]?.stringValue, "fast")
         XCTAssertEqual(
             observeProperties["ocr_languages"]?.objectValue?["default"]?.arrayValue?.compactMap(\.stringValue),
@@ -93,6 +93,13 @@ final class MCPServerTests: XCTestCase {
         )
         XCTAssertEqual(observeProperties["ocr_languages"]?.objectValue?["maxItems"]?.intValue, 8)
         XCTAssertEqual(observe.annotations.readOnlyHint, true)
+
+        for name in ["observe_screen", "find_element", "find_any_element"] {
+            let tool = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == name })
+            let format = try XCTUnwrap(tool.inputSchema.objectValue?["properties"]?.objectValue?["response_format"]?.objectValue)
+            XCTAssertEqual(format["default"]?.stringValue, "compact")
+            XCTAssertEqual(format["enum"]?.arrayValue, [.string("compact"), .string("full")])
+        }
 
         let find = try XCTUnwrap(StupidMirrorMCPToolCatalog.tools.first { $0.name == "find_element" })
         let findProperties = try XCTUnwrap(find.inputSchema.objectValue?["properties"]?.objectValue)
