@@ -12,7 +12,7 @@ const chineseText = new Map([
   ["Live video in your chat", "聊天里的实时画面"],
   ["Local WebRTC carries the phone video into Codex. Switch devices, pause, or resume without a separate mirror window.", "通过本机 WebRTC 在 Codex 中查看手机画面；切换设备、暂停或继续，无需另开镜像窗口。"],
   ["You and your AI can operate", "你和 AI 都能操作"],
-  ["Enable manual control to tap and drag. Ask your agent to observe, act, and verify with the existing device tools.", "开启操作模式即可点击和拖动；也可以让 AI 使用真机工具，先观察、再操作、再验证。"],
+  ["Enable manual control to tap and drag. AI observations keep images by default, with compact text and targeted controls.", "开启操作模式即可点击和拖动；AI 观察默认保留图片，搭配精简文字和目标操作工具。"],
   ["Point it out with annotations", "用标注说清楚"],
   ["Freeze a frame, move and resize numbered regions, then send the marked image and your note with Command-Enter. The composer stays below the picture.", "冻结画面，移动或缩放编号框，按 ⌘＋回车发送标注截图和说明。输入栏位于画面下方，不遮挡画面。"],
   ["Read the Codex setup guide", "查看 Codex 使用指南"],

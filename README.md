@@ -6,10 +6,11 @@
 
 <p align="center">
   <strong>Your phone, on your Mac. Your agent, on your phone.</strong><br />
-  Native iOS and Android mirroring, device control, and a local MCP server for AI agents.
+  Bring real iPhone and Android screens into Codex. Mirror, control, and test devices with your AI agent.
 </p>
 
 <p align="center">
+  <a href="#built-for-codex"><img src="https://img.shields.io/badge/Codex-supported-10a37f?style=flat-square" alt="Codex supported" /></a>
   <a href="Package.swift"><img src="https://img.shields.io/badge/macOS-15%2B-343b48?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="macOS 15 or newer" /></a>
   <a href="https://github.com/LiuTianjie/StupidMirror/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/LiuTianjie/StupidMirror/ci.yml?style=flat-square&amp;label=build" alt="Build status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-64748b?style=flat-square" alt="PolyForm Noncommercial license" /></a>
@@ -18,6 +19,7 @@
 <p align="center">
   <a href="https://github.com/LiuTianjie/StupidMirror/releases/latest">Download</a> ·
   <a href="https://liutianjie.github.io/StupidMirror/">Website</a> ·
+  <a href="#built-for-codex">Codex integration</a> ·
   <a href="#connect-an-ai-agent">MCP setup</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·
   <a href="README.zh-CN.md">简体中文</a>
@@ -32,6 +34,20 @@ StupidMirror brings real mobile devices into a native macOS workspace. View an i
 The same workspace is available to AI agents over **MCP**: observe the current screen, locate a target with local OCR or native accessibility, act on the device, and inspect the result. Watch the phone inside Codex with the bundled plugin, or use the native Mac mirror.
 
 **One device can be mirrored and controlled without signing in.** An SM- activation code unlocks simultaneous devices without signing in. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
+
+## Built for Codex
+
+**StupidMirror includes a Codex plugin that lets your agent see and operate a real iPhone or Android device, with the live phone screen right inside your Codex chat.** Use it to inspect mobile UI, walk through app flows, reproduce bugs, and verify changes on a connected device.
+
+- **Watch the phone inside Codex.** The embedded panel streams the live screen over local WebRTC, with device selection, pause/resume, and screenshot copying.
+- **Ask Codex to act and verify.** Read screen content, locate controls, tap, swipe, and enter text through MCP, then inspect the result on the device.
+- **Point out exactly what you mean.** Freeze a frame, mark regions, and send the annotated screenshot with your instructions in hosts that support image messages. You can also enable manual control to tap and drag the preview.
+
+To get started, install StupidMirror and complete [device setup](#start-with-one-device), then click **Settings → MCP Automation → Connect Codex**. Open a new Codex chat, select **StupidMirror**, and ask:
+
+> Use StupidMirror to show my phone screen inside Codex and read the current page without tapping anything.
+
+The app installs its bundled plugin through the Codex desktop app's CLI; no repository clone, separate Python / Node.js installation, or token copying is needed. See [Codex setup](#codex-plugin-connect-from-the-app) for the full steps and the [plugin guide](docs/codex-plugin.md) for controls and troubleshooting.
 
 ## What makes it useful
 
@@ -137,7 +153,8 @@ Try an instruction such as:
 
 - Pass `device_id` when more than one device is present.
 - `tap_text` accepts up to 16 candidate labels. By default it runs one local OCR pass, then at most one shared native hierarchy snapshot if needed. `find_any_element` performs the lookup without tapping.
-- For screen text, use `observe_screen(include_image=false, include_ocr=true, include_accessibility=false)` first. Request accessibility only when OCR lacks the required semantics or is ambiguous; request an image when visual evidence is needed.
+- `observe_screen` defaults to an image plus compact local OCR, without a native hierarchy. Keep the image for visual or ambiguous tasks; pass `include_image=false` for text-only reads. `find_element` and `find_any_element` also return compact matches. Element IDs and observation IDs remain usable with `tap_element`; `center: [x, y]` is a rounded normalized hint, while taps use stored full-precision geometry.
+- Set `response_format="full"` on these tools for the original metadata/bounds/hierarchy format. The format does not change image/accessibility flags: keep `include_image=true` for visual evidence, or `include_accessibility=true, include_ocr=false` for native switch values and control state.
 - For icons, canvases, or custom controls, request `include_image: true`, inspect the screenshot, then use an observed coordinate.
 - Pass the observation UUID to `tap_element` to reject stale element IDs after the screen changes.
 - On iOS, accessibility snapshots can disturb focused text fields. After focusing, use `replace_text` or `clear_text` directly; use `type_text` to append. Replacement and clearing verify the resulting native value.
