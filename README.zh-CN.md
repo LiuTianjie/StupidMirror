@@ -6,10 +6,11 @@
 
 <p align="center">
   <strong>把手机带到 Mac，把真机交给 Agent。</strong><br />
-  原生 iOS / Android 镜像、真机控制，以及面向 AI Agent 的本地 MCP Server。
+  把真实的 iPhone / Android 屏幕带进 Codex，让 AI Agent 看屏幕、操作手机、验证结果。
 </p>
 
 <p align="center">
+  <a href="#支持-codex"><img src="https://img.shields.io/badge/Codex-supported-10a37f?style=flat-square" alt="支持 Codex" /></a>
   <a href="Package.swift"><img src="https://img.shields.io/badge/macOS-15%2B-343b48?style=flat-square&amp;logo=apple&amp;logoColor=white" alt="macOS 15 及以上" /></a>
   <a href="https://github.com/LiuTianjie/StupidMirror/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/LiuTianjie/StupidMirror/ci.yml?style=flat-square&amp;label=build" alt="构建状态" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-64748b?style=flat-square" alt="PolyForm Noncommercial 许可证" /></a>
@@ -18,6 +19,7 @@
 <p align="center">
   <a href="https://github.com/LiuTianjie/StupidMirror/releases/latest">下载</a> ·
   <a href="https://liutianjie.github.io/StupidMirror/">官网</a> ·
+  <a href="#支持-codex">Codex 支持</a> ·
   <a href="#连接-ai-agent">MCP 接入</a> ·
   <a href="CHANGELOG.md">更新日志</a> ·
   <a href="README.md">English</a>
@@ -29,9 +31,23 @@
 
 StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB 或 Wi-Fi 查看 iPhone，通过 ADB 镜像 Android，再按需连接控制，在 Mac 上操作手机。
 
-同一个工作台也可以通过 **MCP** 交给 AI Agent：观察当前画面，用本地 OCR 或原生无障碍信息定位目标，执行操作，再检查结果。整个过程都能在 Mac 镜像窗口中看到。
+同一个工作台也可以通过 **MCP** 交给 AI Agent：观察当前画面，用本地 OCR 或原生无障碍信息定位目标，执行操作，再检查结果。通过内置插件，可直接在 Codex 中查看手机实时画面，也可以使用原生 Mac 镜像窗口。
 
 **无需登录，即可镜像和控制一台设备。** 输入 SM- 激活码后可同时连接多台设备，无需登录。源码采用 PolyForm Noncommercial 许可证，商业用途需要单独授权，详见[许可证说明](#许可证)。
+
+## 支持 Codex
+
+**StupidMirror 内置 Codex 插件，让 Codex 直接观察和操作真实的 iPhone / Android，并把手机实时画面显示在聊天中的插件面板里。** 你可以让它检查移动端界面、走一遍 App 流程、复现问题，并在连接的真机上验证修改结果。
+
+- **在 Codex 里看手机。** 通过本机 WebRTC 显示实时画面，支持切换设备、暂停/继续和复制截图。
+- **用自然语言操作并验证。** 让 Codex 通过 MCP 读取页面、定位控件、点击、滑动和输入，再观察手机上的实际结果。
+- **框出问题，交给 Codex。** 冻结当前画面、框选区域并附上说明，在支持图片消息的宿主中发送标注截图；也可以开启手动操作，直接点按或拖动预览画面。
+
+安装 StupidMirror 并完成[设备准备](#从一台设备开始)后，点击 **设置 → MCP 自动化 → 接入 Codex**，再在 Codex 新建聊天、选择 **StupidMirror** 插件，发送：
+
+> 用 StupidMirror 在 Codex 中显示我的手机屏幕，并读取当前页面，先不要点击。
+
+应用会通过 Codex 桌面端内置的 CLI 安装随附插件，无需克隆仓库、额外安装 Python / Node.js 或复制 Token。完整步骤见 [Codex 接入说明](#codex-插件从应用内一键接入)，操作方式与排障见 [Codex 插件指南](docs/codex-plugin.md)。
 
 ## 核心能力
 
