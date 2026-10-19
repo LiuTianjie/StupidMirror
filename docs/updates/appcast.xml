@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>StupidMirror</title>
+    <link>https://liutianjie.github.io/StupidMirror/updates/appcast.xml</link>
+    <description>StupidMirror updates</description>
+    <language>en</language>
+    <item>
+      <title>StupidMirror 0.3.7</title>
+      <pubDate>Mon, 19 Oct 2026 16:20:53 +0000</pubDate>
+      <sparkle:version>202610200008</sparkle:version>
+      <sparkle:shortVersionString>0.3.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[<ul><li>Fix a wireless mirror window that could keep waiting for video while control and the preview already worked. Wireless start-up now follows the mirror itself instead of a device ID that can change mid-start, and a waiting mirror with nothing in flight asks for a fresh video endpoint again.</li><li>Check for app updates with Sparkle, like the LinkShell desktop app: a daily background check, **Check for Updates…** in the menu bar and Settings, and Sparkle&#x27;s update window with release notes. Updates are verified with an EdDSA signature and the app&#x27;s Developer ID signature before installing. This release is the first with the updater; 0.3.6 and earlier update manually.</li><li>Add **Open at login** in Settings &gt; Startup &amp; Updates (off by default). A login launch stays in the menu bar.</li><li>Show the Dock icon while the dashboard or a mirror window is open, and bring the dashboard back when the app is opened again from Spotlight, Finder or the Dock while it runs in the menu bar.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.3.7/StupidMirror-v0.3.7-macos.zip" type="application/octet-stream" sparkle:edSignature="gwo9IgycGj17favXlV1QHZtFv1B+cAkd50hbyoSQ+vzvIGVSIiLw+mxICW7hhwWQzKmzTP/CE1d0p4MHeBjTCA==" length="160609182" />
+    </item>
+  </channel>
+</rss>
