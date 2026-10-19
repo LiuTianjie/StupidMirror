@@ -21,3 +21,7 @@ plugins/stupidmirror/THIRD_PARTY_NOTICES.md and assets/widget-licenses.txt.
 The smpreview WebRTC sidecar uses Pion and its Go dependencies; exact versions
 are in tools/smpreview/go.mod and license texts in
 plugins/stupidmirror/assets/webrtc-licenses.txt.
+
+App updates use Sparkle (https://sparkle-project.org, MIT License), embedded as
+Sparkle.framework. Its license text ships in the app as
+Resources/Sparkle-LICENSE.txt and is kept in Assets/licenses/Sparkle-LICENSE.txt.

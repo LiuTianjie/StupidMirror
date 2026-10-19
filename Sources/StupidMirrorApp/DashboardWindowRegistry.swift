@@ -11,7 +11,9 @@ final class DashboardWindowRegistry {
     private init() {}
 
     func open(store: DeviceGalleryStore) {
+        DockPresence.windowWillShow()
         if let window {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -34,6 +36,7 @@ final class DashboardWindowRegistry {
             defer: false
         )
         window.title = "StupidMirror"
+        window.identifier = DockPresence.dashboardIdentifier
         // Keep the toolbar on its own row. A unified toolbar lets the sidebar
         // extend beneath it, which causes the first device row and the toolbar
         // controls to overlap at narrower window sizes.

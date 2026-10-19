@@ -41,6 +41,7 @@ final class MirrorWindowRegistry {
     /// Opens a mirror after `DeviceGalleryStore` has applied the simultaneous
     /// device policy. Callers must never use this as an alternative start path.
     func openAuthorized(session: DeviceSession, store: DeviceGalleryStore) {
+        DockPresence.windowWillShow()
         if let window = windows[session.id] {
             startCapture(session: session, store: store)
             update(window: window, session: session, store: store)
@@ -61,6 +62,7 @@ final class MirrorWindowRegistry {
             defer: false
         )
         window.title = session.device.name
+        window.identifier = DockPresence.mirrorIdentifier
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = true

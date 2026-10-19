@@ -32,6 +32,17 @@ official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1
 official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
 license_endpoint="${LICENSE_ENDPOINT:-${STUPIDMIRROR_LICENSE_ENDPOINT:-$official_license_endpoint}}"
 license_publishable_key="${LICENSE_PUBLISHABLE_KEY:-${STUPIDMIRROR_LICENSE_PUBLISHABLE_KEY:-$official_license_publishable_key}}"
+# Sparkle updates. Only a Developer ID build can replace a signed install, so
+# ad hoc and development builds carry no feed and their updater stays inert.
+official_update_feed_url="https://liutianjie.github.io/StupidMirror/updates/appcast.xml"
+official_update_public_ed_key="Yj8/B8nrGotIJEAEp4TjsvVNNFTRAwzF0CQR4t0qkwk="
+update_feed_url="${UPDATE_FEED_URL:-$official_update_feed_url}"
+update_public_ed_key="${UPDATE_PUBLIC_ED_KEY:-$official_update_public_ed_key}"
+if [[ "$sign_identity" == "Developer ID Application: "* ]]; then
+  enable_updates="${ENABLE_UPDATES:-true}"
+else
+  enable_updates="${ENABLE_UPDATES:-false}"
+fi
 app_path="dist/${app_name}.app"
 build_work_dir="$(mktemp -d)"
 build_app_path="${build_work_dir}/${app_name}.app"
@@ -100,6 +111,18 @@ if [ "$bundle_smtunnel" = "true" ]; then
   bash scripts/build-smtunnel.sh "${contents_path}/Resources/smtunnel"
 fi
 
+# The app links Sparkle.framework from Contents/Frameworks (see Package.swift).
+sparkle_source="$(find .build/artifacts -maxdepth 6 -type d -path '*Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework' | head -n 1)"
+if [ -z "$sparkle_source" ] || [ ! -d "$sparkle_source" ]; then
+  echo "Sparkle.framework not found under .build/artifacts; run swift package resolve." >&2
+  exit 1
+fi
+mkdir -p "${contents_path}/Frameworks"
+ditto "$sparkle_source" "${contents_path}/Frameworks/Sparkle.framework"
+sparkle_framework="${contents_path}/Frameworks/Sparkle.framework"
+mkdir -p "${contents_path}/Resources"
+cp Assets/licenses/Sparkle-LICENSE.txt "${contents_path}/Resources/Sparkle-LICENSE.txt"
+
 # Mach-O files nested under Resources that need their own signature.
 nested_binaries() {
   local roots=("${contents_path}/Helpers")
@@ -119,6 +142,23 @@ nested_binaries() {
         fi
       done
 }
+
+update_plist_entries=""
+if [ "$enable_updates" = "true" ]; then
+  update_plist_entries="  <key>SUFeedURL</key>
+  <string>$(xml_escape "$update_feed_url")</string>
+  <key>SUPublicEDKey</key>
+  <string>$(xml_escape "$update_public_ed_key")</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
+  <key>SUAutomaticallyUpdate</key>
+  <false/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
+"
+fi
 
 cat > "${contents_path}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -171,7 +211,7 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <string>${license_endpoint_xml}</string>
   <key>StupidMirrorLicensePublishableKey</key>
   <string>${license_publishable_key_xml}</string>
-  <key>CFBundleURLTypes</key>
+${update_plist_entries}  <key>CFBundleURLTypes</key>
   <array>
     <dict>
       <key>CFBundleURLName</key>
@@ -260,12 +300,24 @@ if [ "$skip_codesign" != "true" ] && command -v codesign >/dev/null 2>&1; then
       codesign "${nested_args[@]}" "$nested_binary" || return 1
     done < <(nested_binaries)
 
+    # Sparkle from the inside out: its helpers keep their own entitlements.
+    for sparkle_part in \
+      Versions/B/XPCServices/Downloader.xpc \
+      Versions/B/XPCServices/Installer.xpc \
+      Versions/B/Updater.app \
+      Versions/B/Autoupdate; do
+      codesign "${nested_sign_args[@]}" --preserve-metadata=entitlements \
+        "${sparkle_framework}/${sparkle_part}" || return 1
+    done
+    codesign "${nested_sign_args[@]}" "$sparkle_framework" || return 1
+
     app_sign_args+=(--entitlements "$entitlements")
     codesign "${app_sign_args[@]}" "$build_app_path" || return 1
 
     while IFS= read -r -d '' nested_binary; do
       codesign --verify --strict --verbose=2 "$nested_binary" >/dev/null || return 1
     done < <(nested_binaries)
+    codesign --verify --strict --deep --verbose=2 "$sparkle_framework" >/dev/null || return 1
     # Verifies the main signature and the bundle's sealed resources without
     # asking codesign to recursively infer how nested code should be signed.
     codesign --verify --strict --verbose=2 "$build_app_path" >/dev/null || return 1

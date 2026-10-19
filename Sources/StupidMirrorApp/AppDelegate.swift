@@ -11,11 +11,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         installSignalHandlers()
+        DockPresence.install()
+        AppUpdater.shared.start()
         guard !CommandLine.arguments.contains("--mcp-background") else { return }
+        // Started at login: stay in the menu bar until the user opens it.
+        guard !LaunchAtLoginController.launchedAsLoginItem() else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             guard let store = Self.store else { return }
             DashboardWindowRegistry.shared.open(store: store)
         }
+    }
+
+    /// Opening the app again (Spotlight, Finder, the Dock icon) while it runs
+    /// in the menu bar brings back the dashboard instead of doing nothing.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if let store = Self.store {
+            DashboardWindowRegistry.shared.open(store: store)
+        }
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 
     @MainActor
