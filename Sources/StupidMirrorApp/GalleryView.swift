@@ -723,6 +723,85 @@ private struct MCPToolbarLabel: View {
     }
 }
 
+/// Open at login (off until turned on) and Sparkle updates.
+struct StartupAndUpdatesSection: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @ObservedObject private var launchAtLogin = LaunchAtLoginController.shared
+    @ObservedObject private var updater = AppUpdater.shared
+
+    var body: some View {
+        Section(store.t("settings.startupUpdates")) {
+            Toggle(
+                store.t("settings.launchAtLogin"),
+                isOn: Binding(
+                    get: { launchAtLogin.isEnabled },
+                    set: { launchAtLogin.setEnabled($0) }
+                )
+            )
+            .disabled(launchAtLogin.state == .unavailable)
+            Text(store.t(launchAtLoginHelpKey))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if launchAtLogin.state == .requiresApproval {
+                Button(store.t("settings.openLoginItems")) {
+                    launchAtLogin.openLoginItemsSettings()
+                }
+            }
+            if let error = launchAtLogin.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if updater.isConfigured {
+                Toggle(
+                    store.t("settings.autoCheckUpdates"),
+                    isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.setAutomaticallyChecksForUpdates($0) }
+                    )
+                )
+                HStack {
+                    Button(store.t("settings.checkForUpdates")) {
+                        updater.checkForUpdates()
+                    }
+                    .disabled(!updater.canCheckForUpdates)
+                    Text(updateStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text(String(format: store.t("settings.currentVersion"), updater.currentVersion)
+                    + " · " + store.t("settings.updatesUnavailable"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { launchAtLogin.refresh() }
+    }
+
+    private var launchAtLoginHelpKey: String {
+        switch launchAtLogin.state {
+        case .requiresApproval: "settings.launchAtLoginApproval"
+        case .unavailable: "settings.launchAtLoginUnavailable"
+        case .enabled, .disabled: "settings.launchAtLoginHelp"
+        }
+    }
+
+    private var updateStatus: String {
+        var parts = [String(format: store.t("settings.currentVersion"), updater.currentVersion)]
+        if let available = updater.availableVersion {
+            parts.append(String(format: store.t("settings.updateAvailable"), available))
+        } else if let date = updater.lastCheckDate {
+            parts.append(String(
+                format: store.t("settings.lastUpdateCheck"),
+                date.formatted(date: .abbreviated, time: .shortened)
+            ))
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: DeviceGalleryStore
@@ -768,6 +847,8 @@ struct SettingsView: View {
                         }
                         .pickerStyle(.segmented)
                     }
+
+                    StartupAndUpdatesSection()
 
                     Section(store.t("settings.mirroring")) {
                         Toggle(store.t("settings.autoOpen"), isOn: $store.autoStartMirrors)

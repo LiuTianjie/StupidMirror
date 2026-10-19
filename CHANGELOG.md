@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.7 - 2026-10-20
+
+- Fix a wireless mirror window that could keep waiting for video while control
+  and the preview already worked. Wireless start-up now follows the mirror
+  itself instead of a device ID that can change mid-start, and a waiting mirror
+  with nothing in flight asks for a fresh video endpoint again.
+- Check for app updates with Sparkle, like the LinkShell desktop app: a daily
+  background check, **Check for Updates…** in the menu bar and Settings, and
+  Sparkle's update window with release notes. Updates are verified with an
+  EdDSA signature and the app's Developer ID signature before installing.
+  This release is the first with the updater; 0.3.6 and earlier update manually.
+- Add **Open at login** in Settings > Startup & Updates (off by default). A
+  login launch stays in the menu bar.
+- Show the Dock icon while the dashboard or a mirror window is open, and bring
+  the dashboard back when the app is opened again from Spotlight, Finder or the
+  Dock while it runs in the menu bar.
+
 ## 0.3.6 - 2026-10-19
 
 - Discover wireless iPhones through usbmuxd, the same path the `smtunnel`

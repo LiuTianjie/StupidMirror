@@ -60,7 +60,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 
 ## 从一台设备开始
 
-从 [GitHub Releases](https://github.com/LiuTianjie/StupidMirror/releases/latest) 下载 macOS 应用，移入 Applications 后打开。StupidMirror 以菜单栏工具的形式运行。
+从 [GitHub Releases](https://github.com/LiuTianjie/StupidMirror/releases/latest) 下载 macOS 应用，移入 Applications 后打开。StupidMirror 以菜单栏工具的形式运行，窗口打开时也会显示在 Dock 中。从 0.3.7 起应用会自行检查签名更新（菜单栏或设置中的“检查更新…”）；“开机时自动启动”位于设置 > 启动与更新。
 
 | 连接方式 | 准备工作 | 画面与声音 |
 | --- | --- | --- |

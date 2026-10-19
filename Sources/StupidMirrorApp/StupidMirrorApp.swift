@@ -19,6 +19,9 @@ struct StupidMirrorApp: App {
         .menuBarExtraStyle(.menu)
         .commands {
             CommandGroup(after: .appInfo) {
+                CheckForUpdatesButton()
+                    .environmentObject(store)
+
                 Button(store.t("menu.refreshDevices")) {
                     store.refresh()
                 }
@@ -107,6 +110,8 @@ struct MenuBarContentView: View {
             store.presentDiagnostics()
         }
 
+        CheckForUpdatesButton()
+
         Divider()
 
         Button(store.t("menu.quit")) {
@@ -133,5 +138,28 @@ struct MenuBarContentView: View {
 
     private func showDashboard() {
         DashboardWindowRegistry.shared.open(store: store)
+    }
+}
+
+/// Shown only in a build that can update itself; names the new version once
+/// a check has found one.
+struct CheckForUpdatesButton: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @ObservedObject private var updater = AppUpdater.shared
+
+    var body: some View {
+        if updater.isConfigured {
+            Button(title) {
+                updater.checkForUpdates()
+            }
+            .disabled(!updater.canCheckForUpdates)
+        }
+    }
+
+    private var title: String {
+        if let version = updater.availableVersion {
+            return String(format: store.t("menu.updateAvailable"), version)
+        }
+        return store.t("menu.checkForUpdates")
     }
 }

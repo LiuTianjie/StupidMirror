@@ -44,6 +44,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var androidAudioEnabled = false
     private var wirelessStreamURL: URL?
     private var wirelessRetryTask: Task<Void, Never>?
+    private var wirelessStartupWatchdog: Task<Void, Never>?
     private var wirelessGeneration: UInt64 = 0
     private var wirelessStartedAt: Date?
     private var lastStreamFailureAt: Date?
@@ -167,6 +168,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             // The WDA owner will call connectWirelessVideo only after /status
             // is ready. Starting the socket here races the agent launch and
             // produces false transport failures before SRT can listen.
+            superviseWirelessStartup()
             return
         }
 
@@ -213,6 +215,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
+        wirelessStartupWatchdog?.cancel()
+        wirelessStartupWatchdog = nil
         wirelessSRTStream?.stop()
         wirelessSRTStream = nil
         androidStream?.stop()
@@ -232,6 +236,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
+        wirelessStartupWatchdog?.cancel()
+        wirelessStartupWatchdog = nil
         wirelessSRTStream?.stop()
         wirelessSRTStream = nil
         wirelessOnRunning = nil
@@ -264,10 +270,35 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         state = .starting
         wirelessStartupBeganAt = Date()
         lastStreamFailureAt = lastStreamFailureAt ?? Date()
+        superviseWirelessStartup()
         if let refresh = onWirelessEndpointNeedsRefresh {
             refresh()
         }
     }
+
+    /// Waiting for wireless video must always have work behind it: an agent
+    /// start, an SRT attempt or a scheduled retry. If every one of those has
+    /// ended while the mirror still waits (a start that was dropped on the
+    /// way), ask the owner for a fresh endpoint again; the owner ignores the
+    /// request while a start is already in flight.
+    @MainActor
+    private func superviseWirelessStartup() {
+        wirelessStartupWatchdog?.cancel()
+        wirelessStartupWatchdog = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(Self.wirelessStartupWatchdogInterval))
+                guard let self, !Task.isCancelled,
+                      self.wirelessDeviceUDID != nil,
+                      self.state == .starting,
+                      !self.disposed else { return }
+                if self.wirelessSRTStream == nil {
+                    self.onWirelessEndpointNeedsRefresh?()
+                }
+            }
+        }
+    }
+
+    nonisolated static let wirelessStartupWatchdogInterval: Double = 5
 
     @MainActor
     func connectWirelessVideo(host: String, port: Int) {
@@ -936,6 +967,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         }
 
         state = .starting
+        superviseWirelessStartup()
         wirelessRetryTask?.cancel()
         wirelessRetryTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(500))

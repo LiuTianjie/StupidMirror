@@ -31,6 +31,13 @@ commercial distribution or use requires a separate written commercial license.
    scripts/setup-notary-profile.sh
    ```
 
+4. Keep the Sparkle update signing key. It was created once with
+   `$(bash scripts/sparkle-tools.sh)/bin/generate_keys --account stupidmirror`
+   and lives in the login Keychain; its public half is `SUPublicEDKey` in
+   `scripts/build-app.sh` and `scripts/build-and-upload-release.sh`. Back it up
+   with `generate_keys --account stupidmirror -x <file>` and store that file
+   offline. Without it, installed apps can never accept another update.
+
 ## Prepare a release
 
 Final publication is a manual maintainer action. The script defaults to a local
@@ -53,8 +60,15 @@ branch and open a PR; do not push main during preparation.
    `PUSH_RELEASE=true` on the release branch prepares a draft; published releases
    are protected from artifact replacement. Use a notes file with `gh --notes-file`.
 6. Verify uploaded asset size/digest and complete real-host/device acceptance.
+   The script also wrote `dist/releases/appcast-<tag>.xml`, signed with the
+   Keychain key for exactly this zip. Do not rebuild or re-zip after that.
 7. The maintainer personally merges the PR (deploying Pages) and publishes the
    draft Release. Preparation does not count as either of these actions.
+8. After the Release is public, copy the appcast to `docs/updates/appcast.xml`
+   and merge it to `main` (a follow-up PR, or the release PR if it is merged
+   after publishing). Installed apps read that feed; never publish a feed whose
+   enclosure URL is not downloadable yet. Then use **Check for Updates…** in
+   the previous release to confirm the update installs.
 
 Apple notarization is mandatory for distribution. Without `NOTARY_PROFILE`, the
 script refuses to continue unless `ALLOW_UNNOTARIZED=true` is explicitly used

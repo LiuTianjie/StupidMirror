@@ -142,7 +142,8 @@ final class DeviceGalleryStore: ObservableObject {
     private var refreshRequestedWhileRunning = false
     private var thumbnailCaptures: [String: ThumbnailCapture] = [:]
     private var wirelessThumbnailTasks: [String: Task<Void, Never>] = [:]
-    private var wirelessTransportTasks: [String: Task<Void, Never>] = [:]
+    /// Keyed by the mirror the work serves; see `session(owning:)`.
+    private var wirelessTransportTasks: [ObjectIdentifier: (token: UUID, task: Task<Void, Never>)] = [:]
     private var discoveryRetryTask: Task<Void, Never>?
     private var removedDeviceIDs = Set<String>()
     private var desiredMirrorIDs = Set<String>()
@@ -866,8 +867,7 @@ final class DeviceGalleryStore: ObservableObject {
                     transport: .usb
                 )
                 if existing.transport != .usb {
-                    wirelessTransportTasks[existing.id]?.cancel()
-                    wirelessTransportTasks[existing.id] = nil
+                    cancelWirelessTransport(for: existing)
                 }
                 rebaseSession(&existing, to: identity)
                 existing.adoptUSB(identity: identity, captureDevice: captureDevice)
@@ -945,8 +945,7 @@ final class DeviceGalleryStore: ObservableObject {
                         transport: .wireless
                     )
                     if existing.transport != .wireless {
-                        wirelessTransportTasks[existing.id]?.cancel()
-                        wirelessTransportTasks[existing.id] = nil
+                        cancelWirelessTransport(for: existing)
                     }
                     rebaseSession(&existing, to: identity)
                     existing.adoptWireless(identity: identity, wirelessDevice: wirelessDevice)
@@ -1222,9 +1221,6 @@ final class DeviceGalleryStore: ObservableObject {
         if let task = wirelessThumbnailTasks.removeValue(forKey: oldID) {
             wirelessThumbnailTasks[newID] = task
         }
-        if let task = wirelessTransportTasks.removeValue(forKey: oldID) {
-            wirelessTransportTasks[newID] = task
-        }
         if let image = thumbnails.removeValue(forKey: oldID) {
             thumbnails[newID] = image
         }
@@ -1275,8 +1271,7 @@ final class DeviceGalleryStore: ObservableObject {
         thumbnailCaptures[session.id] = nil
         wirelessThumbnailTasks[session.id]?.cancel()
         wirelessThumbnailTasks[session.id] = nil
-        wirelessTransportTasks[session.id]?.cancel()
-        wirelessTransportTasks[session.id] = nil
+        cancelWirelessTransport(for: session)
         clearThumbnail(for: session.id)
         disconnectedSince[session.id] = nil
         MirrorWindowRegistry.shared.close(session: session)
@@ -1395,8 +1390,7 @@ final class DeviceGalleryStore: ObservableObject {
         desiredMirrorIDs.remove(session.id)
         embeddedPreviewIDs.remove(session.id)
         pendingActivationMirrorIDs.remove(session.id)
-        wirelessTransportTasks[session.id]?.cancel()
-        wirelessTransportTasks[session.id] = nil
+        cancelWirelessTransport(for: session)
         MirrorWindowRegistry.shared.close(session: session)
     }
 
@@ -1407,8 +1401,7 @@ final class DeviceGalleryStore: ObservableObject {
         dismissActivationSheetIfPresented()
         MirrorWindowRegistry.shared.closeAll(sessions: sessions)
         for session in sessions {
-            wirelessTransportTasks[session.id]?.cancel()
-            wirelessTransportTasks[session.id] = nil
+            cancelWirelessTransport(for: session)
             session.controlSession.disconnect()
         }
     }
@@ -1461,8 +1454,8 @@ final class DeviceGalleryStore: ObservableObject {
             task.cancel()
         }
         wirelessThumbnailTasks.removeAll()
-        for task in wirelessTransportTasks.values {
-            task.cancel()
+        for entry in wirelessTransportTasks.values {
+            entry.task.cancel()
         }
         wirelessTransportTasks.removeAll()
         thumbnails.removeAll()
@@ -1585,31 +1578,54 @@ final class DeviceGalleryStore: ObservableObject {
         statusMessage = t("status.activationDeviceLimit")
     }
 
+    /// The session that currently owns a mirror. A session's ID can change
+    /// while its mirror keeps running (a plugged-in phone first known by its
+    /// capture device, later by its UDID), so long-running work follows the
+    /// mirror object instead of an ID captured when it started.
+    private func session(owning mirrorSession: MirrorCaptureSession) -> DeviceSession? {
+        sessions.first { $0.mirrorSession === mirrorSession }
+    }
+
+    private func cancelWirelessTransport(for session: DeviceSession) {
+        let key = ObjectIdentifier(session.mirrorSession)
+        wirelessTransportTasks[key]?.task.cancel()
+        wirelessTransportTasks[key] = nil
+    }
+
     private func prepareWirelessTransportIfNeeded(for session: DeviceSession) {
+        let mirrorSession = session.mirrorSession
+        let key = ObjectIdentifier(mirrorSession)
         guard desiredMirrorIDs.contains(session.id),
               session.transport == .wireless,
-              wirelessTransportTasks[session.id] == nil,
+              wirelessTransportTasks[key] == nil,
               let wirelessDevice = session.wirelessDevice,
               let iosAgent = session.iosAgent else { return }
 
-        let sessionID = session.id
-        let mirrorSession = session.mirrorSession
-        mirrorSession.onWirelessEndpointNeedsRefresh = { [weak self] in
-            guard let self,
-                  let current = self.sessions.first(where: { $0.id == sessionID }) else {
+        mirrorSession.onWirelessEndpointNeedsRefresh = { [weak self, weak mirrorSession] in
+            guard let self, let mirrorSession,
+                  let current = self.session(owning: mirrorSession) else {
                 return
             }
             self.prepareWirelessTransportIfNeeded(for: current)
         }
-        wirelessTransportTasks[sessionID] = Task { @MainActor [weak self, weak iosAgent, weak mirrorSession] in
+        let token = UUID()
+        let task = Task { @MainActor [weak self, weak iosAgent, weak mirrorSession] in
             await Task.yield()
             guard let self, let iosAgent, let mirrorSession, !self.isShuttingDown else { return }
-            defer { self.wirelessTransportTasks[sessionID] = nil }
+            defer {
+                // Only this task's own entry: a newer one may have replaced it.
+                if self.wirelessTransportTasks[key]?.token == token {
+                    self.wirelessTransportTasks[key] = nil
+                }
+            }
+            @MainActor func stillWanted() -> Bool {
+                guard !Task.isCancelled, !self.isShuttingDown,
+                      let current = self.session(owning: mirrorSession) else { return false }
+                return self.desiredMirrorIDs.contains(current.id)
+            }
 
             await self.detectSigningTeams()
-            guard !Task.isCancelled,
-                  !self.isShuttingDown,
-                  self.desiredMirrorIDs.contains(sessionID) else { return }
+            guard stillWanted() else { return }
             do {
                 var resolvedEndpoint: IOSAgentEndpoint?
                 var lastError: Error?
@@ -1639,8 +1655,7 @@ final class DeviceGalleryStore: ObservableObject {
                         lastError = error
                         guard attempt < 2,
                               self.shouldRetryAgentStart(error),
-                              self.desiredMirrorIDs.contains(sessionID),
-                              !Task.isCancelled else {
+                              stillWanted() else {
                             throw error
                         }
                         let message = self.t("agent.start.retryingAgent")
@@ -1652,11 +1667,7 @@ final class DeviceGalleryStore: ObservableObject {
                 guard let resolvedEndpoint else {
                     throw lastError ?? IOSAgentError.launchFailed
                 }
-                guard !Task.isCancelled,
-                      self.desiredMirrorIDs.contains(sessionID),
-                      self.sessions.contains(where: {
-                          $0.id == sessionID && $0.mirrorSession === mirrorSession
-                      }) else { return }
+                guard stillWanted() else { return }
                 mirrorSession.connectWirelessVideo(
                     host: resolvedEndpoint.videoHost,
                     port: resolvedEndpoint.videoPort
@@ -1666,16 +1677,21 @@ final class DeviceGalleryStore: ObservableObject {
             } catch {
                 // A failed start says nothing about reachability: the phone
                 // stays connected and the mirror shows why it did not start.
-                self.desiredMirrorIDs.remove(sessionID)
+                let current = self.session(owning: mirrorSession)
+                if let current {
+                    self.desiredMirrorIDs.remove(current.id)
+                }
                 let localizedMessage = self.agentErrorMessage(error)
                 mirrorSession.failWirelessStart(localizedMessage)
                 self.statusMessage = localizedMessage
-                if let agentError = error as? IOSAgentError,
+                if let current,
+                   let agentError = error as? IOSAgentError,
                    agentError == .setupRequired || agentError == .developerModeDisabled {
-                    self.presentIPhoneSetup(for: session)
+                    self.presentIPhoneSetup(for: current)
                 }
             }
         }
+        wirelessTransportTasks[key] = (token, task)
     }
 
     private func shouldRetryAgentStart(_ error: Error) -> Bool {

@@ -60,7 +60,7 @@ The app installs its bundled plugin through the Codex desktop app's CLI; no repo
 
 ## Start with one device
 
-Download the macOS app from [GitHub Releases](https://github.com/LiuTianjie/StupidMirror/releases/latest), move it to Applications, and open it. StupidMirror runs as a menu bar utility.
+Download the macOS app from [GitHub Releases](https://github.com/LiuTianjie/StupidMirror/releases/latest), move it to Applications, and open it. StupidMirror runs as a menu bar utility and shows a Dock icon while its windows are open. From 0.3.7 it checks for signed updates itself (**Check for Updates…** in the menu bar or Settings); **Open at login** is in Settings > Startup & Updates.
 
 | Connection | Prepare | Video and audio |
 | --- | --- | --- |

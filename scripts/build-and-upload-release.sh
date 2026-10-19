@@ -14,6 +14,8 @@ official_uiautomator2_driver_version="8.2.2"
 official_remote_xpc_version="5.13.2"
 official_scrcpy_server_version="4.1"
 official_scrcpy_server_sha256="deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae"
+official_update_feed_url="https://liutianjie.github.io/StupidMirror/updates/appcast.xml"
+official_update_public_ed_key="Yj8/B8nrGotIJEAEp4TjsvVNNFTRAwzF0CQR4t0qkwk="
 tag="${1:-${TAG:-}}"
 version_file="${VERSION_FILE:-VERSION}"
 version="${VERSION:-$(tr -d '[:space:]' < "$version_file" 2>/dev/null || printf '0.1.0')}"
@@ -216,6 +218,36 @@ assert_release_app() {
     echo "Release license publishable key mismatch." >&2
     exit 1
   fi
+
+  # Sparkle: the feed and key installed apps trust, and a signed framework.
+  value="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$info_plist" 2>/dev/null || true)"
+  if [ "$value" != "$official_update_feed_url" ]; then
+    echo "Release update feed mismatch: ${value:-<empty>}." >&2
+    exit 1
+  fi
+  value="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$info_plist" 2>/dev/null || true)"
+  if [ "$value" != "$official_update_public_ed_key" ]; then
+    echo "Release update public key mismatch." >&2
+    exit 1
+  fi
+  local sparkle_framework="${app}/Contents/Frameworks/Sparkle.framework"
+  if [ ! -d "$sparkle_framework" ]; then
+    echo "Release does not contain Sparkle.framework." >&2
+    exit 1
+  fi
+  codesign --verify --strict --deep --verbose=2 "$sparkle_framework"
+  local sparkle_team
+  for sparkle_code in "$sparkle_framework" \
+    "${sparkle_framework}/Versions/B/Autoupdate" \
+    "${sparkle_framework}/Versions/B/Updater.app" \
+    "${sparkle_framework}/Versions/B/XPCServices/Installer.xpc" \
+    "${sparkle_framework}/Versions/B/XPCServices/Downloader.xpc"; do
+    sparkle_team="$(codesign -dv --verbose=4 "$sparkle_code" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -n 1)"
+    if [ "$sparkle_team" != "$official_team_id" ]; then
+      echo "Sparkle signing team mismatch for ${sparkle_code}: ${sparkle_team:-<empty>}." >&2
+      exit 1
+    fi
+  done
 
   for locale in en zh-Hans; do
     local strings_file="${app}/Contents/Resources/${locale}.lproj/InfoPlist.strings"
@@ -433,6 +465,11 @@ else
     zip -qry "${repo_root}/${artifact_path}" "${app_name}.app"
   )
 fi
+
+# The update feed for this archive. It is published (docs/updates/appcast.xml)
+# only after the GitHub Release holding the archive is public.
+appcast_path="$(bash scripts/generate-appcast.sh "$tag" "$artifact_path" "${artifact_dir}/appcast-${tag}.xml")"
+echo "Wrote update feed ${appcast_path}."
 
 if [ "$commit_release" = "true" ] && [ -n "${BUMP:-}" ]; then
   git add "$version_file"
