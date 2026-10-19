@@ -7,7 +7,9 @@ import Foundation
 final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     let captureSession = AVCaptureSession()
     private(set) var device: AVCaptureDevice?
-    private(set) var wirelessEndpointURL: URL?
+    /// Set for an iPhone streamed over the smtunnel sidecar. The video
+    /// endpoint itself arrives later through `connectWirelessVideo`.
+    private(set) var wirelessDeviceUDID: String?
     private(set) var androidDevice: AndroidDeviceMetadata?
 
     @Published private(set) var state: MirrorState = .stopped
@@ -52,24 +54,23 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     init(device: AVCaptureDevice) {
         self.device = device
-        self.wirelessEndpointURL = nil
+        self.wirelessDeviceUDID = nil
         self.androidDevice = nil
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
     }
 
-    init(wirelessEndpointURL: URL) {
+    init(wirelessDeviceUDID: String) {
         self.device = nil
-        self.wirelessEndpointURL = wirelessEndpointURL
+        self.wirelessDeviceUDID = wirelessDeviceUDID
         self.androidDevice = nil
-        self.wirelessStreamURL = wirelessEndpointURL
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
     }
 
     init(androidDevice: AndroidDeviceMetadata) {
         self.device = nil
-        self.wirelessEndpointURL = nil
+        self.wirelessDeviceUDID = nil
         self.androidDevice = androidDevice
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
@@ -92,27 +93,27 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     @MainActor
     func retargetToUSB(_ captureDevice: AVCaptureDevice) {
         guard device?.uniqueID != captureDevice.uniqueID
-                || wirelessEndpointURL != nil
+                || wirelessDeviceUDID != nil
                 || androidDevice != nil else {
             return
         }
         resetForRetarget()
         device = captureDevice
-        wirelessEndpointURL = nil
+        wirelessDeviceUDID = nil
         androidDevice = nil
         wirelessStreamURL = nil
     }
 
     @MainActor
-    func retargetToWireless(endpointURL: URL) {
-        guard wirelessEndpointURL != endpointURL || device != nil || androidDevice != nil else {
+    func retargetToWireless(udid: String) {
+        guard wirelessDeviceUDID != udid || device != nil || androidDevice != nil else {
             return
         }
         resetForRetarget()
         device = nil
-        wirelessEndpointURL = endpointURL
+        wirelessDeviceUDID = udid
         androidDevice = nil
-        wirelessStreamURL = endpointURL
+        wirelessStreamURL = nil
     }
 
     @MainActor
@@ -158,7 +159,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             return
         }
 
-        if wirelessEndpointURL != nil {
+        if wirelessDeviceUDID != nil {
             wirelessStartedAt = Date()
             wirelessStartupBeganAt = wirelessStartedAt
             wirelessOnRunning = onRunning
@@ -227,7 +228,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @MainActor
     func failWirelessStart(_ message: String) {
-        guard wirelessEndpointURL != nil, state == .starting else { return }
+        guard wirelessDeviceUDID != nil, state == .starting else { return }
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
@@ -242,7 +243,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @MainActor
     func updateWirelessStartupDetail(_ detail: String) {
-        guard wirelessEndpointURL != nil, state == .starting else { return }
+        guard wirelessDeviceUDID != nil, state == .starting else { return }
         wirelessStartupBeganAt = wirelessStartupBeganAt ?? Date()
         wirelessStartupDetail = detail
     }
@@ -252,7 +253,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     /// then retry a dead port; ask the owner for a fresh endpoint instead.
     @MainActor
     func requestWirelessReconnect() {
-        guard wirelessEndpointURL != nil,
+        guard wirelessDeviceUDID != nil,
               state == .starting || state == .running,
               !disposed else { return }
         wirelessGeneration &+= 1
@@ -270,7 +271,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @MainActor
     func connectWirelessVideo(host: String, port: Int) {
-        guard wirelessEndpointURL != nil,
+        guard wirelessDeviceUDID != nil,
               state == .starting || state == .running,
               !disposed else { return }
         var components = URLComponents()

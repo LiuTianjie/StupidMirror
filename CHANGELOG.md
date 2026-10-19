@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.3.6 - 2026-10-19
+
+- Discover wireless iPhones through usbmuxd, the same path the `smtunnel`
+  sidecar connects over, instead of `devicectl`, whose CoreDevice tunnel state
+  never reflected the app's own tunnel. A phone on the same Wi-Fi now shows as
+  connected before mirroring starts, so auto-start, Start All and MCP tools
+  that select a device (`start_mirror`, `connect_control`, `show_screen`, …)
+  work without first starting it by hand. Wireless devices no longer need
+  `.coredevice.local` hostnames, which also removes a crash path when they
+  were missing.
+- Keep a live wireless session when one discovery poll misses the phone; the
+  tunnel ending remains the signal that it is really gone. A failed start no
+  longer marks a reachable phone unavailable.
+- Plugging in USB while a wireless mirror or control session is in use keeps
+  that session on Wi-Fi instead of restarting it over the cable.
+- Give a busy runner a second, longer `/status` check before replacing its
+  tunnel, so a slow answer no longer drops video and control together.
+- Report the developer disk image correctly on iOS 17+ (personalized cryptex
+  image); the setup guide no longer flags it missing on working phones. Bound
+  the identity read in `smtunnel list --details` so a stale Wi-Fi entry cannot
+  stall discovery.
+
 ## 0.3.5 - 2026-10-12
 
 - Default screen observation to an image plus compact local OCR. Keep actionable

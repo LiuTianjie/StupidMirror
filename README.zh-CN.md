@@ -84,6 +84,8 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 后续会话由内置的 `smtunnel` 侧车连接手机：它在局域网上用进程内网络协议栈建立 Apple 的 CoreDevice 隧道，并通过 testmanagerd 启动 Runner，不依赖 Xcode 的启动器，不需要管理员密码、本地网络授权或在手机上点任何东西。无线镜像无需相机权限或 ReplayKit Broadcast Extension，但需要这个签名后的设备端 Runner 和手机上的开发者模式；准备无线画面不会自动连接控制。
 
+应用也按同一路径发现手机：只要 usbmuxd 在局域网上列出这台 iPhone，它就显示为已连接，可直接在应用里或通过 MCP 开始镜像。无线镜像或控制进行中插上数据线，当前会话会继续走 Wi‑Fi。
+
 ### 连接 Android
 
 安装 `adb`，开启 USB 调试，连接设备并在手机上授权当前 Mac，然后选择发现的设备开始镜像。画面与音频独立运行，不依赖可选的 Appium 控制连接。

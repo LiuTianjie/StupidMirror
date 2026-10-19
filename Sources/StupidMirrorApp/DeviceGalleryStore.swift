@@ -255,21 +255,10 @@ final class DeviceGalleryStore: ObservableObject {
         sessions.filter { $0.device.connectionState == .connected }
     }
 
+    /// Wireless iPhones are `.connected` while usbmuxd lists them on the
+    /// network, so every transport uses the same rule.
     func canAttemptConnection(_ session: DeviceSession) -> Bool {
-        Self.canAttemptConnection(
-            connectionState: session.device.connectionState,
-            transport: session.transport,
-            wirelessCandidateAvailable: session.wirelessDevice?.canAttemptConnection == true
-        )
-    }
-
-    nonisolated static func canAttemptConnection(
-        connectionState: DeviceConnectionState,
-        transport: DeviceTransport,
-        wirelessCandidateAvailable: Bool
-    ) -> Bool {
-        connectionState == .connected
-            || (transport == .wireless && wirelessCandidateAvailable)
+        session.device.connectionState == .connected
     }
 
     var reconnectingSessions: [DeviceSession] {
@@ -666,10 +655,10 @@ final class DeviceGalleryStore: ObservableObject {
     nonisolated static func shouldDeferUSBForWireless(
         wirelessModeEnabled: Bool,
         usbUDID: String?,
-        wirelessConnectedUDIDs: Set<String>
+        activeWirelessUDIDs: Set<String>
     ) -> Bool {
         guard wirelessModeEnabled, let usbUDID else { return false }
-        return wirelessConnectedUDIDs.contains(usbUDID)
+        return activeWirelessUDIDs.contains(usbUDID)
     }
 
     nonisolated static func shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
@@ -736,7 +725,7 @@ final class DeviceGalleryStore: ObservableObject {
             }.value
             async let wirelessTask = Task.detached(priority: .utility) {
                 discoverWireless
-                    ? CoreDeviceDiscoveryService.discoverWirelessDevices()
+                    ? await WirelessDiscoveryService.discover()
                     : WirelessDiscoveryOutcome.available([])
             }.value
             async let androidTask = Task.detached(priority: .utility) {
@@ -801,10 +790,27 @@ final class DeviceGalleryStore: ObservableObject {
         var resumeIDs = Set<String>()
         var autoStartIDs = Set<String>()
         let now = Date()
-        let wirelessConnectedUDIDs: Set<String> = {
-            guard wirelessMirroringEnabled else { return [] }
+        for record in metadata {
+            WirelessDiscoveryService.IdentityCache.shared.remember(record)
+        }
+        let listedWirelessUDIDs: Set<String> = {
             guard case let .available(wirelessDevices) = wirelessDiscovery else { return [] }
-            return Set(wirelessDevices.filter(\.isTunnelConnected).map(\.udid))
+            return Set(wirelessDevices.map(\.udid))
+        }()
+        // A plugged-in phone normally switches to USB. It stays on Wi-Fi while a
+        // wireless session is in use, as long as that session can keep going.
+        let activeWirelessUDIDs: Set<String> = {
+            guard wirelessMirroringEnabled else { return [] }
+            return Set(sessions.compactMap { session -> String? in
+                guard session.isIOSWireless,
+                      let udid = session.device.udid, !udid.isEmpty,
+                      desiredMirrorIDs.contains(session.id)
+                        || session.controlSession.isReady
+                        || session.controlSession.isConnecting,
+                      listedWirelessUDIDs.contains(udid) || IOSAgentService.hasRunningAgent(udid: udid)
+                else { return nil }
+                return udid
+            })
         }()
 
         func claim(_ session: DeviceSession) {
@@ -831,7 +837,7 @@ final class DeviceGalleryStore: ObservableObject {
             if Self.shouldDeferUSBForWireless(
                 wirelessModeEnabled: wirelessMirroringEnabled,
                 usbUDID: identity.udid,
-                wirelessConnectedUDIDs: wirelessConnectedUDIDs
+                activeWirelessUDIDs: activeWirelessUDIDs
             ) {
                 continue
             }
@@ -895,8 +901,14 @@ final class DeviceGalleryStore: ObservableObject {
 
         switch wirelessDiscovery {
         case let .available(wirelessDevices):
+            // A plugged-in phone whose capture device could not be tied to a
+            // UDID is still that phone: never show it a second time as Wi-Fi.
+            let hasUnresolvedUSBCapture = nextSessions.contains {
+                $0.platform == .iOS && $0.transport == .usb && $0.device.udid == nil
+            }
             for wirelessDevice in wirelessDevices where !claimedIDs.contains(wirelessDevice.udid) {
                 guard !isRemovedDevice(wirelessDevice.udid) else { continue }
+                guard !(wirelessDevice.isAlsoOnUSB && hasUnresolvedUSBCapture) else { continue }
                 let matchingSession = remaining.first {
                     $0.matchesDiscovery(
                         id: wirelessDevice.udid,
@@ -904,19 +916,16 @@ final class DeviceGalleryStore: ObservableObject {
                         captureUniqueID: nil
                     )
                 }
-                let connectionDesired = desiredMirrorIDs.contains(wirelessDevice.udid)
-                    || (matchingSession.map { desiredMirrorIDs.contains($0.id) } ?? false)
+                // usbmuxd lists the phone on the network, which is the path the
+                // tunnel takes: it is connectable now, before any session starts.
+                let knownIdentity = wirelessDevice.hasIdentity ? nil : matchingSession?.device
                 let identity = DeviceIdentity(
                     id: wirelessDevice.udid,
                     udid: wirelessDevice.udid,
-                    name: wirelessDevice.name,
-                    productType: wirelessDevice.productType,
-                    osVersion: wirelessDevice.osVersion,
-                    connectionState: Self.wirelessConnectionState(
-                        tunnelConnected: wirelessDevice.isTunnelConnected,
-                        connectionDesired: connectionDesired,
-                        hasActiveEndpoint: matchingSession?.iosAgent?.activeEndpoint != nil
-                    ),
+                    name: knownIdentity?.name ?? wirelessDevice.name,
+                    productType: knownIdentity?.productType ?? wirelessDevice.productType,
+                    osVersion: knownIdentity?.osVersion ?? wirelessDevice.osVersion,
+                    connectionState: .connected,
                     trustState: .trusted
                 )
                 guard claimedIDs.insert(identity.id).inserted else { continue }
@@ -958,7 +967,7 @@ final class DeviceGalleryStore: ObservableObject {
                 }
             }
         case .unavailable:
-            // A failed devicectl poll is unknown, not "every wireless iPhone vanished".
+            // A failed usbmuxd poll is unknown, not "every wireless iPhone vanished".
             // USB sessions still follow the regular disconnect path.
             remaining.removeAll { session in
                 guard Self.shouldPreserveIOSSessionWhenWirelessDiscoveryFails(
@@ -1026,6 +1035,18 @@ final class DeviceGalleryStore: ObservableObject {
         }
 
         for staleSession in remaining where !claimedIDs.contains(staleSession.id) {
+            // usbmuxd can drop a phone's network entry for a poll while the
+            // tunnel to it is still carrying video and control. The tunnel is
+            // the authority: it ends on its own when the phone is really gone.
+            if Self.shouldKeepLiveWirelessSession(
+                isIOSWireless: staleSession.isIOSWireless,
+                connectionState: staleSession.device.connectionState,
+                tunnelRunning: staleSession.device.udid.map(IOSAgentService.hasRunningAgent(udid:)) ?? false
+            ) {
+                nextSessions.append(staleSession)
+                claim(staleSession)
+                continue
+            }
             thumbnailCaptures[staleSession.id]?.cancel()
             thumbnailCaptures[staleSession.id] = nil
 
@@ -1238,14 +1259,12 @@ final class DeviceGalleryStore: ObservableObject {
         existing.transport == .wireless && existing.device.udid == discovered.udid
     }
 
-    nonisolated static func wirelessConnectionState(
-        tunnelConnected: Bool,
-        connectionDesired: Bool,
-        hasActiveEndpoint: Bool
-    ) -> DeviceConnectionState {
-        tunnelConnected || connectionDesired || hasActiveEndpoint
-            ? .connected
-            : .unavailable
+    nonisolated static func shouldKeepLiveWirelessSession(
+        isIOSWireless: Bool,
+        connectionState: DeviceConnectionState,
+        tunnelRunning: Bool
+    ) -> Bool {
+        isIOSWireless && connectionState == .connected && tunnelRunning
     }
 
     private func retire(_ session: DeviceSession) {
@@ -1284,22 +1303,7 @@ final class DeviceGalleryStore: ObservableObject {
     private func beginConnectionAttemptIfNeeded(for requested: DeviceSession) -> DeviceSession? {
         guard let index = sessions.firstIndex(where: { $0.id == requested.id }),
               canAttemptConnection(sessions[index]) else { return nil }
-        if sessions[index].isIOSWireless,
-           sessions[index].device.connectionState != .connected {
-            sessions[index].device.connectionState = .connected
-            sessions[index].controlSession.updateDevice(sessions[index].device)
-        }
         return sessions[index]
-    }
-
-    private func markWirelessConnection(
-        _ state: DeviceConnectionState,
-        sessionID: String
-    ) {
-        guard let index = sessions.firstIndex(where: { $0.id == sessionID }),
-              sessions[index].isIOSWireless else { return }
-        sessions[index].device.connectionState = state
-        sessions[index].controlSession.updateDevice(sessions[index].device)
     }
 
     func start(_ session: DeviceSession) {
@@ -1653,7 +1657,6 @@ final class DeviceGalleryStore: ObservableObject {
                       self.sessions.contains(where: {
                           $0.id == sessionID && $0.mirrorSession === mirrorSession
                       }) else { return }
-                self.markWirelessConnection(.connected, sessionID: sessionID)
                 mirrorSession.connectWirelessVideo(
                     host: resolvedEndpoint.videoHost,
                     port: resolvedEndpoint.videoPort
@@ -1661,8 +1664,9 @@ final class DeviceGalleryStore: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
+                // A failed start says nothing about reachability: the phone
+                // stays connected and the mirror shows why it did not start.
                 self.desiredMirrorIDs.remove(sessionID)
-                self.markWirelessConnection(.unavailable, sessionID: sessionID)
                 let localizedMessage = self.agentErrorMessage(error)
                 mirrorSession.failWirelessStart(localizedMessage)
                 self.statusMessage = localizedMessage

@@ -43,3 +43,31 @@ func TestParseFlagsCollectsRepeatedAndSingleValues(t *testing.T) {
 		t.Fatalf("positional argument not recorded: %v", got)
 	}
 }
+
+// The entry is what an iOS 27 phone reports for its mounted cryptex developer
+// image, whose LookupImage answer is an empty signature list.
+func TestMountListRecognisesThePersonalizedDeveloperImage(t *testing.T) {
+	entries := []any{
+		map[string]any{
+			"DiskImageType":         "Personalized",
+			"IsMounted":             true,
+			"MountPath":             "/System/Developer",
+			"PersonalizedImageType": "DeveloperDiskImage",
+		},
+	}
+	if !mountListHasDeveloperImage(entries) {
+		t.Fatal("expected the personalized developer image to count as mounted")
+	}
+	if !mountListHasDeveloperImage([]any{map[string]any{"DiskImageType": "Developer", "MountPath": "/Developer"}}) {
+		t.Fatal("expected a classic developer image to count as mounted")
+	}
+	if mountListHasDeveloperImage([]any{map[string]any{"MountPath": "/System/Developer", "IsMounted": false}}) {
+		t.Fatal("an unmounted entry must not count")
+	}
+	if mountListHasDeveloperImage([]any{map[string]any{"MountPath": "/private/var/other"}, "junk"}) {
+		t.Fatal("unrelated mounts must not count")
+	}
+	if mountListHasDeveloperImage(nil) {
+		t.Fatal("an empty mount table must not count")
+	}
+}

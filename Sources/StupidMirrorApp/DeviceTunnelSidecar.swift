@@ -375,8 +375,8 @@ final class DeviceTunnelSidecar: @unchecked Sendable {
 
     /// Devices usbmuxd currently lists, one entry per phone with every transport
     /// it is reachable over. With `details` the lockdown identity is read too.
-    static func listDevices(details: Bool = false) async throws -> [DeviceTunnelDeviceEntry] {
-        let events = try await runOnce(arguments: details ? ["list", "--details"] : ["list"], timeout: 20)
+    static func listDevices(details: Bool = false, timeout: TimeInterval = 20) async throws -> [DeviceTunnelDeviceEntry] {
+        let events = try await runOnce(arguments: details ? ["list", "--details"] : ["list"], timeout: timeout)
         guard let event = events.last(where: { $0.name == "devices" }) else {
             throw lastError(in: events) ?? .tunnelFailed("smtunnel list printed no device list")
         }

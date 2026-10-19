@@ -164,7 +164,7 @@ struct DeviceSession: Identifiable {
         case .usb:
             return "usb:\(captureDevice?.uniqueID ?? id)"
         case .wireless:
-            return "wireless:\(wirelessDevice?.preferredEndpointHost ?? id)"
+            return "wireless:\(wirelessDevice?.udid ?? id)"
         }
     }
 
@@ -198,9 +198,7 @@ struct DeviceSession: Identifiable {
         self.lastUSBCaptureUniqueID = nil
         self.wirelessDevice = wirelessDevice
         self.androidDevice = nil
-        self.mirrorSession = MirrorCaptureSession(
-            wirelessEndpointURL: wirelessDevice.endpointURLs(port: 8_100).first!
-        )
+        self.mirrorSession = MirrorCaptureSession(wirelessDeviceUDID: wirelessDevice.udid)
         self.controlSession = DeviceControlSession(device: device)
         self.iosAgent = IOSAgentService()
         self.mirrorState = .stopped
@@ -245,9 +243,7 @@ struct DeviceSession: Identifiable {
         guard transport != .wireless else { return }
         transport = .wireless
         captureDevice = nil
-        if let url = wirelessDevice.endpointURLs(port: 8_100).first {
-            mirrorSession.retargetToWireless(endpointURL: url)
-        }
+        mirrorSession.retargetToWireless(udid: wirelessDevice.udid)
     }
 
     func matchesDiscovery(id: String, udid: String?, captureUniqueID: String?) -> Bool {
