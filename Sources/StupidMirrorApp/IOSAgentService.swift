@@ -433,7 +433,7 @@ final class IOSAgentService: @unchecked Sendable {
         await progress(.checkingExistingAgent)
         if let running = AgentRegistry.shared.running(udid: udid),
            let endpoint = Self.endpoint(for: running.endpoints),
-           await Self.isReady(endpoint.controlURL) {
+           await Self.answersStatus(endpoint.controlURL, whileRunning: running) {
             remember(endpoint)
             await progress(.connectingVideo)
             return endpoint
@@ -587,6 +587,23 @@ final class IOSAgentService: @unchecked Sendable {
     /// mirror closed.
     static func terminateSharedAgent(udid: String) async {
         await AgentRegistry.shared.take(udid: udid)?.stopAndWait()
+    }
+
+    /// Whether a tunnel to this phone is up right now. It ends on its own when
+    /// the phone becomes unreachable (`agentDidExitNotification`), so while it
+    /// runs the phone is connected regardless of what discovery saw last.
+    static func hasRunningAgent(udid: String) -> Bool {
+        AgentRegistry.shared.running(udid: udid) != nil
+    }
+
+    /// `/status` on a running agent. A busy runner (a long XCTest query in
+    /// flight) can answer later than the short probe allows; a live tunnel
+    /// gets a second, longer chance before it is torn down together with the
+    /// runner and every session riding on it.
+    private static func answersStatus(_ controlURL: URL, whileRunning sidecar: DeviceTunnelSidecar) async -> Bool {
+        if await isReady(controlURL) { return true }
+        guard sidecar.isRunning else { return false }
+        return await isReady(controlURL, timeout: 8)
     }
 
     private func remember(_ endpoint: IOSAgentEndpoint) {

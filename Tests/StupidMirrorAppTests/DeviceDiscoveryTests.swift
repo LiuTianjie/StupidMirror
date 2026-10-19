@@ -52,26 +52,26 @@ final class DeviceDiscoveryTests: XCTestCase {
         ))
     }
 
-    func testWirelessModeDefersUSBWhenTheTunnelIsConnected() {
+    func testUSBWaitsWhileAWirelessSessionForThePhoneIsInUse() {
         XCTAssertTrue(DeviceGalleryStore.shouldDeferUSBForWireless(
             wirelessModeEnabled: true,
             usbUDID: "UDID-1",
-            wirelessConnectedUDIDs: ["UDID-1"]
+            activeWirelessUDIDs: ["UDID-1"]
         ))
         XCTAssertFalse(DeviceGalleryStore.shouldDeferUSBForWireless(
             wirelessModeEnabled: true,
             usbUDID: "UDID-1",
-            wirelessConnectedUDIDs: ["UDID-2"]
+            activeWirelessUDIDs: ["UDID-2"]
         ))
         XCTAssertFalse(DeviceGalleryStore.shouldDeferUSBForWireless(
             wirelessModeEnabled: false,
             usbUDID: "UDID-1",
-            wirelessConnectedUDIDs: ["UDID-1"]
+            activeWirelessUDIDs: ["UDID-1"]
         ))
         XCTAssertFalse(DeviceGalleryStore.shouldDeferUSBForWireless(
             wirelessModeEnabled: true,
             usbUDID: nil,
-            wirelessConnectedUDIDs: ["UDID-1"]
+            activeWirelessUDIDs: ["UDID-1"]
         ))
     }
 
@@ -203,79 +203,52 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertEqual(lookup["device-1"], "fresh")
     }
 
-    func testCoreDeviceParserReadsDynamicTunnelAndAllEndpointCandidates() throws {
-        let data = try XCTUnwrap(
-            """
-            {
-              "result": {
-                "devices": [
-                  {
-                    "connectionProperties": {
-                      "pairingState": "paired",
-                      "transportType": "localNetwork",
-                      "localHostnames": ["Test-iPhone.coredevice.local"],
-                      "potentialHostnames": ["wireless-udid.coredevice.local"],
-                      "tunnelIPAddress": "fd00::1234",
-                      "tunnelState": "connected"
-                    },
-                    "deviceProperties": {
-                      "bootState": "booted",
-                      "name": "Test iPhone",
-                      "osVersionNumber": "26.5"
-                    },
-                    "hardwareProperties": {
-                      "deviceType": "iPhone",
-                      "platform": "iOS",
-                      "productType": "iPhone18,4",
-                      "reality": "physical",
-                      "udid": "wireless-udid"
-                    }
-                  },
-                  {
-                    "connectionProperties": {
-                      "pairingState": "paired",
-                      "potentialHostnames": ["Offline.coredevice.local"]
-                    },
-                    "deviceProperties": {"name": "Offline"},
-                    "hardwareProperties": {
-                      "deviceType": "iPhone",
-                      "platform": "iOS",
-                      "reality": "physical",
-                      "udid": "offline-udid"
-                    }
-                  }
-                ]
-              }
-            }
-            """.data(using: .utf8)
+    func testWirelessDiscoveryListsEveryPhoneUsbmuxdReachesOverTheNetwork() {
+        let cache = WirelessDiscoveryService.IdentityCache()
+        cache.remember(DeviceMetadata(
+            udid: "both",
+            name: "iPhone Air",
+            productType: "iPhone18,4",
+            osVersion: "27.0"
+        ))
+        let devices = WirelessDiscoveryService.wirelessDevices(
+            from: [
+                DeviceTunnelDeviceEntry(udid: "usb-only", connectionTypes: ["USB"]),
+                DeviceTunnelDeviceEntry(udid: "both", connectionTypes: ["USB", "Network"]),
+                DeviceTunnelDeviceEntry(udid: "wifi-only", connectionTypes: ["Network"]),
+                DeviceTunnelDeviceEntry(udid: "both", connectionTypes: ["Network"])
+            ],
+            cache: cache
         )
+
+        XCTAssertEqual(devices, [
+            WirelessDeviceMetadata(
+                udid: "both",
+                name: "iPhone Air",
+                productType: "iPhone18,4",
+                osVersion: "27.0",
+                isAlsoOnUSB: true
+            ),
+            WirelessDeviceMetadata(
+                udid: "wifi-only",
+                name: "iPhone",
+                productType: "iOS Device",
+                osVersion: "",
+                hasIdentity: false
+            )
+        ])
+    }
+
+    func testWirelessDiscoveryLearnsIdentityFromDetailedListing() {
+        let detailed = DeviceTunnelSidecar.parseDeviceList([
+            ["udid": "A", "connectionTypes": ["Network"], "name": "Test iPhone", "productType": "iPhone18,4", "productVersion": "27.0"],
+            ["udid": "B", "connectionTypes": ["Network"], "error": "lockdown did not answer within 3s"]
+        ])
 
         XCTAssertEqual(
-            CoreDeviceDiscoveryService.parseWirelessDevices(data),
-            [
-                WirelessDeviceMetadata(
-                    udid: "wireless-udid",
-                    name: "Test iPhone",
-                    productType: "iPhone18,4",
-                    osVersion: "26.5",
-                    hostname: "Test-iPhone.coredevice.local",
-                    hostnames: [
-                        "Test-iPhone.coredevice.local",
-                        "wireless-udid.coredevice.local"
-                    ],
-                    tunnelIPAddress: "fd00::1234",
-                    tunnelState: "connected"
-                )
-            ]
+            detailed.compactMap(WirelessDiscoveryService.identityMetadata(from:)),
+            [DeviceMetadata(udid: "A", name: "Test iPhone", productType: "iPhone18,4", osVersion: "27.0")]
         )
-
-        let device = try XCTUnwrap(CoreDeviceDiscoveryService.parseWirelessDevices(data).first)
-        XCTAssertTrue(device.isTunnelConnected)
-        XCTAssertEqual(device.endpointURLs(port: 8100).map(\.absoluteString), [
-            "http://[fd00::1234]:8100",
-            "http://Test-iPhone.coredevice.local:8100",
-            "http://wireless-udid.coredevice.local:8100"
-        ])
     }
 
     func testCoreDeviceParserProvidesWiredMetadataWithoutLibimobiledevice() throws {
@@ -481,8 +454,7 @@ final class DeviceDiscoveryTests: XCTestCase {
                 udid: "later-udid",
                 name: "iPhone",
                 productType: "iPhone18,4",
-                osVersion: "26.5",
-                hostname: "iphone.coredevice.local"
+                osVersion: "26.5"
             )
         )
         session.id = "unique-capture"
@@ -504,96 +476,46 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertTrue(session.matchesDiscovery(id: "later-udid", udid: "later-udid", captureUniqueID: "capture-unique"))
     }
 
-    func testPairedDisconnectedWirelessDeviceCanBeActivelyConnected() {
-        let device = WirelessDeviceMetadata(
-            udid: "device",
-            name: "iPhone",
-            productType: "iPhone18,4",
-            osVersion: "26.5",
-            hostname: "device.coredevice.local",
-            tunnelIPAddress: "198.18.0.1",
-            tunnelState: "disconnected"
-        )
-
-        XCTAssertFalse(device.isTunnelConnected)
-        XCTAssertTrue(device.canAttemptConnection)
-        XCTAssertEqual(device.endpointURLs(port: 9200).first?.absoluteString, "http://198.18.0.1:9200")
-    }
-
-    func testUnavailableWirelessDeviceCannotStartAConnectionAttempt() {
-        let device = WirelessDeviceMetadata(
-            udid: "device",
-            name: "iPhone",
-            productType: "iPhone18,4",
-            osVersion: "26.5",
-            hostname: "device.coredevice.local",
-            tunnelState: "unavailable"
-        )
-
-        XCTAssertFalse(device.canAttemptConnection)
-        XCTAssertFalse(DeviceGalleryStore.canAttemptConnection(
-            connectionState: .unavailable,
-            transport: .wireless,
-            wirelessCandidateAvailable: false
+    func testLiveWirelessSessionSurvivesAMissedDiscoveryPoll() {
+        XCTAssertTrue(DeviceGalleryStore.shouldKeepLiveWirelessSession(
+            isIOSWireless: true,
+            connectionState: .connected,
+            tunnelRunning: true
         ))
-        XCTAssertTrue(DeviceGalleryStore.canAttemptConnection(
-            connectionState: .unavailable,
-            transport: .wireless,
-            wirelessCandidateAvailable: true
+        // Without a tunnel, a phone missing from usbmuxd is really gone.
+        XCTAssertFalse(DeviceGalleryStore.shouldKeepLiveWirelessSession(
+            isIOSWireless: true,
+            connectionState: .connected,
+            tunnelRunning: false
         ))
-        XCTAssertFalse(DeviceGalleryStore.canAttemptConnection(
-            connectionState: .unavailable,
-            transport: .usb,
-            wirelessCandidateAvailable: true
+        // USB sessions follow the capture device, not the tunnel.
+        XCTAssertFalse(DeviceGalleryStore.shouldKeepLiveWirelessSession(
+            isIOSWireless: false,
+            connectionState: .connected,
+            tunnelRunning: true
         ))
-    }
-
-    func testDesiredWirelessConnectionStaysConnectedAcrossDisconnectedTunnelPoll() {
-        XCTAssertEqual(
-            DeviceGalleryStore.wirelessConnectionState(
-                tunnelConnected: false,
-                connectionDesired: true,
-                hasActiveEndpoint: false
-            ),
-            .connected
-        )
-        XCTAssertEqual(
-            DeviceGalleryStore.wirelessConnectionState(
-                tunnelConnected: false,
-                connectionDesired: false,
-                hasActiveEndpoint: true
-            ),
-            .connected
-        )
-        XCTAssertEqual(
-            DeviceGalleryStore.wirelessConnectionState(
-                tunnelConnected: false,
-                connectionDesired: false,
-                hasActiveEndpoint: false
-            ),
-            .unavailable
-        )
+        XCTAssertFalse(DeviceGalleryStore.shouldKeepLiveWirelessSession(
+            isIOSWireless: true,
+            connectionState: .disconnected,
+            tunnelRunning: true
+        ))
     }
 
     @MainActor
-    func testWirelessSessionCanAcceptDynamicEndpointRefreshWithoutReplacingOwners() {
+    func testWirelessSessionCanAcceptRefreshedDiscoveryWithoutReplacingOwners() {
+        // The first poll had no identity yet; a later one read it.
         let original = WirelessDeviceMetadata(
             udid: "device",
             name: "iPhone",
-            productType: "iPhone18,4",
-            osVersion: "26.5",
-            hostname: "device.coredevice.local",
-            tunnelIPAddress: "fd00::1",
-            tunnelState: "connected"
+            productType: "iOS Device",
+            osVersion: "",
+            hasIdentity: false
         )
         let refreshed = WirelessDeviceMetadata(
             udid: "device",
-            name: "iPhone",
+            name: "Test iPhone",
             productType: "iPhone18,4",
-            osVersion: "26.5",
-            hostname: "device.coredevice.local",
-            tunnelIPAddress: "fd00::2",
-            tunnelState: "connected"
+            osVersion: "26.5"
         )
         let identity = DeviceIdentity(
             id: "device",
@@ -615,7 +537,8 @@ final class DeviceDiscoveryTests: XCTestCase {
         XCTAssertTrue(session.mirrorSession === mirrorOwner)
         XCTAssertTrue(session.controlSession === controlOwner)
         XCTAssertTrue(session.iosAgent === wdaOwner)
-        XCTAssertEqual(session.wirelessDevice?.tunnelIPAddress, "fd00::2")
+        XCTAssertEqual(session.wirelessDevice?.name, "Test iPhone")
+        XCTAssertEqual(session.mirrorSession.wirelessDeviceUDID, "device")
     }
 
     @MainActor
@@ -624,19 +547,13 @@ final class DeviceDiscoveryTests: XCTestCase {
             udid: "device",
             name: "iPhone",
             productType: "iPhone18,4",
-            osVersion: "26.5",
-            hostname: "device.coredevice.local",
-            tunnelIPAddress: "fd00::1",
-            tunnelState: "disconnected"
+            osVersion: "26.5"
         )
         let connected = WirelessDeviceMetadata(
             udid: "device",
             name: "iPhone",
             productType: "iPhone18,4",
-            osVersion: "26.5",
-            hostname: "device.coredevice.local",
-            tunnelIPAddress: "fd00::1",
-            tunnelState: "connected"
+            osVersion: "26.5"
         )
         var session = DeviceSession(
             device: DeviceIdentity(

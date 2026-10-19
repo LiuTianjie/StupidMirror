@@ -181,7 +181,7 @@ func runList(args []string) {
 			}
 		}
 		row := map[string]any{"udid": udid, "connectionTypes": types}
-		if values, err := ios.GetValues(preferred); err == nil {
+		if values, err := readIdentity(preferred, identityTimeout); err == nil {
 			row["name"] = values.Value.DeviceName
 			row["productType"] = values.Value.ProductType
 			row["productVersion"] = values.Value.ProductVersion
@@ -192,6 +192,29 @@ func runList(args []string) {
 		devices = append(devices, row)
 	}
 	emit("devices", map[string]any{"devices": devices})
+}
+
+// identityTimeout bounds one lockdown read in `list --details`. usbmuxd keeps
+// a network entry for a while after the phone left the Wi-Fi, and a read over
+// that entry would otherwise hold up the whole listing.
+const identityTimeout = 3 * time.Second
+
+func readIdentity(device ios.DeviceEntry, timeout time.Duration) (ios.GetAllValuesResponse, error) {
+	type result struct {
+		values ios.GetAllValuesResponse
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		values, err := ios.GetValues(device)
+		done <- result{values, err}
+	}()
+	select {
+	case r := <-done:
+		return r.values, r.err
+	case <-time.After(timeout):
+		return ios.GetAllValuesResponse{}, fmt.Errorf("lockdown did not answer within %s", timeout)
+	}
 }
 
 // --- info -------------------------------------------------------------------
@@ -268,13 +291,62 @@ func runInfo(args []string) {
 		}
 	}
 
-	if mounter, err := imagemounter.NewImageMounter(device); err == nil {
-		if images, err := mounter.ListImages(); err == nil {
-			report["developerImageMounted"] = len(images) > 0
-		}
-		mounter.Close()
+	if mounted, ok := developerImageMounted(device); ok {
+		report["developerImageMounted"] = mounted
 	}
 	emit("info", report)
+}
+
+// developerImageMounted reports whether the developer disk image is mounted,
+// and whether that could be determined at all. iOS 17+ mounts it as a
+// personalized cryptex that `LookupImage` does not list (it answers with no
+// signatures while the image is in use), so the mount table from
+// `CopyDevices` is consulted first.
+func developerImageMounted(device ios.DeviceEntry) (bool, bool) {
+	if conn, err := ios.ConnectToService(device, "com.apple.mobile.mobile_image_mounter"); err == nil {
+		codec := ios.NewPlistCodecReadWriter(conn.Reader(), conn.Writer())
+		var response map[string]any
+		if codec.Write(map[string]any{"Command": "CopyDevices"}) == nil && codec.Read(&response) == nil {
+			if entries, ok := response["EntryList"].([]any); ok {
+				conn.Close()
+				return mountListHasDeveloperImage(entries), true
+			}
+		}
+		conn.Close()
+	}
+	mounter, err := imagemounter.NewImageMounter(device)
+	if err != nil {
+		return false, false
+	}
+	defer mounter.Close()
+	images, err := mounter.ListImages()
+	if err != nil {
+		return false, false
+	}
+	return len(images) > 0, true
+}
+
+// mountListHasDeveloperImage reads a `CopyDevices` entry list.
+func mountListHasDeveloperImage(entries []any) bool {
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if mounted, ok := entry["IsMounted"].(bool); ok && !mounted {
+			continue
+		}
+		if path, _ := entry["MountPath"].(string); path == "/Developer" || path == "/System/Developer" {
+			return true
+		}
+		if kind, _ := entry["PersonalizedImageType"].(string); kind == "DeveloperDiskImage" {
+			return true
+		}
+		if kind, _ := entry["DiskImageType"].(string); kind == "Developer" {
+			return true
+		}
+	}
+	return false
 }
 
 // --- wifi -------------------------------------------------------------------

@@ -41,6 +41,29 @@ final class DeviceTunnelSidecarLiveTests: XCTestCase {
         sidecar.stop()
         XCTAssertFalse(sidecar.isRunning)
     }
+
+    /// The phone must be on Wi-Fi as well (its "Wi-Fi connections" switch on).
+    func testWirelessDiscoveryReportsThePhoneUsbmuxdReachesOverTheNetwork() async throws {
+        guard let udid = ProcessInfo.processInfo.environment["STUPIDMIRROR_TEST_TUNNEL_UDID"], !udid.isEmpty else {
+            throw XCTSkip("Set STUPIDMIRROR_TEST_TUNNEL_UDID to run the live discovery check.")
+        }
+        guard DeviceTunnelSidecar.executableURL() != nil else {
+            throw XCTSkip("Build the sidecar first: make smtunnel")
+        }
+        let devices = try await DeviceTunnelSidecar.listDevices()
+        guard devices.contains(where: { $0.udid == udid && $0.isNetwork }) else {
+            throw XCTSkip("usbmuxd does not list \(udid) on the network right now: \(devices)")
+        }
+
+        let outcome = await WirelessDiscoveryService.discover(cache: WirelessDiscoveryService.IdentityCache())
+        guard case let .available(wireless) = outcome else {
+            return XCTFail("wireless discovery failed")
+        }
+        let device = try XCTUnwrap(wireless.first { $0.udid == udid })
+        XCTAssertTrue(device.hasIdentity, "the lockdown identity was not read: \(device)")
+        XCTAssertFalse(device.name.isEmpty)
+        print("wireless discovery: \(device)")
+    }
 }
 
 /// Drives WebDriverAgent directly through the sidecar's loopback forward on a

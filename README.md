@@ -84,6 +84,8 @@ Open **Set Up This iPhone** while the phone is connected over USB. The guide che
 
 Later sessions reach the phone through the bundled `smtunnel` sidecar: it opens Apple's CoreDevice tunnel over the local network with an in-process network stack and starts the runner through testmanagerd, so no Xcode launcher, administrator password, Local Network prompt, or tap on the phone is involved. Wireless mirroring does not require Camera permission or a ReplayKit Broadcast Extension. It does require this signed device-side runner and Developer Mode on the phone; video setup does not itself enable a control session.
 
+The app finds the phone over the same path: once usbmuxd lists it on the network, it shows as connected and can be started from the app or through MCP. Plugging the cable in while a wireless mirror or control session is in use keeps that session on Wi-Fi.
+
 ### Android
 
 Install `adb`, enable USB debugging, connect the device, and approve this Mac on the phone. Select the discovered device to start mirroring. Video and audio work independently of the optional Appium control connection.
