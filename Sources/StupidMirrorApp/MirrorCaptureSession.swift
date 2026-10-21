@@ -36,6 +36,9 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var liveUSBAudioArmed = false
     private var configured = false
     private var audioEnabled = false
+    /// Session-queue only. A held USB graph with no visible mirror routes iPhone
+    /// audio back to the phone speaker even when Mac playback is enabled.
+    private var audioSuppressedForHold = false
     private var iosMacPlaybackUnavailable = false
     private var disposed = false
     private var lastObservedAspectRatio: Double?
@@ -56,6 +59,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var usbWatchdogTask: Task<Void, Never>?
     private var usbGeneration: UInt64 = 0
     private var usbReceivedFrameInCurrentRun = false
+    /// Guarded by `sampleBufferConsumerLock`: the current USB graph has
+    /// delivered at least one frame. Reset whenever the graph is torn down.
+    private var usbGraphDeliveredFrame = false
+    /// While set, stopping the USB mirror keeps the capture graph running
+    /// instead of releasing it. See `setUSBCaptureHold`.
+    @MainActor private var usbHoldRequested = false
     private var lastWirelessPreviewUpdate = Date.distantPast
     private var automationActionClearTask: Task<Void, Never>?
 
@@ -120,12 +129,15 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                           !self.disposed,
                           self.device != nil,
                           self.wirelessDeviceUDID == nil,
-                          self.androidDevice == nil,
-                          self.state == .starting || self.state == .running else { return }
-                    self.usbGeneration &+= 1
-                    self.usbWatchdogTask?.cancel()
-                    self.usbWatchdogTask = nil
-                    self.state = .stopped
+                          self.androidDevice == nil else { return }
+                    if self.state == .starting || self.state == .running {
+                        self.usbGeneration &+= 1
+                        self.usbWatchdogTask?.cancel()
+                        self.usbWatchdogTask = nil
+                        self.state = .stopped
+                    } else if !self.usbHoldRequested {
+                        return
+                    }
                     self.onUSBCaptureInterrupted?()
                 }
             }
@@ -225,6 +237,9 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         sessionQueue.async { [self] in
             do {
                 guard !disposed else { throw MirrorError.disposed }
+                // A held graph (control kept it alive) is reused as-is, so
+                // the iPhone never leaves USB Configuration 7.
+                audioSuppressedForHold = false
                 try configureIfNeeded()
                 applyAudioEnabledOnSessionQueue()
                 if !captureSession.isRunning {
@@ -235,7 +250,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 // is live, and stop leftover CoreMediaIO audio if we want
                 // the phone speaker.
                 applyAudioEnabledOnSessionQueue()
-                if !audioEnabled, let primaryDeviceInput {
+                if !wantsAudioOnSessionQueue, let primaryDeviceInput {
                     pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
                 }
                 guard captureSession.isRunning else {
@@ -299,6 +314,10 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     @MainActor
     func stop() {
+        let keepsUSBGraph = Self.shouldKeepUSBGraphOnStop(
+            holdRequested: usbHoldRequested,
+            isUSBCapture: isUSBCapture
+        )
         state = .stopped
         latestFrameStore.clear()
         clearAutomationAction()
@@ -319,6 +338,74 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessStartupDetail = nil
         wirelessStartupBeganAt = nil
         sessionQueue.async { [self] in
+            if keepsUSBGraph && !disposed {
+                holdUSBGraphOnSessionQueue()
+            } else {
+                tearDownOnSessionQueue()
+            }
+        }
+    }
+
+    nonisolated static func shouldKeepUSBGraphOnStop(holdRequested: Bool, isUSBCapture: Bool) -> Bool {
+        holdRequested && isUSBCapture
+    }
+
+    @MainActor
+    private var isUSBCapture: Bool {
+        device != nil && wirelessDeviceUDID == nil && androidDevice == nil
+    }
+
+    /// The current USB capture graph is streaming frames, i.e. the iPhone has
+    /// finished switching to USB Configuration 7.
+    nonisolated var hasLiveUSBStream: Bool {
+        sampleBufferConsumerLock.withLock { usbGraphDeliveredFrame }
+    }
+
+    /// Keeps (or stops keeping) the USB screen-capture graph alive without a
+    /// visible mirror.
+    ///
+    /// Starting USB screen capture switches the iPhone to USB Configuration 7;
+    /// ~15 s after the last capture client stops, `iOSScreenCaptureAssistant`
+    /// switches it back to Configuration 6. Either switch re-enumerates the
+    /// device and drops every usbmuxd connection, including the control
+    /// tunnel. Holding the graph while control is wanted means opening or
+    /// closing the mirror window never changes the USB configuration.
+    @MainActor
+    func setUSBCaptureHold(_ hold: Bool) {
+        guard hold else {
+            guard usbHoldRequested else { return }
+            usbHoldRequested = false
+            guard state != .starting, state != .running else { return }
+            sessionQueue.async { [self] in
+                tearDownOnSessionQueue()
+            }
+            return
+        }
+        usbHoldRequested = true
+        guard isUSBCapture, state != .starting, state != .running else { return }
+        sessionQueue.async { [self] in
+            guard !disposed else { return }
+            holdUSBGraphOnSessionQueue()
+        }
+    }
+
+    /// Idempotent: configures and runs the USB graph if needed, with Mac audio
+    /// playback suppressed because nothing is showing the mirror.
+    private func holdUSBGraphOnSessionQueue() {
+        audioSuppressedForHold = true
+        do {
+            try configureIfNeeded()
+            applyAudioEnabledOnSessionQueue()
+            if !captureSession.isRunning {
+                captureSession.startRunning()
+            }
+            if let primaryDeviceInput {
+                pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
+            }
+            if !captureSession.isRunning {
+                tearDownOnSessionQueue()
+            }
+        } catch {
             tearDownOnSessionQueue()
         }
     }
@@ -417,6 +504,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     /// A disposed mirror session cannot be restarted.
     @MainActor
     func dispose() {
+        usbHoldRequested = false
         stop()
         clearSampleBufferConsumers()
         sessionQueue.async { [self] in
@@ -617,7 +705,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private func applyAudioEnabledOnSessionQueue() {
         guard let primaryDeviceInput else { return }
 
-        let wantsMacPlayback = audioEnabled && !iosMacPlaybackUnavailable
+        let wantsMacPlayback = wantsAudioOnSessionQueue && !iosMacPlaybackUnavailable
         if wantsMacPlayback {
             if usbMacPlaybackGraphIsReady(primaryDeviceInput: primaryDeviceInput) {
                 setLiveUSBAudioArmed(true)
@@ -640,7 +728,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                 captureSession.startRunning()
             }
 
-            if audioEnabled && !iosMacPlaybackUnavailable {
+            if wantsAudioOnSessionQueue && !iosMacPlaybackUnavailable {
                 setLiveUSBAudioArmed(true)
             } else {
                 pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
@@ -658,6 +746,10 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             return
         }
         pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
+    }
+
+    private var wantsAudioOnSessionQueue: Bool {
+        audioEnabled && !audioSuppressedForHold
     }
 
     private func usbMacPlaybackGraphIsReady(primaryDeviceInput: AVCaptureDeviceInput) -> Bool {
@@ -826,6 +918,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         dedicatedIOSAudioInput = nil
         iosMacPlaybackUnavailable = false
         lastObservedAspectRatio = nil
+        sampleBufferConsumerLock.withLock { usbGraphDeliveredFrame = false }
     }
 
     @MainActor
@@ -1098,6 +1191,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         sampleBufferConsumerLock.lock()
         let isFirstFrameOfRun = !usbReceivedFrameInCurrentRun
         usbReceivedFrameInCurrentRun = true
+        usbGraphDeliveredFrame = true
         let consumer = videoSampleBufferConsumer
         sampleBufferConsumerLock.unlock()
         consumer?(sampleBuffer)

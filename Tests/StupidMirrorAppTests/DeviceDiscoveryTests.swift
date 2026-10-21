@@ -778,4 +778,30 @@ final class DeviceDiscoveryTests: XCTestCase {
             )
         )
     }
+    func testUSBCaptureIsHeldOnlyForCabledIPhonesWhoseControlIsWanted() {
+        // Holding capture keeps the iPhone in USB Configuration 7, so closing
+        // the mirror window no longer lets iOSScreenCaptureAssistant switch back
+        // to Configuration 6 (which resets usbmuxd and kills the smtunnel).
+        XCTAssertTrue(DeviceGalleryStore.shouldHoldUSBCapture(
+            platform: .iOS, transport: .usb, connectionState: .connected, controlWanted: true
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldHoldUSBCapture(
+            platform: .iOS, transport: .usb, connectionState: .connected, controlWanted: false
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldHoldUSBCapture(
+            platform: .iOS, transport: .wireless, connectionState: .connected, controlWanted: true
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldHoldUSBCapture(
+            platform: .iOS, transport: .usb, connectionState: .disconnected, controlWanted: true
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldHoldUSBCapture(
+            platform: .android, transport: .usb, connectionState: .connected, controlWanted: true
+        ))
+    }
+
+    func testStoppingAHeldUSBMirrorKeepsTheCaptureGraph() {
+        XCTAssertTrue(MirrorCaptureSession.shouldKeepUSBGraphOnStop(holdRequested: true, isUSBCapture: true))
+        XCTAssertFalse(MirrorCaptureSession.shouldKeepUSBGraphOnStop(holdRequested: false, isUSBCapture: true))
+        XCTAssertFalse(MirrorCaptureSession.shouldKeepUSBGraphOnStop(holdRequested: true, isUSBCapture: false))
+    }
 }

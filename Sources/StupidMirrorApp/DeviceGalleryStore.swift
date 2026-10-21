@@ -147,7 +147,9 @@ final class DeviceGalleryStore: ObservableObject {
     private var discoveryRetryTask: Task<Void, Never>?
     private var removedDeviceIDs = Set<String>()
     private var desiredMirrorIDs = Set<String>()
-    private var desiredControlIDs = Set<String>()
+    private var desiredControlIDs = Set<String>() {
+        didSet { reconcileUSBCaptureHolds() }
+    }
     private var pendingActivationMirrorIDs = Set<String>()
     private var disconnectedSince: [String: Date] = [:]
     private var lastConnectedCount = 0
@@ -1104,6 +1106,7 @@ final class DeviceGalleryStore: ObservableObject {
 
         sessions = nextSessions.sorted { $0.device.name.localizedStandardCompare($1.device.name) == .orderedAscending }
         requestMirrorStarts(autoStartIDs.union(resumeIDs), presentActivationWhenBlocked: false)
+        reconcileUSBCaptureHolds()
         for session in connectedSessions where shouldResumeControl(for: session) {
             connectControl(for: session)
         }
@@ -1215,6 +1218,32 @@ final class DeviceGalleryStore: ObservableObject {
             connectionState: session.device.connectionState,
             controlState: session.controlSession.state
         )
+    }
+
+    nonisolated static func shouldHoldUSBCapture(
+        platform: DevicePlatform,
+        transport: DeviceTransport,
+        connectionState: DeviceConnectionState,
+        controlWanted: Bool
+    ) -> Bool {
+        platform == .iOS && transport == .usb && connectionState == .connected && controlWanted
+    }
+
+    /// Keeps USB screen capture running for every cabled iPhone whose control
+    /// is wanted, so mirror start/stop never flips USB Configuration 6/7 under
+    /// the control tunnel. See `MirrorCaptureSession.setUSBCaptureHold`.
+    private func reconcileUSBCaptureHolds() {
+        guard !isShuttingDown else { return }
+        for session in sessions {
+            let wanted = desiredControlIDs.contains(session.id)
+                || (session.device.udid.map { desiredControlIDs.contains($0) } ?? false)
+            session.mirrorSession.setUSBCaptureHold(Self.shouldHoldUSBCapture(
+                platform: session.platform,
+                transport: session.transport,
+                connectionState: session.device.connectionState,
+                controlWanted: wanted
+            ))
+        }
     }
 
     private func configureUSBMirrorCallbacks(for mirrorSession: MirrorCaptureSession) {
@@ -1917,29 +1946,28 @@ final class DeviceGalleryStore: ObservableObject {
         session.controlSession.connect(using: controlConnector(for: session, udid: udid))
     }
 
-    /// Waits briefly if a USB mirror is mid-startup for the same iPhone so its
-    /// USB Configuration 6 -> 7 transition settles before `smtunnel` opens a
-    /// USB tunnel.
-    private func waitForUSBMirrorStartupToSettleIfNeeded(udid: String) async {
-        let sawStarting = sessions.contains {
-            $0.platform == .iOS
-                && $0.transport == .usb
-                && $0.device.udid == udid
-                && $0.mirrorSession.state == .starting
-        }
-        guard sawStarting else { return }
-        let deadline = ContinuousClock.now + .seconds(2)
-        while ContinuousClock.now < deadline {
-            let stillStarting = sessions.contains {
+    /// Starting USB screen capture switches the iPhone to USB Configuration 7,
+    /// which re-enumerates it and drops every usbmuxd connection. Control holds
+    /// capture open, so wait for that held stream's first frame (and for
+    /// usbmuxd to re-attach) before `smtunnel` opens its USB tunnel.
+    private func waitForUSBCaptureToSettleIfNeeded(udid: String) async {
+        func usbMirror() -> MirrorCaptureSession? {
+            sessions.first {
                 $0.platform == .iOS
                     && $0.transport == .usb
                     && $0.device.udid == udid
-                    && $0.mirrorSession.state == .starting
-            }
-            guard stillStarting else { break }
-            try? await Task.sleep(for: .milliseconds(100))
+                    && $0.device.connectionState == .connected
+            }?.mirrorSession
         }
-        try? await Task.sleep(for: .milliseconds(300))
+        guard let initial = usbMirror(), !initial.hasLiveUSBStream else { return }
+        let deadline = ContinuousClock.now + .seconds(8)
+        while ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled else { return }
+            guard let current = usbMirror() else { break }
+            if current.hasLiveUSBStream { break }
+        }
+        try? await Task.sleep(for: .milliseconds(1_000))
     }
 
     /// Builds the connector the control session runs off the main actor: it
@@ -1976,7 +2004,7 @@ final class DeviceGalleryStore: ObservableObject {
             var lastError: Error?
             for attempt in 0..<4 {
                 try Task.checkCancellation()
-                await self.waitForUSBMirrorStartupToSettleIfNeeded(udid: udid)
+                await self.waitForUSBCaptureToSettleIfNeeded(udid: udid)
                 let transport: DeviceTunnelTransport = await MainActor.run {
                     guard let current = self.sessions.first(where: { $0.platform == .iOS && $0.device.udid == udid }) else {
                         return .auto
@@ -2543,7 +2571,9 @@ final class DeviceGalleryStore: ObservableObject {
                 preparingIPhone: isPreparingIPhone,
                 isBackgroundProcess: CommandLine.arguments.contains("--mcp-background")
             ) {
-                if session.mirrorSession.state == .running || session.mirrorSession.state == .starting {
+                if session.mirrorSession.state == .running
+                    || session.mirrorSession.state == .starting
+                    || session.mirrorSession.hasLiveUSBStream {
                     applyLiveUSBThumbnail(from: session)
                 } else if session.controlSession.isReady {
                     captureWirelessThumbnail(for: session)
