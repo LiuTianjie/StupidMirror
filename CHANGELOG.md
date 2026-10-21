@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.9 - 2026-10-21
+
+- Fix USB iPhone control dropping about 15 seconds after the mirror window is
+  closed, and when a mirror is opened while control is already running.
+  Starting or idling USB screen capture switches the iPhone between USB
+  Configuration 7 and 6, which re-enumerates it and resets every usbmuxd
+  connection, including the `smtunnel` control tunnel. While control is
+  wanted for a cabled iPhone, StupidMirror now keeps its screen-capture
+  stream running in the background (with audio returned to the phone
+  speaker), so opening or closing the mirror never changes the USB
+  configuration. The stream is released when control stops.
+- Wait for the held USB capture stream to deliver its first frame before
+  opening the USB control tunnel, so the tunnel is built after the
+  Configuration 7 switch instead of being torn down by it.
+- Gallery thumbnails and AI screen observations use frames from the held
+  stream instead of falling back to a WebDriverAgent screenshot.
+
 ## 0.3.8 - 2026-10-21
 
 - Fix USB iPhone mirroring freezing or dropping after brief USB re-enumerations
