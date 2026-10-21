@@ -91,6 +91,10 @@ final class MirrorWindowRegistry {
         session.mirrorSession.start()
     }
 
+    func hasWindow(for sessionID: String) -> Bool {
+        windows[sessionID] != nil
+    }
+
     func close(session: DeviceSession) {
         session.mirrorSession.stop()
         if let window = windows[session.id] {

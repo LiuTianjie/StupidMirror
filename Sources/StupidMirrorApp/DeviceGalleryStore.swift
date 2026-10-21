@@ -147,6 +147,7 @@ final class DeviceGalleryStore: ObservableObject {
     private var discoveryRetryTask: Task<Void, Never>?
     private var removedDeviceIDs = Set<String>()
     private var desiredMirrorIDs = Set<String>()
+    private var desiredControlIDs = Set<String>()
     private var pendingActivationMirrorIDs = Set<String>()
     private var disconnectedSince: [String: Date] = [:]
     private var lastConnectedCount = 0
@@ -449,6 +450,8 @@ final class DeviceGalleryStore: ObservableObject {
             iphoneSetupPhase = .failed(t(IOSAgentError.missingSigningTeam.copyKey))
             return
         }
+        thumbnailCaptures[session.id]?.cancel()
+        thumbnailCaptures[session.id] = nil
         iphoneSetupPhase = .preparing(.inspecting)
         iphoneSetupPreparingUDID = udid
         statusMessage = t("iphone.setup.preparing")
@@ -586,6 +589,7 @@ final class DeviceGalleryStore: ObservableObject {
         }.map(\.id))
         if !wirelessMirroringEnabled {
             desiredMirrorIDs.subtract(usbIDs)
+            desiredControlIDs.subtract(usbIDs)
             pendingActivationMirrorIDs.subtract(usbIDs)
         }
         dismissActivationSheetIfPresented()
@@ -621,6 +625,7 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func updateMicrophonePermissionStatus(_ status: AVAuthorizationStatus) {
+        guard microphonePermissionStatus != status else { return }
         microphonePermissionStatus = status
         applyAudioPlaybackPreference()
     }
@@ -672,9 +677,15 @@ final class DeviceGalleryStore: ObservableObject {
 
     nonisolated static func shouldStartUSBThumbnailCapture(
         liveMirrorDesired: Bool,
-        mirrorState: MirrorState
+        mirrorState: MirrorState,
+        controlActive: Bool = false,
+        tunnelRunning: Bool = false,
+        preparingIPhone: Bool = false,
+        isBackgroundProcess: Bool = false
     ) -> Bool {
-        if liveMirrorDesired { return false }
+        if liveMirrorDesired || controlActive || tunnelRunning || preparingIPhone || isBackgroundProcess {
+            return false
+        }
         switch mirrorState {
         case .starting, .running:
             return false
@@ -861,10 +872,13 @@ final class DeviceGalleryStore: ObservableObject {
                 captureUniqueID: captureDevice.uniqueID
             ) {
                 let previousID = existing.id
+                let captureDeviceChanged = existing.captureDevice !== captureDevice
+                    || existing.captureDevice?.uniqueID != captureDevice.uniqueID
                 let shouldResume = shouldResumeAfterAdoption(
                     existing,
                     becomingConnected: identity.connectionState == .connected,
-                    transport: .usb
+                    transport: .usb,
+                    captureDeviceChanged: captureDeviceChanged
                 )
                 if existing.transport != .usb {
                     cancelWirelessTransport(for: existing)
@@ -872,6 +886,7 @@ final class DeviceGalleryStore: ObservableObject {
                 rebaseSession(&existing, to: identity)
                 existing.adoptUSB(identity: identity, captureDevice: captureDevice)
                 existing.device.connectionState = identity.connectionState
+                configureUSBMirrorCallbacks(for: existing.mirrorSession)
                 existing.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
                     playbackEnabled: audioPlaybackEnabled,
                     authorizationStatus: microphonePermissionStatus
@@ -887,6 +902,7 @@ final class DeviceGalleryStore: ObservableObject {
                 claim(existing)
             } else {
                 let session = DeviceSession(device: identity, captureDevice: captureDevice)
+                configureUSBMirrorCallbacks(for: session.mirrorSession)
                 session.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
                     playbackEnabled: audioPlaybackEnabled,
                     authorizationStatus: microphonePermissionStatus
@@ -1088,6 +1104,9 @@ final class DeviceGalleryStore: ObservableObject {
 
         sessions = nextSessions.sorted { $0.device.name.localizedStandardCompare($1.device.name) == .orderedAscending }
         requestMirrorStarts(autoStartIDs.union(resumeIDs), presentActivationWhenBlocked: false)
+        for session in connectedSessions where shouldResumeControl(for: session) {
+            connectControl(for: session)
+        }
         if let selectedSessionID, !sessions.contains(where: { $0.id == selectedSessionID }) {
             self.selectedSessionID = sessions.first?.id
         } else if selectedSessionID == nil {
@@ -1135,16 +1154,83 @@ final class DeviceGalleryStore: ObservableObject {
         )
     }
 
+    nonisolated static func shouldResumeAfterAdoption(
+        wanted: Bool,
+        previousConnectionState: DeviceConnectionState,
+        previousTransport: DeviceTransport,
+        newTransport: DeviceTransport,
+        mirrorState: MirrorState,
+        captureDeviceChanged: Bool = false
+    ) -> Bool {
+        guard wanted else { return false }
+        if previousConnectionState != .connected || previousTransport != newTransport || captureDeviceChanged {
+            return true
+        }
+        switch mirrorState {
+        case .stopped:
+            return true
+        case .starting, .running, .failed:
+            return false
+        }
+    }
+
     private func shouldResumeAfterAdoption(
         _ existing: DeviceSession,
         becomingConnected: Bool,
-        transport: DeviceTransport
+        transport: DeviceTransport,
+        captureDeviceChanged: Bool = false
     ) -> Bool {
         guard becomingConnected else { return false }
         let wanted = desiredMirrorIDs.contains(existing.id)
             || (existing.device.udid.map { desiredMirrorIDs.contains($0) } ?? false)
-        guard wanted else { return false }
-        return existing.device.connectionState != .connected || existing.transport != transport
+        return Self.shouldResumeAfterAdoption(
+            wanted: wanted,
+            previousConnectionState: existing.device.connectionState,
+            previousTransport: existing.transport,
+            newTransport: transport,
+            mirrorState: existing.mirrorSession.state,
+            captureDeviceChanged: captureDeviceChanged
+        )
+    }
+
+    nonisolated static func shouldResumeControl(
+        wanted: Bool,
+        connectionState: DeviceConnectionState,
+        controlState: ControlState
+    ) -> Bool {
+        guard wanted, connectionState == .connected else { return false }
+        switch controlState {
+        case .unavailable, .failed:
+            return true
+        case .connecting, .ready:
+            return false
+        }
+    }
+
+    private func shouldResumeControl(for session: DeviceSession) -> Bool {
+        let wanted = desiredControlIDs.contains(session.id)
+            || (session.device.udid.map { desiredControlIDs.contains($0) } ?? false)
+        return Self.shouldResumeControl(
+            wanted: wanted,
+            connectionState: session.device.connectionState,
+            controlState: session.controlSession.state
+        )
+    }
+
+    private func configureUSBMirrorCallbacks(for mirrorSession: MirrorCaptureSession) {
+        mirrorSession.onUSBCaptureInterrupted = { [weak self] in
+            guard let self, !self.isShuttingDown else { return }
+            self.refresh()
+            self.scheduleDiscoveryRetries()
+        }
+        mirrorSession.onUSBFrameAvailable = { [weak self, weak mirrorSession] in
+            guard let self, !self.isShuttingDown,
+                  let mirrorSession,
+                  let current = self.session(owning: mirrorSession) else { return }
+            if self.thumbnails[current.id] == nil {
+                self.applyLiveUSBThumbnail(from: current)
+            }
+        }
     }
 
     private func takeExisting(
@@ -1207,6 +1293,7 @@ final class DeviceGalleryStore: ObservableObject {
     private func migrateSessionID(from oldID: String, to newID: String) {
         guard oldID != newID else { return }
         if desiredMirrorIDs.remove(oldID) != nil { desiredMirrorIDs.insert(newID) }
+        if desiredControlIDs.remove(oldID) != nil { desiredControlIDs.insert(newID) }
         if embeddedPreviewIDs.remove(oldID) != nil { embeddedPreviewIDs.insert(newID) }
         if pendingActivationMirrorIDs.remove(oldID) != nil { pendingActivationMirrorIDs.insert(newID) }
         if floatingMirrorIDs.remove(oldID) != nil { floatingMirrorIDs.insert(newID) }
@@ -1265,6 +1352,10 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func retire(_ session: DeviceSession) {
         desiredMirrorIDs.remove(session.id)
+        desiredControlIDs.remove(session.id)
+        if let udid = session.device.udid {
+            desiredControlIDs.remove(udid)
+        }
         pendingActivationMirrorIDs.remove(session.id)
         floatingMirrorIDs.remove(session.id)
         thumbnailCaptures[session.id]?.cancel()
@@ -1396,6 +1487,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     func stopAll() {
         desiredMirrorIDs.removeAll()
+        desiredControlIDs.removeAll()
         embeddedPreviewIDs.removeAll()
         pendingActivationMirrorIDs.removeAll()
         dismissActivationSheetIfPresented()
@@ -1445,6 +1537,7 @@ final class DeviceGalleryStore: ObservableObject {
         observers.removeAll()
 
         desiredMirrorIDs.removeAll()
+        desiredControlIDs.removeAll()
         MirrorWindowRegistry.shared.closeAll(sessions: sessions)
         for capture in thumbnailCaptures.values {
             capture.cancel()
@@ -1525,7 +1618,7 @@ final class DeviceGalleryStore: ObservableObject {
             if showWindow { embeddedPreviewIDs.subtract(decision.allowedIDs) }
             else { embeddedPreviewIDs.formUnion(decision.allowedIDs) }
         }
-        performAuthorizedStarts(decision.allowedIDs)
+        performAuthorizedStarts(decision.allowedIDs, activateExistingWindow: showWindow ?? false)
         if !decision.blockedIDs.isEmpty {
             pendingActivationMirrorIDs.formUnion(decision.blockedIDs)
             statusMessage = t("status.activationDeviceLimit")
@@ -1536,7 +1629,7 @@ final class DeviceGalleryStore: ObservableObject {
         return decision
     }
 
-    private func performAuthorizedStarts(_ sessionIDs: Set<String>) {
+    private func performAuthorizedStarts(_ sessionIDs: Set<String>, activateExistingWindow: Bool = true) {
         guard !isShuttingDown else { return }
         for sessionID in sessionIDs {
             guard let requested = sessions.first(where: { $0.id == sessionID }),
@@ -1548,7 +1641,8 @@ final class DeviceGalleryStore: ObservableObject {
             thumbnailCaptures[session.id]?.cancel()
             thumbnailCaptures[session.id] = nil
             prepareWirelessTransportIfNeeded(for: session)
-            if embeddedPreviewIDs.contains(session.id) {
+            if embeddedPreviewIDs.contains(session.id)
+                || (!activateExistingWindow && MirrorWindowRegistry.shared.hasWindow(for: session.id)) {
                 session.mirrorSession.start()
             } else {
                 MirrorWindowRegistry.shared.openAuthorized(session: session, store: self)
@@ -1759,6 +1853,41 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
+    nonisolated static func shouldRetryControlConnection(_ error: Error) -> Bool {
+        if let agentError = error as? IOSAgentError {
+            switch agentError {
+            case .deviceUnavailable, .launchFailed, .timedOut:
+                return true
+            case .missingSigningTeam, .missingRuntime, .setupRequired, .buildFailed,
+                 .deviceLocked, .developerModeDisabled, .wifiConnectionsUnavailable, .developerImageMissing,
+                 .automationNotApproved:
+                return false
+            }
+        }
+        return DeviceControlSession.isSessionLoss(error)
+    }
+
+    nonisolated static func shouldKeepDesiredControlAfterFailure(messageKey: String) -> Bool {
+        let nonRetryableKeys: Set<String> = [
+            IOSAgentError.missingSigningTeam.copyKey,
+            IOSAgentError.missingRuntime.copyKey,
+            IOSAgentError.setupRequired.copyKey,
+            IOSAgentError.buildFailed.copyKey,
+            IOSAgentError.deviceLocked.copyKey,
+            IOSAgentError.developerModeDisabled.copyKey,
+            IOSAgentError.wifiConnectionsUnavailable.copyKey,
+            IOSAgentError.developerImageMissing.copyKey,
+            IOSAgentError.automationNotApproved.copyKey,
+            "control.error.unlockDevice",
+            "control.error.developerMode",
+            "control.error.uiAutomation",
+            "control.error.trustDevice",
+            "control.error.signing",
+            "control.error.appiumUnavailable"
+        ]
+        return !nonRetryableKeys.contains(messageKey)
+    }
+
     func connectControl(for session: DeviceSession) {
         guard !isShuttingDown,
               let session = beginConnectionAttemptIfNeeded(for: session) else { return }
@@ -1772,13 +1901,45 @@ final class DeviceGalleryStore: ObservableObject {
             return
         }
         guard !session.controlSession.isReady, !session.controlSession.isConnecting else { return }
+        desiredControlIDs.insert(session.id)
+        thumbnailCaptures[session.id]?.cancel()
+        thumbnailCaptures[session.id] = nil
         statusMessage = t("status.controlPreparingAgent")
         session.controlSession.onFailure = { [weak self] message in
             guard let self, !self.isShuttingDown else { return }
+            if !Self.shouldKeepDesiredControlAfterFailure(messageKey: message) {
+                self.desiredControlIDs.remove(session.id)
+                self.desiredControlIDs.remove(udid)
+            }
             self.statusMessage = self.t(message)
             self.presentControlRecovery(for: session, message: message)
         }
         session.controlSession.connect(using: controlConnector(for: session, udid: udid))
+    }
+
+    /// Waits briefly if a USB mirror is mid-startup for the same iPhone so its
+    /// USB Configuration 6 -> 7 transition settles before `smtunnel` opens a
+    /// USB tunnel.
+    private func waitForUSBMirrorStartupToSettleIfNeeded(udid: String) async {
+        let sawStarting = sessions.contains {
+            $0.platform == .iOS
+                && $0.transport == .usb
+                && $0.device.udid == udid
+                && $0.mirrorSession.state == .starting
+        }
+        guard sawStarting else { return }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < deadline {
+            let stillStarting = sessions.contains {
+                $0.platform == .iOS
+                    && $0.transport == .usb
+                    && $0.device.udid == udid
+                    && $0.mirrorSession.state == .starting
+            }
+            guard stillStarting else { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        try? await Task.sleep(for: .milliseconds(300))
     }
 
     /// Builds the connector the control session runs off the main actor: it
@@ -1806,33 +1967,55 @@ final class DeviceGalleryStore: ObservableObject {
             }
         }
         let agent = session.iosAgent ?? IOSAgentService()
-        // A phone on the cable should be driven over the cable; a wireless
-        // session takes whatever usbmuxd offers, preferring the network.
-        let transport: DeviceTunnelTransport = session.transport == .usb ? .usb : .auto
         return { [weak self] report in
             guard let self else { throw CancellationError() }
             await self.detectSigningTeams()
             let configuration = await self.iosControlConfiguration()
             await report(.startingAgent, nil)
-            let endpoint = try await agent.ensureRunning(
-                udid: udid,
-                transport: transport,
-                configuration: configuration
-            ) { [weak self] progress in
-                switch progress {
-                case .checkingExistingAgent, .checkingDevice, .launchingAgent:
-                    await report(.startingAgent, nil)
-                case .waitingForDevice:
-                    let message = await self?.t("agent.start.waitingForDevice")
-                    await report(.startingAgent, message)
-                case .connectingVideo:
+
+            var lastError: Error?
+            for attempt in 0..<4 {
+                try Task.checkCancellation()
+                await self.waitForUSBMirrorStartupToSettleIfNeeded(udid: udid)
+                let transport: DeviceTunnelTransport = await MainActor.run {
+                    guard let current = self.sessions.first(where: { $0.platform == .iOS && $0.device.udid == udid }) else {
+                        return .auto
+                    }
+                    return current.transport == .usb ? .usb : .auto
+                }
+                do {
+                    let endpoint = try await agent.ensureRunning(
+                        udid: udid,
+                        transport: transport,
+                        configuration: configuration
+                    ) { [weak self] progress in
+                        switch progress {
+                        case .checkingExistingAgent, .checkingDevice, .launchingAgent:
+                            await report(.startingAgent, nil)
+                        case .waitingForDevice:
+                            let message = await self?.t("agent.start.waitingForDevice")
+                            await report(.startingAgent, message)
+                        case .connectingVideo:
+                            await report(.connectingAgent, nil)
+                        }
+                    }
                     await report(.connectingAgent, nil)
+                    let backend = try await WDAControlBackend.connect(baseURL: endpoint.controlURL)
+                    await report(.finishing, nil)
+                    return backend
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    lastError = error
+                    guard attempt < 3, Self.shouldRetryControlConnection(error) else {
+                        throw error
+                    }
+                    let message = await self.t("agent.start.retryingAgent")
+                    await report(.startingAgent, message)
+                    try await Task.sleep(for: .milliseconds(1_000 + attempt * 750))
                 }
             }
-            await report(.connectingAgent, nil)
-            let backend = try await WDAControlBackend.connect(baseURL: endpoint.controlURL)
-            await report(.finishing, nil)
-            return backend
+            throw lastError ?? IOSAgentError.launchFailed
         }
     }
 
@@ -1850,12 +2033,19 @@ final class DeviceGalleryStore: ObservableObject {
         guard let udid = session.device.udid, !udid.isEmpty else {
             throw DeviceAutomationError.deviceUnavailable
         }
+        desiredControlIDs.insert(session.id)
+        thumbnailCaptures[session.id]?.cancel()
+        thumbnailCaptures[session.id] = nil
         if session.controlSession.isReady, await session.controlSession.verifyReady() {
             return
         }
         if !session.controlSession.isConnecting {
             session.controlSession.onFailure = { [weak self] message in
                 guard let self, !self.isShuttingDown else { return }
+                if !Self.shouldKeepDesiredControlAfterFailure(messageKey: message) {
+                    self.desiredControlIDs.remove(session.id)
+                    self.desiredControlIDs.remove(udid)
+                }
                 self.statusMessage = self.t(message)
             }
             session.controlSession.connect(using: controlConnector(for: session, udid: udid))
@@ -1959,6 +2149,10 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func stopControl(for session: DeviceSession) {
+        desiredControlIDs.remove(session.id)
+        if let udid = session.device.udid {
+            desiredControlIDs.remove(udid)
+        }
         session.controlSession.disconnect()
     }
 
@@ -2115,6 +2309,10 @@ final class DeviceGalleryStore: ObservableObject {
         let preferred = active.first { $0.id == selectedSessionID }
         let retainedIDs = Set(([preferred].compactMap { $0 } + active).prefix(limit).map(\.id))
         for session in active where !retainedIDs.contains(session.id) {
+            desiredControlIDs.remove(session.id)
+            if let udid = session.device.udid {
+                desiredControlIDs.remove(udid)
+            }
             session.controlSession.disconnect()
         }
         statusMessage = t("status.activationControlRequired")
@@ -2332,13 +2530,26 @@ final class DeviceGalleryStore: ObservableObject {
             captureWirelessThumbnail(for: session)
             return
         }
-        if session.transport == .usb,
-           !Self.shouldStartUSBThumbnailCapture(
-            liveMirrorDesired: desiredMirrorIDs.contains(session.id),
-            mirrorState: session.mirrorSession.state
-           ) {
-            applyLiveUSBThumbnail(from: session)
-            return
+        if session.transport == .usb {
+            let tunnelRunning = session.device.udid.map(IOSAgentService.hasRunningAgent(udid:)) ?? false
+            let controlActive = session.controlSession.isReady
+                || session.controlSession.isConnecting
+                || desiredControlIDs.contains(session.id)
+            if !Self.shouldStartUSBThumbnailCapture(
+                liveMirrorDesired: desiredMirrorIDs.contains(session.id),
+                mirrorState: session.mirrorSession.state,
+                controlActive: controlActive,
+                tunnelRunning: tunnelRunning,
+                preparingIPhone: isPreparingIPhone,
+                isBackgroundProcess: CommandLine.arguments.contains("--mcp-background")
+            ) {
+                if session.mirrorSession.state == .running || session.mirrorSession.state == .starting {
+                    applyLiveUSBThumbnail(from: session)
+                } else if session.controlSession.isReady {
+                    captureWirelessThumbnail(for: session)
+                }
+                return
+            }
         }
         if session.mirrorSession.state == .running || session.mirrorSession.state == .starting {
             applyLiveUSBThumbnail(from: session)

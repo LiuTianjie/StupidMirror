@@ -109,6 +109,16 @@ enum AVFoundationMirrorBackend {
         MuxedDeviceCatalog.shared.devices()
     }
 
+    static func liveMuxedDevice(for device: AVCaptureDevice) -> AVCaptureDevice {
+        if let live = discoverMuxedDevices().first(where: { $0.uniqueID == device.uniqueID && $0.isConnected }) {
+            return live
+        }
+        if let fallback = AVCaptureDevice(uniqueID: device.uniqueID), fallback.isConnected {
+            return fallback
+        }
+        return device
+    }
+
     static func identity(
         for device: AVCaptureDevice,
         metadata: DeviceMetadata?,

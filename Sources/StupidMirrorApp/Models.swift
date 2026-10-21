@@ -219,11 +219,27 @@ struct DeviceSession: Identifiable {
         self.mirrorState = .stopped
     }
 
+    nonisolated static func needsUSBRetarget(
+        currentTransport: DeviceTransport,
+        currentUniqueID: String?,
+        newUniqueID: String,
+        sameCaptureDeviceInstance: Bool
+    ) -> Bool {
+        currentTransport != .usb
+            || currentUniqueID != newUniqueID
+            || !sameCaptureDeviceInstance
+    }
+
     @MainActor
     mutating func adoptUSB(identity: DeviceIdentity, captureDevice: AVCaptureDevice) {
         device = identity
         controlSession.updateDevice(identity)
-        let needsRetarget = transport != .usb || self.captureDevice?.uniqueID != captureDevice.uniqueID
+        let needsRetarget = Self.needsUSBRetarget(
+            currentTransport: transport,
+            currentUniqueID: self.captureDevice?.uniqueID,
+            newUniqueID: captureDevice.uniqueID,
+            sameCaptureDeviceInstance: self.captureDevice === captureDevice
+        )
         self.captureDevice = captureDevice
         lastUSBCaptureUniqueID = captureDevice.uniqueID
         if needsRetarget {
