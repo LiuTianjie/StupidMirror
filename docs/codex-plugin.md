@@ -1,6 +1,6 @@
 # Codex plugin / Codex 插件
 
-Available in StupidMirror 0.3.7 (bundled plugin 0.2.4).
+Available in StupidMirror 0.3.8 (bundled plugin 0.2.4).
 
 ## Connect / 连接
 

@@ -616,4 +616,166 @@ final class DeviceDiscoveryTests: XCTestCase {
             "the runner did not answer on port 8100 within 1m30s"
         ))
     }
+
+    func testUSBRetargetTriggersWhenCMIOPublishesNewCaptureDeviceInstanceWithSameUniqueID() {
+        XCTAssertFalse(
+            DeviceSession.needsUSBRetarget(
+                currentTransport: .usb,
+                currentUniqueID: "00008150-001614E40200401C",
+                newUniqueID: "00008150-001614E40200401C",
+                sameCaptureDeviceInstance: true
+            )
+        )
+        // After a brief USB blip or Configuration 6 <-> 7 reset, CoreMediaIO
+        // destroys the old AVCaptureDALDevice and publishes a new instance with
+        // the same uniqueID. It must retarget so the dead CMIOGraph is torn down.
+        XCTAssertTrue(
+            DeviceSession.needsUSBRetarget(
+                currentTransport: .usb,
+                currentUniqueID: "00008150-001614E40200401C",
+                newUniqueID: "00008150-001614E40200401C",
+                sameCaptureDeviceInstance: false
+            )
+        )
+        XCTAssertTrue(
+            DeviceSession.needsUSBRetarget(
+                currentTransport: .wireless,
+                currentUniqueID: nil,
+                newUniqueID: "00008150-001614E40200401C",
+                sameCaptureDeviceInstance: false
+            )
+        )
+    }
+
+    func testShouldResumeAfterAdoptionResumesStoppedMirrorOrReplacedCaptureDevice() {
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldResumeAfterAdoption(
+                wanted: true,
+                previousConnectionState: .disconnected,
+                previousTransport: .usb,
+                newTransport: .usb,
+                mirrorState: .stopped,
+                captureDeviceChanged: false
+            )
+        )
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldResumeAfterAdoption(
+                wanted: true,
+                previousConnectionState: .connected,
+                previousTransport: .usb,
+                newTransport: .usb,
+                mirrorState: .running,
+                captureDeviceChanged: true
+            )
+        )
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldResumeAfterAdoption(
+                wanted: true,
+                previousConnectionState: .connected,
+                previousTransport: .usb,
+                newTransport: .usb,
+                mirrorState: .stopped,
+                captureDeviceChanged: false
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldResumeAfterAdoption(
+                wanted: true,
+                previousConnectionState: .connected,
+                previousTransport: .usb,
+                newTransport: .usb,
+                mirrorState: .running,
+                captureDeviceChanged: false
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldResumeAfterAdoption(
+                wanted: false,
+                previousConnectionState: .disconnected,
+                previousTransport: .usb,
+                newTransport: .usb,
+                mirrorState: .stopped,
+                captureDeviceChanged: true
+            )
+        )
+    }
+
+    func testUSBThumbnailCaptureIsSuppressedDuringControlOrTunnelOrBackground() {
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+                liveMirrorDesired: false,
+                mirrorState: .stopped
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+                liveMirrorDesired: false,
+                mirrorState: .stopped,
+                controlActive: true
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+                liveMirrorDesired: false,
+                mirrorState: .stopped,
+                tunnelRunning: true
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+                liveMirrorDesired: false,
+                mirrorState: .stopped,
+                preparingIPhone: true
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldStartUSBThumbnailCapture(
+                liveMirrorDesired: false,
+                mirrorState: .stopped,
+                isBackgroundProcess: true
+            )
+        )
+    }
+
+    func testControlResumeAndRetryPolicySurvivesTransientUSBResets() {
+        XCTAssertTrue(DeviceGalleryStore.shouldRetryControlConnection(IOSAgentError.deviceUnavailable))
+        XCTAssertTrue(DeviceGalleryStore.shouldRetryControlConnection(IOSAgentError.launchFailed))
+        XCTAssertTrue(DeviceGalleryStore.shouldRetryControlConnection(IOSAgentError.timedOut))
+        XCTAssertTrue(DeviceGalleryStore.shouldRetryControlConnection(ControlBackendError.sessionLost("EOF")))
+        XCTAssertFalse(DeviceGalleryStore.shouldRetryControlConnection(IOSAgentError.setupRequired))
+        XCTAssertFalse(DeviceGalleryStore.shouldRetryControlConnection(IOSAgentError.developerModeDisabled))
+        XCTAssertFalse(DeviceGalleryStore.shouldRetryControlConnection(ControlBackendError.rejected("bad element")))
+
+        XCTAssertTrue(DeviceGalleryStore.shouldKeepDesiredControlAfterFailure(
+            messageKey: IOSAgentError.deviceUnavailable.copyKey
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldKeepDesiredControlAfterFailure(
+            messageKey: IOSAgentError.setupRequired.copyKey
+        ))
+        XCTAssertFalse(DeviceGalleryStore.shouldKeepDesiredControlAfterFailure(
+            messageKey: IOSAgentError.deviceLocked.copyKey
+        ))
+
+        XCTAssertTrue(
+            DeviceGalleryStore.shouldResumeControl(
+                wanted: true,
+                connectionState: .connected,
+                controlState: .failed("agent.error.deviceUnavailable")
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldResumeControl(
+                wanted: true,
+                connectionState: .connected,
+                controlState: .ready
+            )
+        )
+        XCTAssertFalse(
+            DeviceGalleryStore.shouldResumeControl(
+                wanted: true,
+                connectionState: .disconnected,
+                controlState: .failed("agent.error.deviceUnavailable")
+            )
+        )
+    }
 }

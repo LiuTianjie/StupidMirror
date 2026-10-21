@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.8 - 2026-10-21
+
+- Fix USB iPhone mirroring freezing or dropping after brief USB re-enumerations
+  or Configuration 6/7 switches (`CMIOGraphStart for setRunning (err=-67520)`).
+  Stopping or retargeting a USB session now tears down the old `CMIOGraph`,
+  replaces the `AVCaptureSession`, and resolves the newly published
+  `AVCaptureDevice` instance even when its `uniqueID` is unchanged.
+- Observe `AVCaptureSession.runtimeErrorNotification` and add a USB first-frame
+  watchdog so a wedged capture graph automatically tears down and recovers.
+- Avoid starting one-shot USB `ThumbnailCapture` sessions while device control,
+  an `smtunnel` sidecar, iPhone setup, or the `--mcp-background` daemon is
+  active, preventing `iOSScreenCaptureAssistant` idle timers from resetting the
+  USB bus and dropping active tunnels.
+- Retry iOS control tunnel startup across transient USB re-enumeration windows
+  and automatically resume desired control sessions when a device reconnects.
+
 ## 0.3.7 - 2026-10-20
 
 - Fix a wireless mirror window that could keep waiting for video while control

@@ -5,7 +5,7 @@ import CoreImage
 import Foundation
 
 final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
-    let captureSession = AVCaptureSession()
+    private(set) var captureSession = AVCaptureSession()
     private(set) var device: AVCaptureDevice?
     /// Set for an iPhone streamed over the smtunnel sidecar. The video
     /// endpoint itself arrives later through `connectWirelessVideo`.
@@ -50,6 +50,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var lastStreamFailureAt: Date?
     private var wirelessOnRunning: (@MainActor @Sendable () -> Void)?
     var onWirelessEndpointNeedsRefresh: (@MainActor @Sendable () -> Void)?
+    var onUSBCaptureInterrupted: (@MainActor @Sendable () -> Void)?
+    var onUSBFrameAvailable: (@MainActor @Sendable () -> Void)?
+    private var runtimeErrorObserver: NSObjectProtocol?
+    private var usbWatchdogTask: Task<Void, Never>?
+    private var usbGeneration: UInt64 = 0
+    private var usbReceivedFrameInCurrentRun = false
     private var lastWirelessPreviewUpdate = Date.distantPast
     private var automationActionClearTask: Task<Void, Never>?
 
@@ -59,6 +65,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         self.androidDevice = nil
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
+        installRuntimeErrorObserver()
     }
 
     init(wirelessDeviceUDID: String) {
@@ -67,6 +74,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         self.androidDevice = nil
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
+        installRuntimeErrorObserver()
     }
 
     init(androidDevice: AndroidDeviceMetadata) {
@@ -75,9 +83,14 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         self.androidDevice = androidDevice
         super.init()
         sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
+        installRuntimeErrorObserver()
     }
 
     deinit {
+        if let runtimeErrorObserver {
+            NotificationCenter.default.removeObserver(runtimeErrorObserver)
+        }
+        usbWatchdogTask?.cancel()
         automationActionClearTask?.cancel()
         wirelessSRTStream?.stop()
         androidStream?.stop()
@@ -91,9 +104,38 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         }
     }
 
+    private func installRuntimeErrorObserver() {
+        runtimeErrorObserver = NotificationCenter.default.addObserver(
+            forName: AVCaptureSession.runtimeErrorNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] notification in
+            guard let self,
+                  let failedSession = notification.object as? AVCaptureSession else { return }
+            self.sessionQueue.async { [weak self] in
+                guard let self, !self.disposed, failedSession === self.captureSession else { return }
+                self.tearDownOnSessionQueue()
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          !self.disposed,
+                          self.device != nil,
+                          self.wirelessDeviceUDID == nil,
+                          self.androidDevice == nil,
+                          self.state == .starting || self.state == .running else { return }
+                    self.usbGeneration &+= 1
+                    self.usbWatchdogTask?.cancel()
+                    self.usbWatchdogTask = nil
+                    self.state = .stopped
+                    self.onUSBCaptureInterrupted?()
+                }
+            }
+        }
+    }
+
     @MainActor
     func retargetToUSB(_ captureDevice: AVCaptureDevice) {
         guard device?.uniqueID != captureDevice.uniqueID
+                || device !== captureDevice
                 || wirelessDeviceUDID != nil
                 || androidDevice != nil else {
             return
@@ -172,6 +214,14 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             return
         }
 
+        usbGeneration &+= 1
+        let currentUSBGeneration = usbGeneration
+        usbWatchdogTask?.cancel()
+        usbWatchdogTask = nil
+        sampleBufferConsumerLock.lock()
+        usbReceivedFrameInCurrentRun = false
+        sampleBufferConsumerLock.unlock()
+
         sessionQueue.async { [self] in
             do {
                 guard !disposed else { throw MirrorError.disposed }
@@ -189,19 +239,59 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
                     pinPhoneSpeakerOnSessionQueue(primaryDeviceInput: primaryDeviceInput)
                 }
                 guard captureSession.isRunning else {
+                    tearDownOnSessionQueue()
                     throw MirrorError.cannotStartSession
                 }
                 Task { @MainActor in
                     // stop() may have raced in while the queue was starting the
                     // session; don't resurrect the running state in that case.
-                    guard self.state == .starting else { return }
+                    guard self.state == .starting,
+                          self.usbGeneration == currentUSBGeneration else { return }
                     self.state = .running
+                    self.superviseUSBStartup(generation: currentUSBGeneration)
                     onRunning()
                 }
             } catch {
                 Task { @MainActor in
-                    guard self.state == .starting else { return }
+                    guard self.state == .starting,
+                          self.usbGeneration == currentUSBGeneration else { return }
                     self.state = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    nonisolated static let usbFirstFrameTimeoutMilliseconds = 3_500
+
+    @MainActor
+    private func superviseUSBStartup(generation: UInt64) {
+        usbWatchdogTask?.cancel()
+        usbWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.usbFirstFrameTimeoutMilliseconds))
+            guard let self,
+                  !Task.isCancelled,
+                  generation == self.usbGeneration,
+                  self.device != nil,
+                  self.wirelessDeviceUDID == nil,
+                  self.androidDevice == nil,
+                  self.state == .running,
+                  !self.disposed else { return }
+            let receivedFrame = self.sampleBufferConsumerLock.withLock {
+                self.usbReceivedFrameInCurrentRun
+            }
+            guard !receivedFrame else { return }
+
+            // CMIOGraphStart can fail inside AVFCapture (err=-67520) after a
+            // brief USB blip while still leaving captureSession.isRunning == true
+            // with 0 frames enqueued. Tear down the wedged session and trigger
+            // discovery recovery on a fresh AVCaptureSession.
+            self.usbGeneration &+= 1
+            self.usbWatchdogTask = nil
+            self.state = .stopped
+            self.sessionQueue.async { [self] in
+                self.tearDownOnSessionQueue()
+                Task { @MainActor [weak self] in
+                    self?.onUSBCaptureInterrupted?()
                 }
             }
         }
@@ -212,6 +302,9 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         state = .stopped
         latestFrameStore.clear()
         clearAutomationAction()
+        usbGeneration &+= 1
+        usbWatchdogTask?.cancel()
+        usbWatchdogTask = nil
         wirelessGeneration &+= 1
         wirelessRetryTask?.cancel()
         wirelessRetryTask = nil
@@ -226,7 +319,7 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessStartupDetail = nil
         wirelessStartupBeganAt = nil
         sessionQueue.async { [self] in
-            stopRunningOnSessionQueue()
+            tearDownOnSessionQueue()
         }
     }
 
@@ -444,11 +537,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         }
         sessionQueue.async { [self] in
             guard !disposed else { return }
+            let changed = audioEnabled != enabled
             audioEnabled = enabled
-            if enabled {
+            if enabled && changed {
                 iosMacPlaybackUnavailable = false
             }
-            if configured {
+            if configured && changed {
                 applyAudioEnabledOnSessionQueue()
             }
         }
@@ -468,14 +562,16 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
 
     private func configureIfNeeded() throws {
         guard !configured else { return }
-        guard let device else { throw MirrorError.missingCaptureSource }
+        guard let currentDevice = device else { throw MirrorError.missingCaptureSource }
+        let resolvedDevice = AVFoundationMirrorBackend.liveMuxedDevice(for: currentDevice)
+        device = resolvedDevice
 
         captureSession.beginConfiguration()
         captureSession.sessionPreset = .high
         defer { captureSession.commitConfiguration() }
 
         do {
-            let input = try AVCaptureDeviceInput(device: device)
+            let input = try AVCaptureDeviceInput(device: resolvedDevice)
             // Disable before the session sees the input. addInput would
             // otherwise auto-connect the default-enabled audio ports and iOS
             // would hand the speaker to USB immediately.
@@ -713,15 +809,18 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         deviceAudioPlayer.stop()
         stopRunningOnSessionQueue()
 
-        guard configured || !captureSession.inputs.isEmpty || !captureSession.outputs.isEmpty else { return }
-        captureSession.beginConfiguration()
-        for output in captureSession.outputs {
-            captureSession.removeOutput(output)
+        let hadGraph = configured || !captureSession.inputs.isEmpty || !captureSession.outputs.isEmpty
+        if hadGraph {
+            captureSession.beginConfiguration()
+            for output in captureSession.outputs {
+                captureSession.removeOutput(output)
+            }
+            for input in captureSession.inputs {
+                captureSession.removeInput(input)
+            }
+            captureSession.commitConfiguration()
+            captureSession = AVCaptureSession()
         }
-        for input in captureSession.inputs {
-            captureSession.removeInput(input)
-        }
-        captureSession.commitConfiguration()
         configured = false
         primaryDeviceInput = nil
         dedicatedIOSAudioInput = nil
@@ -997,9 +1096,20 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         latestFrameStore.submit(sampleBuffer)
 
         sampleBufferConsumerLock.lock()
+        let isFirstFrameOfRun = !usbReceivedFrameInCurrentRun
+        usbReceivedFrameInCurrentRun = true
         let consumer = videoSampleBufferConsumer
         sampleBufferConsumerLock.unlock()
         consumer?(sampleBuffer)
+
+        if isFirstFrameOfRun {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.usbWatchdogTask?.cancel()
+                self.usbWatchdogTask = nil
+                self.onUSBFrameAvailable?()
+            }
+        }
 
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else { return }
         let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
