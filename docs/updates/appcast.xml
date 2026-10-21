@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.3.8</title>
-      <pubDate>Wed, 21 Oct 2026 10:47:04 +0000</pubDate>
-      <sparkle:version>202610211835</sparkle:version>
-      <sparkle:shortVersionString>0.3.8</sparkle:shortVersionString>
+      <title>StupidMirror 0.3.9</title>
+      <pubDate>Wed, 21 Oct 2026 15:33:11 +0000</pubDate>
+      <sparkle:version>202610212322</sparkle:version>
+      <sparkle:shortVersionString>0.3.9</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>Fix USB iPhone mirroring freezing or dropping after brief USB re-enumerations or Configuration 6/7 switches (<code>CMIOGraphStart for setRunning (err=-67520)</code>). Stopping or retargeting a USB session now tears down the old <code>CMIOGraph</code>, replaces the <code>AVCaptureSession</code>, and resolves the newly published <code>AVCaptureDevice</code> instance even when its <code>uniqueID</code> is unchanged.</li><li>Observe <code>AVCaptureSession.runtimeErrorNotification</code> and add a USB first-frame watchdog so a wedged capture graph automatically tears down and recovers.</li><li>Avoid starting one-shot USB <code>ThumbnailCapture</code> sessions while device control, an <code>smtunnel</code> sidecar, iPhone setup, or the <code>--mcp-background</code> daemon is active, preventing <code>iOSScreenCaptureAssistant</code> idle timers from resetting the USB bus and dropping active tunnels.</li><li>Retry iOS control tunnel startup across transient USB re-enumeration windows and automatically resume desired control sessions when a device reconnects.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.3.8/StupidMirror-v0.3.8-macos.zip" type="application/octet-stream" sparkle:edSignature="RuIG8sr4o9xwuRCmNhKAtCgI1MEri6QGRSj+D+N7ffNuXssQz6OzXZNTENg+z7/6zSG32paTK84cxDsTFGApCA==" length="160625680" />
+      <description><![CDATA[<ul><li>Fix USB iPhone control dropping about 15 seconds after the mirror window is closed, and when a mirror is opened while control is already running. Starting or idling USB screen capture switches the iPhone between USB Configuration 7 and 6, which re-enumerates it and resets every usbmuxd connection, including the <code>smtunnel</code> control tunnel. While control is wanted for a cabled iPhone, StupidMirror now keeps its screen-capture stream running in the background (with audio returned to the phone speaker), so opening or closing the mirror never changes the USB configuration. The stream is released when control stops.</li><li>Wait for the held USB capture stream to deliver its first frame before opening the USB control tunnel, so the tunnel is built after the Configuration 7 switch instead of being torn down by it.</li><li>Gallery thumbnails and AI screen observations use frames from the held stream instead of falling back to a WebDriverAgent screenshot.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.3.9/StupidMirror-v0.3.9-macos.zip" type="application/octet-stream" sparkle:edSignature="HzW9pW4V5SfSF4et4AekPOK0nYZw8mLkqFx9bOLPurOYbGkgmTlBn1zTOs5qVXcieUyCw0dSSTQePW/tC066Cw==" length="160628119" />
     </item>
   </channel>
 </rss>
