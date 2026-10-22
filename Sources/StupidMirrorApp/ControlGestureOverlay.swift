@@ -9,7 +9,6 @@ struct ControlGestureHandlers {
     var onLongPress: (CGPoint, Int) -> Void = { _, _ in }
     var onSwipe: (CGPoint, CGPoint, Int) -> Void = { _, _, _ in }
     var onDrag: ([ControlPathSample]) -> Void = { _ in }
-    var onFlick: (ControlFlickDirection) -> Void = { _ in }
     var onPinch: (CGPoint, Double, Double) -> Void = { _, _, _ in }
     var onRotate: (CGPoint, Double, Double) -> Void = { _, _, _ in }
 }
@@ -106,12 +105,19 @@ final class ControlGestureNSView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard isEnabled else { return }
         let endLocation = convert(event.locationInWindow, from: nil)
+        var stroke = gestureReducer.currentPath
+        if stroke.last != endLocation { stroke.append(endLocation) }
         if let command = gestureReducer.endMouseDrag(
             at: endLocation,
             timestamp: event.timestamp,
             clickCount: event.clickCount
         ) {
             sendCommand(command)
+        }
+        // Gestures that begin outside the phone picture are not sent, so
+        // they get no acknowledgement either.
+        if let first = stroke.first, normalizedPoint(first) != nil {
+            showReleaseFeedback(stroke)
         }
         gestureStart = nil
         gestureCurrent = nil
@@ -132,25 +138,28 @@ final class ControlGestureNSView: NSView {
             return
         }
 
+        // The swipe sent when the fingers lift is replayed at their speed,
+        // so the phone coasts on its own. Replaying macOS's momentum as well
+        // would scroll twice, the second time late.
+        guard event.momentumPhase == [] else { return }
+
         let location = convert(event.locationInWindow, from: nil)
-        let began = event.phase == .began || event.momentumPhase == .began
+        let began = event.phase == .began
         if began || !gestureReducer.hasActiveScroll {
             gestureReducer.beginScroll(at: location)
         }
 
         if let command = gestureReducer.appendScroll(
             delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY),
-            precise: event.hasPreciseScrollingDeltas
+            precise: event.hasPreciseScrollingDeltas,
+            timestamp: event.timestamp
         ) {
             sendCommand(command)
         }
 
-        let hasExplicitPhase = event.phase != [] || event.momentumPhase != []
-        let ended = event.phase == .ended
-            || event.phase == .cancelled
-            || event.momentumPhase == .ended
-            || event.momentumPhase == .cancelled
-            || (!hasExplicitPhase && !event.hasPreciseScrollingDeltas)
+        // A mouse wheel has no phases; its notches are batched by the idle
+        // flush like trackpad samples, so a quick spin is one scroll.
+        let ended = event.phase == .ended || event.phase == .cancelled
 
         if ended {
             flushScroll(precise: event.hasPreciseScrollingDeltas)
@@ -243,6 +252,58 @@ final class ControlGestureNSView: NSView {
         marker.fill()
     }
 
+    // MARK: Release feedback
+
+    /// What the user just did, held on screen and faded out over the time
+    /// the phone typically needs to answer, so a release never looks ignored.
+    /// Core Animation runs the fade, so nothing outlives the view.
+    private static let releaseFeedbackDuration: CFTimeInterval = 0.45
+
+    private func showReleaseFeedback(_ stroke: [CGPoint]) {
+        guard let layer, let first = stroke.first, let last = stroke.last else { return }
+        let isTap = stroke.allSatisfy { hypot($0.x - first.x, $0.y - first.y) < gestureReducer.tapDistance }
+        let shape = CAShapeLayer()
+        shape.frame = bounds
+        shape.fillColor = nil
+        shape.strokeColor = NSColor.controlAccentColor.withAlphaComponent(0.6).cgColor
+        shape.lineCap = .round
+        shape.lineJoin = .round
+
+        let path = CGMutablePath()
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        var animations: [CAAnimation] = [fade]
+        if isTap {
+            // A ring growing out of the tap point. The layer is the ring's
+            // own square so it scales about the tap.
+            shape.frame = CGRect(x: last.x - 8, y: last.y - 8, width: 16, height: 16)
+            path.addEllipse(in: CGRect(x: 1, y: 1, width: 14, height: 14))
+            shape.lineWidth = 2
+            let grow = CABasicAnimation(keyPath: "transform.scale")
+            grow.fromValue = 1
+            grow.toValue = 2.6
+            animations.append(grow)
+        } else {
+            path.move(to: first)
+            for point in stroke.dropFirst() { path.addLine(to: point) }
+            shape.lineWidth = 3
+        }
+        shape.path = path
+        shape.opacity = 0
+
+        let group = CAAnimationGroup()
+        group.animations = animations
+        group.duration = Self.releaseFeedbackDuration
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { shape.removeFromSuperlayer() }
+        layer.addSublayer(shape)
+        shape.add(group, forKey: "release")
+        CATransaction.commit()
+    }
+
     // MARK: Scroll flushing
 
     private func scheduleScrollFlush(precise: Bool) {
@@ -251,7 +312,9 @@ final class ControlGestureNSView: NSView {
             self?.flushScroll(precise: precise)
         }
         scrollFlushWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.035, execute: workItem)
+        // Trackpad samples arrive every few milliseconds; wheel notches can
+        // be a tenth of a second apart and still be one spin.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (precise ? 0.035 : 0.09), execute: workItem)
     }
 
     private func flushScroll(precise: Bool) {
@@ -280,33 +343,56 @@ final class ControlGestureNSView: NSView {
             guard let normalized = normalizedPoint(point) else { return }
             handlers.onLongPress(normalized, durationMS)
         case let .swipe(start, end, durationMS):
-            guard let startPoint = normalizedPoint(start),
-                  let endPoint = normalizedPoint(end) else { return }
-            handlers.onSwipe(startPoint, endPoint, durationMS)
+            // A gesture must begin on the phone; where it ends may run past
+            // the picture's edge, as a finger runs off a real screen.
+            guard let startPoint = normalizedPoint(start) else { return }
+            handlers.onSwipe(startPoint, normalizedPoint(end, clamped: true) ?? startPoint, durationMS)
         case let .drag(path):
-            let normalizedPath = path.compactMap { sample -> ControlPathSample? in
-                guard let point = normalizedPoint(sample.point) else { return nil }
-                return ControlPathSample(point: point, timestamp: sample.timestamp)
-            }
+            guard let first = path.first, let startPoint = normalizedPoint(first.point) else { return }
+            let normalizedPath = [ControlPathSample(point: startPoint, timestamp: first.timestamp)]
+                + path.dropFirst().compactMap { sample -> ControlPathSample? in
+                    guard let point = normalizedPoint(sample.point, clamped: true) else { return nil }
+                    return ControlPathSample(point: point, timestamp: sample.timestamp)
+                }
             guard normalizedPath.count >= 2 else { return }
             handlers.onDrag(normalizedPath)
-        case let .flick(start, current, _):
+        case let .flick(start, current, durationMS):
             guard let startPoint = normalizedPoint(start),
-                  let currentPoint = normalizedPoint(current) else { return }
-            handlers.onFlick(Self.flickDirection(from: startPoint, toward: currentPoint))
+                  let currentPoint = normalizedPoint(current, clamped: true) else { return }
+            let fling = Self.fling(from: startPoint, toward: currentPoint, durationMS: durationMS)
+            handlers.onSwipe(fling.start, fling.end, fling.durationMS)
         }
     }
 
-    nonisolated static func flickDirection(from start: CGPoint, toward current: CGPoint) -> ControlFlickDirection {
-        let dx = current.x - start.x
-        let dy = current.y - start.y
-        if abs(dx) >= abs(dy) {
-            return dx < 0 ? .left : .right
+    /// How far a flick's stroke continues past the point where it was
+    /// recognised, as a multiple of the distance covered so far. The stroke
+    /// keeps its start and its speed, so the phone coasts as far as that
+    /// speed carries it instead of always turning a full page.
+    nonisolated static let flingExtension: CGFloat = 2.5
+
+    /// A flick in normalized coordinates: same start, same direction and
+    /// speed, the stroke extended and stopped at the screen edge.
+    nonisolated static func fling(
+        from start: CGPoint,
+        toward current: CGPoint,
+        durationMS: Int
+    ) -> (start: CGPoint, end: CGPoint, durationMS: Int) {
+        let dx = (current.x - start.x) * flingExtension
+        let dy = (current.y - start.y) * flingExtension
+        // The largest fraction of the extended stroke that stays on screen.
+        var fraction: CGFloat = 1
+        for (origin, delta) in [(start.x, dx), (start.y, dy)] where delta != 0 {
+            let limit = delta > 0 ? (1 - origin) / delta : -origin / delta
+            fraction = min(fraction, max(limit, 0))
         }
-        return dy < 0 ? .up : .down
+        let end = CGPoint(x: start.x + dx * fraction, y: start.y + dy * fraction)
+        let duration = Double(durationMS) * Double(flingExtension) * Double(fraction)
+        return (start, end, max(Int(duration.rounded()), 40))
     }
 
-    private func normalizedPoint(_ point: CGPoint) -> CGPoint? {
+    /// The point in 0...1 phone coordinates. Outside the picture it is nil,
+    /// or, when `clamped`, pinned to the nearest edge.
+    private func normalizedPoint(_ point: CGPoint, clamped: Bool = false) -> CGPoint? {
         let containerWidth = max(bounds.width, 1)
         let containerHeight = max(bounds.height, 1)
         let ratio = max(CGFloat(aspectRatio), 0.1)
@@ -324,10 +410,11 @@ final class ControlGestureNSView: NSView {
 
         let originX = (containerWidth - contentWidth) / 2
         let originY = (containerHeight - contentHeight) / 2
-        guard point.x >= originX,
-              point.x <= originX + contentWidth,
-              point.y >= originY,
-              point.y <= originY + contentHeight else {
+        guard clamped
+                || (point.x >= originX
+                    && point.x <= originX + contentWidth
+                    && point.y >= originY
+                    && point.y <= originY + contentHeight) else {
             return nil
         }
 

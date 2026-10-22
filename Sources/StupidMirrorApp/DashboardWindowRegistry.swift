@@ -37,11 +37,14 @@ final class DashboardWindowRegistry {
         )
         window.title = "StupidMirror"
         window.identifier = DockPresence.dashboardIdentifier
-        // Keep the toolbar on its own row. A unified toolbar lets the sidebar
-        // extend beneath it, which causes the first device row and the toolbar
-        // controls to overlap at narrower window sizes.
-        window.toolbarStyle = .expanded
-        window.titlebarSeparatorStyle = .automatic
+        // The dashboard draws its own top strip on the window ground: the
+        // title bar is transparent, the traffic lights sit on that strip and
+        // the SwiftUI root reserves `topBarHeight` for them.
+        window.styleMask.insert(.fullSizeContentView)
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
+        window.backgroundColor = Theme.groundNSColor
         window.isReleasedWhenClosed = false
         window.contentMinSize = windowSizes.minimum
         window.contentViewController = NSHostingController(rootView: rootView)
@@ -67,7 +70,11 @@ final class DashboardWindowRegistry {
 enum DashboardWindowLayout {
     static let preferredContentSize = NSSize(width: 1_100, height: 700)
     static let minimumContentSize = NSSize(width: 1_000, height: 640)
-    static let bottomBarHeight: CGFloat = 44
+    static let topBarHeight: CGFloat = 46
+    static let bottomBarHeight: CGFloat = 36
+    static let sidebarWidth: CGFloat = 264
+    /// The gap between panels and between a panel and the window edge.
+    static let gutter: CGFloat = 10
     private static let screenMargin: CGFloat = 48
 
     static func sizes(for visibleFrame: NSRect?) -> (initial: NSSize, minimum: NSSize) {

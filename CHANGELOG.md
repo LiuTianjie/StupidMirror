@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.0 - 2026-10-22
+
+- Redesign every window: the dashboard, device panel, settings, MCP, iPhone
+  setup, activation, diagnostics and the mirror window share one neutral
+  system of panels, wells, pill buttons and state marks, with colour kept for
+  state (live, working, failed, control). The dashboard's top strip replaces
+  the toolbar, and the selected device shows its mirror and control state as
+  two status lines above the screen.
+- Support light and dark appearance. The app follows the system by default;
+  Settings → Interface and the menu bar can pin Light or Dark. Every text
+  colour is tested for 4.5:1 contrast on every surface in both.
+- iPhone control: add a `/stupidmirror/touch` route to the bundled
+  WebDriverAgent that synthesizes taps, double taps, long presses, swipes and
+  drags directly through the test daemon, skipping WebDriverAgent's
+  per-call foreground-app lookup and coordinate resolution. Runners prepared
+  by an earlier version keep working through the stock endpoints; run
+  **Prepare Again** in iPhone Setup once over USB to install the route.
+- A quick flick now keeps its real start point, direction and speed instead of
+  always becoming the same full-screen page swipe.
+- The mouse wheel scrolls the phone (each notch was previously below the
+  minimum distance and dropped), and nearby notches are sent as one scroll.
+- Trackpad scrolls are sent once when the fingers lift; macOS momentum is no
+  longer replayed as a second, late scroll.
+- Rapid taps are all delivered in order instead of replacing each other while
+  the phone is busy, and scrolls queued behind a slow gesture add up instead
+  of keeping only the last chunk.
+- Swipes and drags that run past the edge of the picture are pinned to the
+  screen edge instead of being discarded.
+- After release, a tap ripple or the gesture's trail fades out on the mirror,
+  so a gesture is acknowledged before the phone answers.
+- Diagnostics shows each device's median and slowest gesture round-trip time
+  over the last 20 gestures.
+- Codex plugin: an annotation send waits up to ten minutes for a busy Codex to
+  accept it instead of the SDK's one-minute default, and an unbound widget
+  conversation explains how to reopen the panel.
+
 ## 0.3.9 - 2026-10-21
 
 - Fix USB iPhone control dropping about 15 seconds after the mirror window is

@@ -58,6 +58,6 @@ final class DashboardWindowLayoutTests: XCTestCase {
         )
 
         XCTAssertGreaterThan(sizes.minimum.height, DashboardWindowLayout.bottomBarHeight)
-        XCTAssertEqual(DashboardWindowLayout.bottomBarHeight, 44)
+        XCTAssertEqual(DashboardWindowLayout.bottomBarHeight, 36)
     }
 }

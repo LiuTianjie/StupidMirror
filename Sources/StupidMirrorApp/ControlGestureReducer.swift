@@ -37,24 +37,32 @@ struct ControlGestureReducer {
     var longPressThreshold: TimeInterval = 0.45
     var maximumLongPressMS = 1_500
     var dragDurationMS = 220
-    var earlySwipeDurationMS = 160
     var earlySwipeDistance: CGFloat = 28
     var earlySwipeSamplingWindow: TimeInterval = 0.14
     var maximumPathSamples = 24
     var scrollDurationMS = 180
+    var minimumScrollDurationMS = 40
+    /// In overlay points, after scaling.
     var scrollMinimumDistance: CGFloat = 14
     var preciseScrollScale: CGFloat = 3.2
-    var discreteScrollScale: CGFloat = 1.8
+    /// A mouse wheel reports lines, about one per notch; one notch moves the
+    /// phone by roughly a line of text.
+    var discreteScrollScale: CGFloat = 18
     var maxScrollDeltaX: CGFloat = 220
     var maxScrollDeltaY: CGFloat = 260
 
     private var mouseStartLocation: CGPoint?
     private var mouseDownTimestamp: TimeInterval?
     private var firstMouseMotionTimestamp: TimeInterval?
+    /// The last moment the pointer was still within tap distance of where it
+    /// went down: when the stroke itself began.
+    private var strokeStartTimestamp: TimeInterval?
     private var didCommitMouseSwipe = false
     private var pathSamples: [ControlPathSample] = []
     private var scrollLocation: CGPoint?
     private var accumulatedScroll = CGSize.zero
+    private var scrollStartTimestamp: TimeInterval?
+    private var lastScrollTimestamp: TimeInterval?
 
     var hasActiveScroll: Bool {
         scrollLocation != nil
@@ -72,6 +80,7 @@ struct ControlGestureReducer {
         mouseStartLocation = location
         mouseDownTimestamp = timestamp
         firstMouseMotionTimestamp = nil
+        strokeStartTimestamp = timestamp
         didCommitMouseSwipe = false
         pathSamples = [ControlPathSample(point: location, timestamp: timestamp)]
     }
@@ -83,8 +92,12 @@ struct ControlGestureReducer {
         guard let start = mouseStartLocation, !didCommitMouseSwipe else { return nil }
         pathSamples.append(ControlPathSample(point: location, timestamp: timestamp))
         let totalDistance = distance(from: start, to: location)
-        if firstMouseMotionTimestamp == nil, totalDistance >= tapDistance {
-            firstMouseMotionTimestamp = timestamp
+        if firstMouseMotionTimestamp == nil {
+            if totalDistance >= tapDistance {
+                firstMouseMotionTimestamp = timestamp
+            } else {
+                strokeStartTimestamp = timestamp
+            }
         }
         guard totalDistance >= earlySwipeDistance,
               let firstMouseMotionTimestamp,
@@ -92,10 +105,14 @@ struct ControlGestureReducer {
             return nil
         }
 
-        // A fast gesture is a flick/page swipe. Send it while the mouse is
-        // still down. Slow, precise drags keep their full path for mouse-up.
+        // A fast gesture is a flick. Send it while the mouse is still down,
+        // carrying how long the stroke so far took (a rest before it does
+        // not count), so the phone receives the user's own speed. Slow,
+        // precise drags keep their full path for mouse-up.
         didCommitMouseSwipe = true
-        return .flick(from: start, toward: location, durationMS: earlySwipeDurationMS)
+        let strokeStart = strokeStartTimestamp ?? mouseDownTimestamp ?? timestamp
+        let elapsedMS = Int(((timestamp - strokeStart) * 1_000).rounded())
+        return .flick(from: start, toward: location, durationMS: max(elapsedMS, 16))
     }
 
     mutating func endMouseDrag(
@@ -153,6 +170,7 @@ struct ControlGestureReducer {
         mouseStartLocation = nil
         mouseDownTimestamp = nil
         firstMouseMotionTimestamp = nil
+        strokeStartTimestamp = nil
         didCommitMouseSwipe = false
         pathSamples = []
     }
@@ -160,9 +178,17 @@ struct ControlGestureReducer {
     mutating func beginScroll(at location: CGPoint) {
         scrollLocation = location
         accumulatedScroll = .zero
+        scrollStartTimestamp = nil
+        lastScrollTimestamp = nil
     }
 
-    mutating func appendScroll(delta: CGSize, precise: Bool) -> ControlGestureCommand? {
+    mutating func appendScroll(
+        delta: CGSize,
+        precise: Bool,
+        timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> ControlGestureCommand? {
+        if scrollStartTimestamp == nil { scrollStartTimestamp = timestamp }
+        lastScrollTimestamp = timestamp
         accumulatedScroll.width += delta.width
         accumulatedScroll.height += delta.height
         // Trackpads also emit many samples. Coalesce the entire burst and send
@@ -176,7 +202,8 @@ struct ControlGestureReducer {
 
     private mutating func makeScrollCommand(precise: Bool, clearsScroll: Bool) -> ControlGestureCommand? {
         guard let center = scrollLocation else { return nil }
-        let distance = hypot(accumulatedScroll.width, accumulatedScroll.height)
+        let scale = precise ? preciseScrollScale : discreteScrollScale
+        let distance = hypot(accumulatedScroll.width, accumulatedScroll.height) * scale
         guard distance >= scrollMinimumDistance else {
             if clearsScroll {
                 scrollLocation = nil
@@ -185,11 +212,21 @@ struct ControlGestureReducer {
             return nil
         }
 
-        let scale = precise ? preciseScrollScale : discreteScrollScale
         let cappedDX = min(max(accumulatedScroll.width * scale, -maxScrollDeltaX), maxScrollDeltaX)
         let cappedDY = min(max(accumulatedScroll.height * scale, -maxScrollDeltaY), maxScrollDeltaY)
 
+        // A trackpad stroke is replayed at the speed the fingers moved, so a
+        // quick flick lifts fast and the phone coasts the way macOS momentum
+        // would have. A wheel has no stroke to time and keeps the default.
+        var durationMS = scrollDurationMS
+        if precise, let began = scrollStartTimestamp, let last = lastScrollTimestamp {
+            let strokeMS = Int(((last - began) * 1_000).rounded())
+            durationMS = min(max(strokeMS, minimumScrollDurationMS), scrollDurationMS)
+        }
+
         accumulatedScroll = .zero
+        scrollStartTimestamp = nil
+        lastScrollTimestamp = nil
         if clearsScroll {
             scrollLocation = nil
         }
@@ -197,7 +234,7 @@ struct ControlGestureReducer {
         return .swipe(
             from: center,
             to: CGPoint(x: center.x - cappedDX, y: center.y + cappedDY),
-            durationMS: scrollDurationMS
+            durationMS: durationMS
         )
     }
 
@@ -205,6 +242,8 @@ struct ControlGestureReducer {
         resetMouseDrag()
         scrollLocation = nil
         accumulatedScroll = .zero
+        scrollStartTimestamp = nil
+        lastScrollTimestamp = nil
     }
 
     private func distance(from start: CGPoint, to end: CGPoint) -> CGFloat {

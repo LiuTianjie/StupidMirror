@@ -33,7 +33,6 @@ struct StandaloneMirrorWindowView: View {
         }
         .background(windowShellColor.opacity(chromeVisible ? 1 : 0))
         .frame(minWidth: 180, minHeight: 180)
-        .preferredColorScheme(.dark)
         .animation(.easeInOut(duration: 0.16), value: statusTitle)
         .animation(.spring(response: 0.28, dampingFraction: 0.88), value: statusTitle)
         .contextMenu {
@@ -104,7 +103,7 @@ struct StandaloneMirrorWindowView: View {
     }
 
     private var windowShellColor: Color {
-        Color(red: 0.83, green: 0.93, blue: 0.91)
+        Theme.Surface.panel
     }
 
     private var resizeHandles: some View {
@@ -199,43 +198,47 @@ struct StandaloneMirrorWindowView: View {
 
     private var statusOverlay: some View {
         VStack(spacing: 12) {
-            ProgressOrIcon(state: mirrorSession.state)
-                .font(.system(size: 24, weight: .semibold))
+            if session.device.connectionState != .connected {
+                StatusGlyph(kind: .working, size: 34)
+            } else {
+                ProgressOrIcon(state: mirrorSession.state)
+            }
             Text(statusTitle)
-                .font(.headline)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.Ink.primary)
             if mirrorSession.state == .starting && session.isIOSWireless {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     VStack(spacing: 5) {
                         Text(mirrorSession.wirelessStartupDetail
                             ?? store.t("detail.wirelessStarting"))
+                            .foregroundStyle(Theme.Ink.secondary)
                         Text(String(
                             format: store.t("agent.start.elapsed"),
                             wirelessStartupElapsed(at: context.date)
                         ))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .font(Theme.mono(11.5))
+                        .foregroundStyle(Theme.Palette.pending)
                     }
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.72))
+                    .font(.system(size: 12))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
                 }
                 Button(store.t("agent.start.cancel")) {
                     store.stop(session)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
             }
             if session.device.connectionState != .connected {
                 Text(store.t("mirror.reconnectingBody"))
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
             }
             if case let .failed(message) = mirrorSession.state {
                 Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
                 if session.isIOSWireless
@@ -243,14 +246,12 @@ struct StandaloneMirrorWindowView: View {
                     Button(store.t("agent.start.retry")) {
                         store.start(session)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
                 }
             }
         }
-        .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black)
+        .background(Theme.Surface.well)
     }
 
     private var statusTitle: String {
@@ -436,7 +437,7 @@ private struct ChromeIconButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.primary.opacity(0.72))
+        .foregroundStyle(Theme.Ink.secondary)
         .background(.black.opacity(0.001))
         .help(help)
         .accessibilityLabel(help)
@@ -506,7 +507,7 @@ private final class DotControlView: NSView {
     }
 }
 
-private struct WindowDragArea: NSViewRepresentable {
+struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DragAreaView {
         DragAreaView()
     }
@@ -514,7 +515,7 @@ private struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ nsView: DragAreaView, context: Context) {}
 }
 
-private final class DragAreaView: NSView {
+final class DragAreaView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }

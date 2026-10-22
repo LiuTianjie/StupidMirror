@@ -13,6 +13,7 @@ final class WDAControlBackend: ControlBackend, @unchecked Sendable {
     private let sizeLock = NSLock()
     private var cachedScreenSize: DeviceScreenSize
     private let snapshotDepth: WDASnapshotDepth
+    private let fastTouch = WDAFastTouchAvailability()
 
     var screenSize: DeviceScreenSize {
         sizeLock.withLock { cachedScreenSize }
@@ -99,21 +100,47 @@ final class WDAControlBackend: ControlBackend, @unchecked Sendable {
     // MARK: Gestures
 
     func tap(_ point: CGPoint) async throws {
+        if try await fastTouch(WDAFastTouch.tap(point)) { return }
         _ = try await http.request("POST", sessionPath("/wda/tap"), payload: ["x": point.x.rounded(), "y": point.y.rounded()])
     }
 
     func doubleTap(_ point: CGPoint) async throws {
+        if try await fastTouch(WDAFastTouch.doubleTap(point)) { return }
         _ = try await http.request("POST", sessionPath("/wda/doubleTap"), payload: ["x": point.x.rounded(), "y": point.y.rounded()])
     }
 
     func longPress(_ point: CGPoint, durationSeconds: Double) async throws {
+        if try await fastTouch(WDAFastTouch.longPress(point, seconds: durationSeconds)) { return }
         _ = try await http.request("POST", sessionPath("/wda/touchAndHold"), payload: [
             "x": point.x.rounded(), "y": point.y.rounded(), "duration": durationSeconds
         ])
     }
 
     func drag(from start: CGPoint, to end: CGPoint, durationMS: Int) async throws {
+        if try await fastTouch(WDAFastTouch.line(from: start, to: end, durationMS: durationMS)) { return }
         _ = try await http.request("POST", sessionPath("/wda/pressAndDragWithVelocity"), payload: Self.dragPayload(from: start, to: end, durationMS: durationMS))
+    }
+
+    /// Sends one gesture through the runner's `/stupidmirror/touch` route,
+    /// which skips WDA's per-call foreground-app lookup. Returns false, once
+    /// and then for good, when the runner predates the route; the caller then
+    /// uses the stock endpoint. Re-preparing the iPhone installs the route.
+    private func fastTouch(_ fingers: [[WDAFastTouch.Sample]]) async throws -> Bool {
+        guard fastTouch.mayTry else { return false }
+        let size = screenSize
+        do {
+            _ = try await http.request(
+                "POST",
+                "/stupidmirror/touch",
+                payload: WDAFastTouch.payload(fingers, landscape: size.width > size.height),
+                timeout: 20
+            )
+            fastTouch.record(available: true)
+            return true
+        } catch let error as ControlBackendError where WDAFastTouch.isMissingRoute(error) {
+            fastTouch.record(available: false)
+            return false
+        }
     }
 
     /// A straight finger movement that covers the distance in `durationMS`
@@ -137,6 +164,7 @@ final class WDAControlBackend: ControlBackend, @unchecked Sendable {
             if let only = samples.first { try await tap(only.point) }
             return
         }
+        if try await fastTouch(WDAFastTouch.path(samples)) { return }
         _ = try await http.request("POST", sessionPath("/actions"), payload: W3CPointerAction.path(samples), timeout: 20)
     }
 
@@ -476,5 +504,71 @@ struct WDAHTTPClient: Sendable {
             return .sessionLost("WebDriverAgent session ended: \(message)")
         }
         return .rejected("WebDriverAgent HTTP \(status): \(message)")
+    }
+}
+
+/// Whether this runner has the fast touch route. Unknown until the first
+/// gesture; a 404 settles it for the session.
+final class WDAFastTouchAvailability: @unchecked Sendable {
+    private let lock = NSLock()
+    private var available: Bool?
+
+    var mayTry: Bool { lock.withLock { available != false } }
+
+    func record(available value: Bool) {
+        lock.withLock { available = value }
+    }
+}
+
+/// Gestures as finger paths for `/stupidmirror/touch`.
+enum WDAFastTouch {
+    struct Sample: Equatable {
+        var point: CGPoint
+        var seconds: Double
+    }
+
+    /// How long a tap's finger rests on the glass, as XCTest's own tap.
+    static let tapSeconds = 0.05
+    static let doubleTapGapSeconds = 0.08
+
+    static func tap(_ point: CGPoint, at offset: Double = 0) -> [[Sample]] {
+        [[Sample(point: point, seconds: offset), Sample(point: point, seconds: offset + tapSeconds)]]
+    }
+
+    static func doubleTap(_ point: CGPoint) -> [[Sample]] {
+        tap(point) + tap(point, at: tapSeconds + doubleTapGapSeconds)
+    }
+
+    static func longPress(_ point: CGPoint, seconds: Double) -> [[Sample]] {
+        [[Sample(point: point, seconds: 0), Sample(point: point, seconds: max(seconds, tapSeconds))]]
+    }
+
+    /// A straight move that lifts while still moving, like
+    /// `pressAndDragWithVelocity` with no hold, so scroll views coast.
+    static func line(from start: CGPoint, to end: CGPoint, durationMS: Int) -> [[Sample]] {
+        [[Sample(point: start, seconds: 0), Sample(point: end, seconds: Double(max(durationMS, 40)) / 1_000)]]
+    }
+
+    static func path(_ samples: [DevicePathSample]) -> [[Sample]] {
+        [samples.map { Sample(point: $0.point, seconds: Double($0.offsetMS) / 1_000) }]
+    }
+
+    /// Portrait is sent as such; for landscape the runner looks up which
+    /// side, because left and right mirror each other.
+    static func payload(_ fingers: [[Sample]], landscape: Bool) -> [String: Any] {
+        [
+            "orientation": landscape ? 0 : 1,
+            "fingers": fingers.map { finger in
+                finger.map { [Double($0.point.x.rounded()), Double($0.point.y.rounded()), $0.seconds] }
+            }
+        ]
+    }
+
+    /// WDA answers an unknown route with HTTP 404 "unknown command".
+    static func isMissingRoute(_ error: ControlBackendError) -> Bool {
+        guard case let .rejected(message) = error else { return false }
+        return message.hasPrefix("WebDriverAgent HTTP 404")
+            || message.localizedCaseInsensitiveContains("unhandled endpoint")
+            || message.localizedCaseInsensitiveContains("unknown command")
     }
 }

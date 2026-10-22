@@ -125,6 +125,12 @@ final class DeviceGalleryStore: ObservableObject {
     @Published private(set) var activeSheet: DashboardSheet?
     @Published private(set) var settingsTab: DashboardSettingsTab = .general
     @Published var selectedSessionID: String?
+    @Published var appearance: AppAppearance = .stored {
+        didSet {
+            UserDefaults.standard.set(appearance.rawValue, forKey: AppAppearance.defaultsKey)
+            appearance.apply()
+        }
+    }
     @Published var language: AppLanguage {
         didSet {
             UserDefaults.standard.set(language.rawValue, forKey: Self.languageDefaultsKey)
@@ -2223,11 +2229,6 @@ final class DeviceGalleryStore: ObservableObject {
         session.controlSession.enqueue(.swipe(from: start, to: end, durationMS: durationMS))
     }
 
-    func flickControl(for session: DeviceSession, direction: ControlFlickDirection) {
-        guard prepareQueuedControlAction(for: session) else { return }
-        session.controlSession.enqueue(.flick(direction))
-    }
-
     func dragControl(for session: DeviceSession, path: [ControlPathSample]) {
         guard prepareQueuedControlAction(for: session) else { return }
         session.controlSession.enqueue(.drag(path: path))
@@ -2270,9 +2271,6 @@ final class DeviceGalleryStore: ObservableObject {
             },
             onDrag: { [weak self] path in
                 self?.dragControl(for: session, path: path)
-            },
-            onFlick: { [weak self] direction in
-                self?.flickControl(for: session, direction: direction)
             },
             onPinch: { [weak self] center, scale, velocity in
                 self?.pinchControl(for: session, center: center, scale: scale, velocity: velocity)
