@@ -205,10 +205,16 @@ struct DeviceDetailView: View {
         }
     }
 
+    /// The state alone: the line already starts with "Mirror", so the
+    /// sidebar's "镜像中" would read "镜像 镜像中" here.
     private var mirrorStatusLabel: String {
-        isConnected
-            ? store.mirrorStateLabel(mirrorSession.state)
-            : store.connectionStateLabel(session.device.connectionState)
+        guard isConnected else { return store.connectionStateLabel(session.device.connectionState) }
+        return switch mirrorSession.state {
+        case .running: store.t("dashboard.mirror.running")
+        case .starting: store.t("mirror.state.starting")
+        case .stopped: store.t("mirror.state.stopped")
+        case .failed: store.t("mirror.state.failed")
+        }
     }
 
     private var mirrorDetail: String? {
@@ -257,8 +263,8 @@ struct DeviceDetailView: View {
             return localizedControlFailure(message)
         case .unavailable:
             return store.t("dashboard.control.notConnected")
-        default:
-            return store.controlStateLabel(controlSession.state)
+        case .ready:
+            return store.t("dashboard.control.ready")
         }
     }
 
@@ -283,7 +289,7 @@ struct DeviceDetailView: View {
         if message.hasPrefix("control.error.") {
             return store.t(message)
         }
-        return message.isEmpty ? store.t("control.state.failed") : message
+        return message.isEmpty ? store.t("mirror.state.failed") : message
     }
 
     private func compactControlStatus(_ message: String) -> String {

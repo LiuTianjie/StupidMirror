@@ -41,6 +41,8 @@ enum AppCopy {
     private static let en: [String: String] = [
         "dashboard.sidebar.connected": "%d connected",
         "dashboard.control.notConnected": "Not connected",
+        "dashboard.control.ready": "Ready",
+        "dashboard.mirror.running": "Live",
         "diagnostics.gestureLatency": "gesture p50 %d ms · max %d ms · n=%d",
         "diagnostics.gestureLatencyHelp": "Time from sending a gesture to the phone finishing it, over the last 20 gestures. It includes the gesture's own length.",
         "settings.interface": "Interface",
@@ -436,6 +438,8 @@ enum AppCopy {
     private static let zhHans: [String: String] = [
         "dashboard.sidebar.connected": "已连接 %d 台",
         "dashboard.control.notConnected": "未连接",
+        "dashboard.control.ready": "已就绪",
+        "dashboard.mirror.running": "进行中",
         "diagnostics.gestureLatency": "手势 中位 %d ms · 最慢 %d ms · %d 次",
         "diagnostics.gestureLatencyHelp": "从发出手势到手机执行完毕的时间，取最近 20 次，包含手势本身的时长。",
         "settings.interface": "界面",
