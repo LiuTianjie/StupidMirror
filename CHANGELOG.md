@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.5.0 - 2026-10-23
+
+- iOS Simulators: a booted simulator now appears as a device. StupidMirror
+  builds its screen agent for the simulator once (no signing, Xcode
+  required), mirrors it at up to 60 fps and controls it like an iPhone. All
+  of the simulator agent's ports listen on this Mac only.
+- Android emulators are recognised, listed under their AVD name and marked
+  Simulator instead of USB.
+- Simulators and emulators count toward the simultaneous device limit like
+  real devices. They are not mirrored automatically, so a simulator running
+  your own UI tests is left alone until you open it.
+- New MCP tools for agents:
+  - `list_apps`, `install_app` (.app / .ipa / .apk), `uninstall_app` and
+    `open_url` (web links and app deep links) on iPhones, iOS Simulators and
+    Android. They use the platform's own tools and need no control session,
+    except `open_url` on an iPhone.
+  - `start_recording` / `stop_recording` save the live mirror as an H.264
+    `.mp4` in `~/Movies/StupidMirror`, up to 10 minutes.
+- `list_devices` and the other device results include `transport`
+  (`usb`, `wireless` or `simulator`).
+- Fix control reconnecting by itself a few seconds after an agent called
+  `disconnect_control`.
+- Fix the iPhone screen agent spinning on its Wi-Fi video connection: it
+  read control messages into a buffer smaller than SRT accepts, so it
+  busy-looped and never received key-frame requests, which slowed recovery
+  from lost video packets. Run **Prepare Again** in iPhone Setup once over
+  USB to install the fixed agent.
+
 ## 0.4.1 - 2026-10-22
 
 - New app icon, and a matching template icon in the menu bar that follows

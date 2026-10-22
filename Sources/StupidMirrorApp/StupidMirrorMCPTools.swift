@@ -3,7 +3,7 @@ import MCP
 
 enum StupidMirrorMCPToolCatalog {
     static let tools: [Tool] = [
-        tool("list_devices", "List connected and reconnecting iOS and Android devices with mirror and control state.", readOnly: true),
+        tool("list_devices", "List connected and reconnecting iOS and Android devices, including booted iOS Simulators and Android emulators (transport \"simulator\"), with mirror and control state.", readOnly: true),
         tool("refresh_devices", "Refresh iOS and Android discovery and return the updated device list."),
         tool("get_device_status", "Get detailed state for one mobile device.", deviceProperties, readOnly: true),
         tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, control-agent, and device diagnostics.", readOnly: true),
@@ -254,6 +254,47 @@ enum StupidMirrorMCPToolCatalog {
             deviceProperties.merging(["bundle_id": string("iOS bundle identifier or Android package name.")]) { _, new in new },
             required: ["bundle_id"],
             destructive: true
+        ),
+        tool(
+            "list_apps",
+            "List apps installed on the device: bundle_id, and name and version where the platform reports them. Lists user-installed apps unless include_system is true. Needs no control session.",
+            deviceProperties.merging([
+                "include_system": boolean("Also list system and preinstalled apps.", defaultValue: false)
+            ]) { _, new in new },
+            readOnly: true
+        ),
+        tool(
+            "install_app",
+            "Install or update an app from a package on this Mac: a signed .app or .ipa for an iPhone, a simulator-built .app for an iOS Simulator, an .apk for Android. Android keeps the app's data across a reinstall. Needs no control session; can take a few minutes.",
+            deviceProperties.merging([
+                "path": string("Absolute path on this Mac to the .app, .ipa or .apk.")
+            ]) { _, new in new },
+            required: ["path"],
+            destructive: true
+        ),
+        tool(
+            "uninstall_app",
+            "Uninstall an app and its data by iOS bundle identifier or Android package name. Needs no control session.",
+            deviceProperties.merging(["bundle_id": string("iOS bundle identifier or Android package name.")]) { _, new in new },
+            required: ["bundle_id"],
+            destructive: true
+        ),
+        tool(
+            "open_url",
+            "Open a URL or app deep link (https://…, myapp://…) on the device with whichever app handles it. iPhones need connect_control first; simulators and Android do not.",
+            deviceProperties.merging(["url": string("Absolute URL with a scheme.")]) { _, new in new },
+            required: ["url"],
+            destructive: true
+        ),
+        tool(
+            "start_recording",
+            "Start recording the live mirror to an .mp4 on this Mac (~/Movies/StupidMirror). The mirror must be live (start_mirror). Records up to 10 minutes; call stop_recording to finish the file.",
+            deviceProperties
+        ),
+        tool(
+            "stop_recording",
+            "Stop a recording and return the .mp4 path, duration, frame count and size.",
+            deviceProperties
         )
     ]
 
@@ -665,6 +706,39 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     structuredContent: .object(["ok": true, "terminated": .bool(terminated)]),
                     isError: false
                 )
+            case "list_apps":
+                let apps = try await automation.listApps(
+                    deviceID: optionalString("device_id", args),
+                    includeSystem: optionalBool("include_system", args) ?? false
+                )
+                return try success(apps)
+            case "install_app":
+                try await automation.installApp(
+                    deviceID: optionalString("device_id", args),
+                    path: try requiredString("path", args)
+                )
+                return actionSuccess("install_app")
+            case "uninstall_app":
+                try await automation.uninstallApp(
+                    deviceID: optionalString("device_id", args),
+                    bundleID: try requiredString("bundle_id", args)
+                )
+                return actionSuccess("uninstall_app")
+            case "open_url":
+                try await automation.openURL(
+                    deviceID: optionalString("device_id", args),
+                    url: try requiredString("url", args)
+                )
+                return actionSuccess("open_url")
+            case "start_recording":
+                let path = try automation.startRecording(deviceID: optionalString("device_id", args))
+                return CallTool.Result(
+                    content: [.text("Recording to \(path). Call stop_recording to finish the file.")],
+                    structuredContent: .object(["ok": true, "path": .string(path)]),
+                    isError: false
+                )
+            case "stop_recording":
+                return try success(try await automation.stopRecording(deviceID: optionalString("device_id", args)))
             default:
                 throw DeviceAutomationError.invalidArgument("Unknown tool '\(name)'.")
             }

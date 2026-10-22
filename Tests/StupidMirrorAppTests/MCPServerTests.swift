@@ -53,7 +53,8 @@ final class MCPServerTests: XCTestCase {
             "tap_element", "highlight_elements", "highlight_clickable_elements", "clear_highlights",
             "wait_for", "assert_screen",
             "tap", "double_tap", "long_press", "swipe", "scroll", "type_text", "clear_text", "replace_text",
-            "press_button", "back", "app_switcher", "activate_app", "terminate_app"
+            "press_button", "back", "app_switcher", "activate_app", "terminate_app",
+            "list_apps", "install_app", "uninstall_app", "open_url", "start_recording", "stop_recording"
         ])
 
         XCTAssertEqual(Set(StupidMirrorMCPToolCatalog.tools.map(\.name)), expected)
@@ -67,7 +68,8 @@ final class MCPServerTests: XCTestCase {
         let destructive = Set([
             "screen_action",
             "tap_text", "tap_element", "tap", "double_tap", "long_press", "swipe", "scroll",
-            "type_text", "clear_text", "replace_text", "press_button", "back", "app_switcher", "activate_app", "terminate_app"
+            "type_text", "clear_text", "replace_text", "press_button", "back", "app_switcher", "activate_app", "terminate_app",
+            "install_app", "uninstall_app", "open_url"
         ])
         for tool in StupidMirrorMCPToolCatalog.tools {
             XCTAssertEqual(tool.annotations.destructiveHint, destructive.contains(tool.name), tool.name)

@@ -12,6 +12,7 @@ uiautomator2_driver_version="${APPIUM_UIAUTOMATOR2_DRIVER_VERSION:-8.2.2}"
 remote_xpc_version="${APPIUM_IOS_REMOTEXPC_VERSION:-5.13.2}"
 srt_version="1.5.4"
 srt_slice="${repo_root}/.build/artifacts/stupidmirror/libsrt/libsrt.xcframework/ios-arm64"
+srt_simulator_slice="${repo_root}/.build/artifacts/stupidmirror/libsrt/libsrt.xcframework/ios-arm64_x86_64-simulator"
 
 node_bin="${NODE_BINARY:-$(command -v node || true)}"
 npm_bin="${NPM_BINARY:-$(command -v npm || true)}"
@@ -37,18 +38,29 @@ srt=${srt_version}
 layout=12"
 
 install_srt_support() {
-  if [ ! -f "${srt_slice}/libsrt.a" ] || [ ! -d "${srt_slice}/Headers" ]; then
+  if [ ! -f "${srt_slice}/libsrt.a" ] || [ ! -d "${srt_slice}/Headers" ] \
+    || [ ! -f "${srt_simulator_slice}/libsrt.a" ]; then
     echo "Pinned libsrt ${srt_version} artifact is missing. Run swift package resolve first." >&2
     exit 1
   fi
   local destination="${cache_dir}/home/stupidmirror-srt"
   rm -rf "$destination"
-  mkdir -p "$destination"
+  mkdir -p "$destination/simulator"
   cp "${srt_slice}/libsrt.a" "$destination/libsrt.a"
+  # StupidMirror runs on Apple silicon only, so the simulator slice is thinned
+  # to arm64; a fat archive would otherwise be the one universal Mach-O file
+  # in the bundle that is not signed code.
+  lipo "${srt_simulator_slice}/libsrt.a" -thin arm64 -output "$destination/simulator/libsrt.a"
   cp -R "${srt_slice}/Headers" "$destination/Headers"
+  # The same runner is built for iPhones and for iOS Simulators; each SDK
+  # links its own slice. The search path goes through a per-SDK variable:
+  # `$(inherited)` in an SDK-conditional LIBRARY_SEARCH_PATHS still pulls in
+  # the device directory first, and the linker then takes the device slice.
   cat > "${destination}/StupidMirrorSRT.xcconfig" <<'XCCONFIG'
 HEADER_SEARCH_PATHS = $(inherited) "$(PROJECT_DIR)/../../../../stupidmirror-srt/Headers"
-LIBRARY_SEARCH_PATHS = $(inherited) "$(PROJECT_DIR)/../../../../stupidmirror-srt"
+STUPIDMIRROR_SRT_LIBRARY_DIR = $(PROJECT_DIR)/../../../../stupidmirror-srt
+STUPIDMIRROR_SRT_LIBRARY_DIR[sdk=iphonesimulator*] = $(PROJECT_DIR)/../../../../stupidmirror-srt/simulator
+LIBRARY_SEARCH_PATHS = $(inherited) "$(STUPIDMIRROR_SRT_LIBRARY_DIR)"
 OTHER_LDFLAGS = $(inherited) -lsrt -lc++ -framework Security
 XCCONFIG
 }

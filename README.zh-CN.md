@@ -52,7 +52,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 ## 核心能力
 
 - **原生设备工作台。** 使用 SwiftUI 与 AppKit 构建，提供菜单栏入口、设备面板、实时缩略图与独立镜像窗口。
-- **三条画面接入路径。** USB iPhone 使用 AVFoundation；无线 iPhone 通过局域网传输 H.264；Android 使用固定版本的 scrcpy server 传输画面与声音。
+- **真机与模拟器。** USB iPhone 使用 AVFoundation；无线 iPhone 通过局域网传输 H.264；Android 使用固定版本的 scrcpy server 传输画面与声音；本机启动的 iOS 模拟器和 Android 模拟器同样可用。
 - **按需连接真机控制。** iPhone 直接连接 WDA，Android 通过 Appium / UiAutomator2，实现点击、滑动、输入、按键和 App 启停。打开 USB 或 Android 镜像不会自动建立控制会话。
 - **Agent 可以观察操作对象。** 实时帧、Apple Vision OCR、按需无障碍树、语义定位、等待与断言都围绕同一台真机工作。
 - **自动化过程可见。** Agent 的点击、滑动路径和目标高亮显示在 Mac 镜像上，不改变手机画面，也不写入编码后的视频。
@@ -67,6 +67,10 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 | **iPhone · USB** | 信任当前 Mac；按提示授予相机权限 | AVFoundation 捕获；可选将设备声音播放到 Mac |
 | **iPhone · Wi-Fi** | 通过 USB 完成一次“设置这台 iPhone”（会在手机上开启 Wi‑Fi 连接）；两端保持同一局域网 | H.264 / SRT 经 CoreDevice 隧道传输，VideoToolbox 解码；暂不支持无线音频 |
 | **Android · ADB** | Android 11+；Mac 安装 Android SDK Platform-Tools；开启 USB 调试并授权当前 Mac | scrcpy 提供 H.264 画面与可选设备音频 |
+| **iOS 模拟器** | 安装 Xcode；启动模拟器 | 首次为模拟器构建屏幕代理（无需签名）并传输画面；所有端口只监听本机 |
+| **Android 模拟器** | 同 Android · ADB；启动模拟器 | 同 Android · ADB；按 AVD 名称显示 |
+
+模拟器启动后会自动出现在设备列表中，与真机一样计入同时使用的设备数。模拟器不会被自动镜像，正在跑 UI 测试的模拟器在你主动打开之前不受影响。
 
 **需要 macOS 15 或更高版本。** 兼容性受系统版本、信任状态和自动化运行时影响，项目仍处于实验阶段。
 
@@ -149,6 +153,8 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 | 操作 | `tap_text`、`tap_element`、`replace_text`、`swipe` | 操作已观察到的目标，或执行明确的手势 |
 | 验证 | `wait_for`、`assert_screen`、`observe_screen` | 检查操作后的状态 |
 | 引导 | `highlight_clickable_elements`、`highlight_elements`、`clear_highlights` | 只在 Mac 镜像上标记目标，不发送输入 |
+| 应用 | `list_apps`、`install_app`、`uninstall_app`、`open_url`、`activate_app`、`terminate_app` | 安装构建产物（.app/.ipa/.apk）、打开深链接、启动或结束 App |
+| 录屏 | `start_recording`、`stop_recording` | 把实时镜像保存为 `~/Movies/StupidMirror` 下的 .mp4（最长 10 分钟） |
 
 <details>
 <summary>面向 Agent 开发者的定位与文本输入细节</summary>

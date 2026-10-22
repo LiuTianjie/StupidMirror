@@ -52,7 +52,7 @@ The app installs its bundled plugin through the Codex desktop app's CLI; no repo
 ## What makes it useful
 
 - **A native place for your devices.** Menu bar access, a device dashboard, live thumbnails, and independent mirror windows built with SwiftUI and AppKit.
-- **Three capture paths.** USB iPhone capture through AVFoundation, wireless iPhone H.264 over the local network, and Android H.264/audio through a pinned scrcpy server.
+- **Real devices and simulators.** USB iPhone capture through AVFoundation, wireless iPhone H.264 over the local network, Android H.264/audio through a pinned scrcpy server, and booted iOS Simulators and Android emulators on this Mac.
 - **Control when you ask for it.** Tap, swipe, type, press device buttons, switch apps, and launch or terminate apps through native WebDriverAgent on iOS or Appium on Android. Opening a USB or Android mirror does not start a control session.
 - **An agent can see what it is doing.** Live frames, Apple Vision OCR, optional accessibility trees, semantic targeting, waits, and assertions share the same device workspace.
 - **Automation stays visible.** Agent taps, swipe paths, and selected targets appear on the Mac mirror. These overlays do not alter the phone screen or encoded video.
@@ -67,6 +67,10 @@ Download the macOS app from [GitHub Releases](https://github.com/LiuTianjie/Stup
 | **iPhone · USB** | Trust this Mac; allow Camera access when requested | AVFoundation capture; optional device audio on the Mac |
 | **iPhone · Wi-Fi** | Complete **Set Up This iPhone** once over USB (it turns on the phone's Wi-Fi connections); keep both devices on the same LAN | H.264 over SRT through a CoreDevice tunnel, VideoToolbox decoding; wireless audio is not available |
 | **Android · ADB** | Android 11+; install Android SDK Platform-Tools on the Mac; enable USB debugging and approve the Mac's key | H.264 video and optional device audio from scrcpy |
+| **iOS Simulator** | Xcode; boot the simulator | The screen agent is built once for the simulator (no signing) and streams its screen; all of its ports listen on this Mac only |
+| **Android emulator** | Same as Android · ADB; start the emulator | Same as Android · ADB; listed by its AVD name |
+
+Simulators and emulators appear automatically while they are booted and count toward the simultaneous device limit like real devices. They are not mirrored automatically, so a simulator you are running UI tests on is left alone until you open it.
 
 **macOS 15+ is required.** Device compatibility can depend on OS versions, trust state, and the available automation runtime. The project remains experimental.
 
@@ -149,6 +153,8 @@ Try an instruction such as:
 | Act | `tap_text`, `tap_element`, `replace_text`, `swipe` | Target observed content or an explicit gesture |
 | Verify | `wait_for`, `assert_screen`, `observe_screen` | Check the resulting state |
 | Guide | `highlight_clickable_elements`, `highlight_elements`, `clear_highlights` | Draw targets on the Mac mirror without sending input |
+| Apps | `list_apps`, `install_app`, `uninstall_app`, `open_url`, `activate_app`, `terminate_app` | Install a build (.app/.ipa/.apk), open a deep link, launch or stop an app |
+| Record | `start_recording`, `stop_recording` | Save the live mirror as an .mp4 in `~/Movies/StupidMirror` (up to 10 minutes) |
 
 <details>
 <summary>Targeting and text-input details for agent authors</summary>

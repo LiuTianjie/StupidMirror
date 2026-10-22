@@ -71,6 +71,7 @@ protocol ControlBackend: AnyObject, Sendable {
     func click(semantic element: ScreenElement) async throws -> Bool
     func activateApp(_ identifier: String) async throws
     func terminateApp(_ identifier: String) async throws -> Bool
+    func openURL(_ url: String) async throws
     /// A cheap request that proves the session is alive; refreshes `screenSize`.
     func ping() async throws -> DeviceScreenSize
     func close() async
@@ -89,6 +90,10 @@ extension ControlBackend {
 
     func rotate(at center: CGPoint, degrees: Double, velocity: Double) async throws {
         throw ControlBackendError.rejected("Rotation gestures are not supported on this device.")
+    }
+
+    func openURL(_ url: String) async throws {
+        throw ControlBackendError.rejected("Opening URLs is not supported on this device.")
     }
 }
 

@@ -61,6 +61,8 @@ struct AutomationDeviceSnapshot: Codable, Equatable, Sendable {
     let deviceID: String
     let udid: String?
     let platform: String
+    /// `usb`, `wireless` or `simulator` (an iOS Simulator or Android emulator).
+    let transport: String
     let name: String
     let productType: String
     let osVersion: String?
@@ -73,7 +75,7 @@ struct AutomationDeviceSnapshot: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case deviceID = "device_id"
-        case udid, platform, name
+        case udid, platform, transport, name
         case productType = "product_type"
         case osVersion = "os_version"
         case connectionState = "connection_state"
@@ -190,6 +192,14 @@ final class DeviceAutomationService: @unchecked Sendable {
     private var latestNativeElementReferences: [String: NativeElementReferenceCache] = [:]
     private let previewInstanceID = UUID().uuidString
     private var pausedPreviewIDs = Set<String>()
+    private var recorders: [ObjectIdentifier: ActiveRecording] = [:]
+
+    /// Keyed by the mirror session it reads, which outlives a change of the
+    /// device's id (a USB iPhone is re-keyed from capture id to UDID).
+    private struct ActiveRecording {
+        let recorder: MirrorRecorder
+        var deviceIDs: Set<String>
+    }
     private let previewMedia = CodexPreviewMediaService()
 
     init(store: DeviceGalleryStore) {
@@ -929,6 +939,7 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     func disconnectControl(deviceID: String?) async throws -> AutomationDeviceSnapshot {
         let session = try selectSession(deviceID: deviceID)
+        store.forgetControlIntent(for: session)
         try await withDeviceLock(session.id) {
             await session.controlSession.shutdown()
         }
@@ -1178,6 +1189,168 @@ final class DeviceAutomationService: @unchecked Sendable {
         }
     }
 
+    // MARK: Recording
+
+    func startRecording(deviceID: String?) throws -> String {
+        let session = try selectSession(deviceID: deviceID)
+        let key = ObjectIdentifier(session.mirrorSession)
+        guard recorders[key] == nil else {
+            throw DeviceAutomationError.invalidArgument("This device is already recording. Call stop_recording first.")
+        }
+        guard session.mirrorSession.state == .running else {
+            throw DeviceAutomationError.mirrorFailed("The mirror is not live. Call start_mirror first.")
+        }
+        let url = Self.recordingURL(
+            deviceName: session.device.name,
+            date: Date(),
+            taken: Set(recorders.values.map(\.recorder.outputURL))
+        )
+        let recorder = MirrorRecorder(store: session.mirrorSession.latestFrameStore, outputURL: url)
+        recorder.start()
+        recorders[key] = ActiveRecording(
+            recorder: recorder,
+            deviceIDs: Set([session.id, session.device.udid].compactMap { $0 })
+        )
+        session.mirrorSession.showAutomationNotice("AI · Recording")
+        return url.path
+    }
+
+    func stopRecording(deviceID: String?) async throws -> MirrorRecordingResult {
+        let requested = deviceID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let key: ObjectIdentifier?
+        if !requested.isEmpty {
+            if let session = store.sessions.first(where: { $0.id == requested || $0.device.udid == requested }) {
+                key = ObjectIdentifier(session.mirrorSession)
+            } else {
+                // A device that has since gone away can still finish its file.
+                key = recorders.first { $0.value.deviceIDs.contains(requested) }?.key
+            }
+        } else if recorders.count == 1 {
+            key = recorders.keys.first
+        } else {
+            key = ObjectIdentifier(try selectSession(deviceID: nil).mirrorSession)
+        }
+        guard let key, let recording = recorders.removeValue(forKey: key) else {
+            throw DeviceAutomationError.invalidArgument("This device is not recording. Call start_recording first.")
+        }
+        do {
+            return try await recording.recorder.stop()
+        } catch {
+            throw DeviceAutomationError.mirrorFailed(error.localizedDescription)
+        }
+    }
+
+    /// Finishes every open recording, so quitting never leaves a broken file.
+    func finishAllRecordings() async {
+        let open = recorders
+        recorders.removeAll()
+        for recording in open.values {
+            _ = try? await recording.recorder.stop()
+        }
+    }
+
+    /// `~/Movies/StupidMirror/<device> <date>.mp4`, with a number added when
+    /// that name is already on disk or held by a recording in progress, so a
+    /// new recording never replaces an earlier one.
+    nonisolated static func recordingURL(deviceName: String, date: Date, taken: Set<URL> = []) -> URL {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let unsafe = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.newlines).union(.controlCharacters)
+        let name = deviceName.components(separatedBy: unsafe).joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Movies/StupidMirror", isDirectory: true)
+        let stem = "\(name.isEmpty ? "Device" : name) \(formatter.string(from: date))"
+        var candidate = base.appendingPathComponent("\(stem).mp4")
+        var number = 2
+        while taken.contains(candidate) || FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = base.appendingPathComponent("\(stem) \(number).mp4")
+            number += 1
+        }
+        return candidate
+    }
+
+    // MARK: App management
+
+    func installApp(deviceID: String?, path: String) async throws {
+        let session = try appManagementSession(deviceID: deviceID)
+        let target = try Self.appTarget(for: session)
+        session.mirrorSession.showAutomationNotice("AI · Install App")
+        try await withDeviceLock(session.id) {
+            try await Self.runAppCommand { try DeviceAppManager.install(packageAt: path, on: target) }
+        }
+    }
+
+    func uninstallApp(deviceID: String?, bundleID: String) async throws {
+        try Self.validateBundleID(bundleID)
+        let session = try appManagementSession(deviceID: deviceID)
+        let target = try Self.appTarget(for: session)
+        session.mirrorSession.showAutomationNotice("AI · Uninstall App")
+        try await withDeviceLock(session.id) {
+            try await Self.runAppCommand { try DeviceAppManager.uninstall(bundleID, on: target) }
+        }
+    }
+
+    func listApps(deviceID: String?, includeSystem: Bool) async throws -> [InstalledApp] {
+        let session = try appManagementSession(deviceID: deviceID)
+        let target = try Self.appTarget(for: session)
+        return try await Self.runAppCommand {
+            try DeviceAppManager.listApps(on: target, includeSystem: includeSystem)
+        }
+    }
+
+    func openURL(deviceID: String?, url rawURL: String) async throws {
+        let url = try DeviceAppManager.validateURL(rawURL)
+        let session = try appManagementSession(deviceID: deviceID)
+        let target = try Self.appTarget(for: session)
+        session.mirrorSession.showAutomationNotice("AI · Open URL")
+        await Task.yield()
+        try await withDeviceLock(session.id) {
+            if case .iPhone = target {
+                guard session.controlSession.isReady else { throw DeviceAutomationError.controlNotReady }
+                try await session.controlSession.openURL(url)
+            } else {
+                try await Self.runAppCommand { try DeviceAppManager.openURL(url, on: target) }
+            }
+        }
+    }
+
+    /// App management changes what is on the device, so it is gated like
+    /// control, but it runs through host tools and needs no control session.
+    private func appManagementSession(deviceID: String?) throws -> DeviceSession {
+        let session = try selectSession(deviceID: deviceID)
+        guard store.canStartControl(for: session) else { throw DeviceAutomationError.activationRequired }
+        return session
+    }
+
+    nonisolated static func appTarget(for session: DeviceSession) throws -> DeviceAppManager.Target {
+        if let android = session.androidDevice {
+            return .android(serial: android.serial)
+        }
+        guard let udid = session.device.udid, !udid.isEmpty else {
+            throw DeviceAutomationError.deviceUnavailable
+        }
+        return session.transport == .simulator ? .iOSSimulator(udid: udid) : .iPhone(udid: udid)
+    }
+
+    /// Host tools block while they run; keep them off the main actor and off
+    /// the cooperative thread pool.
+    nonisolated private static func runAppCommand<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        do {
+            return try await withCheckedThrowingContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    continuation.resume(with: Result { try work() })
+                }
+            }
+        } catch let failure as DeviceAppManager.Failure {
+            if case let .timedOut(message) = failure { throw DeviceAutomationError.timedOut(message) }
+            throw DeviceAutomationError.controlFailed(failure.localizedDescription)
+        }
+    }
+
     private func cacheFastAccessibilityObservation(
         session: DeviceSession,
         nativeMatches: [NativeElementMatch]
@@ -1218,9 +1391,11 @@ final class DeviceAutomationService: @unchecked Sendable {
     nonisolated static func validateBundleID(_ bundleID: String) throws {
         let value = bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
-        guard value.count >= 3,
+        guard value == bundleID,
+              value.count >= 3,
               value.count <= 255,
               value.contains("."),
+              !value.hasPrefix("-"), !value.hasPrefix("."),
               value.unicodeScalars.allSatisfy(allowed.contains) else {
             throw DeviceAutomationError.invalidArgument("bundle_id is invalid.")
         }
@@ -1358,6 +1533,7 @@ final class DeviceAutomationService: @unchecked Sendable {
             deviceID: session.id,
             udid: session.device.udid,
             platform: session.platform.rawValue,
+            transport: session.transport.rawValue,
             name: session.device.name,
             productType: session.device.productType,
             osVersion: session.device.osVersion,

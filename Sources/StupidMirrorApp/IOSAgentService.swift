@@ -647,7 +647,7 @@ final class IOSAgentService: @unchecked Sendable {
         ]
     }
 
-    private static func webDriverAgentProjectURL() -> URL? {
+    static func webDriverAgentProjectURL() -> URL? {
         let relativePath = "home/node_modules/appium-xcuitest-driver/node_modules/appium-webdriveragent/WebDriverAgent.xcodeproj"
         var candidates: [URL] = []
         if let resources = Bundle.main.resourceURL {
@@ -667,7 +667,7 @@ final class IOSAgentService: @unchecked Sendable {
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    private static func srtXcodeConfigURL(for project: URL) -> URL? {
+    static func srtXcodeConfigURL(for project: URL) -> URL? {
         let config = project.deletingLastPathComponent()
             .appendingPathComponent("../../../../stupidmirror-srt", isDirectory: true)
             .appendingPathComponent("StupidMirrorSRT.xcconfig")

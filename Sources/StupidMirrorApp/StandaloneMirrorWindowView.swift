@@ -206,7 +206,7 @@ struct StandaloneMirrorWindowView: View {
             Text(statusTitle)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Theme.Ink.primary)
-            if mirrorSession.state == .starting && session.isIOSWireless {
+            if mirrorSession.state == .starting && session.showsMirrorStartupProgress {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     VStack(spacing: 5) {
                         Text(mirrorSession.wirelessStartupDetail
@@ -241,7 +241,7 @@ struct StandaloneMirrorWindowView: View {
                     .foregroundStyle(Theme.Ink.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
-                if session.isIOSWireless
+                if session.showsMirrorStartupProgress
                     && store.canAttemptConnection(session) {
                     Button(store.t("agent.start.retry")) {
                         store.start(session)

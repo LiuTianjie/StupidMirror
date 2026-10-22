@@ -30,6 +30,16 @@ final class AndroidSupportTests: XCTestCase {
         XCTAssertEqual(properties["ro.product.model"], "SM-S9310")
     }
 
+    func testEmulatorIsRecognizedAndNamedByItsAVD() {
+        XCTAssertTrue(AndroidADBService.isEmulator(serial: "emulator-5554", properties: [:]))
+        XCTAssertTrue(AndroidADBService.isEmulator(serial: "127.0.0.1:5555", properties: ["ro.boot.qemu": "1"]))
+        XCTAssertFalse(AndroidADBService.isEmulator(serial: "RFCY10DHQ3P", properties: ["ro.boot.qemu": "0"]))
+
+        XCTAssertEqual(AndroidADBService.parseEmulatorAVDName("Pixel_9a\r\nOK\r\n"), "Pixel 9a")
+        XCTAssertNil(AndroidADBService.parseEmulatorAVDName("KO: unknown command\r\n"))
+        XCTAssertNil(AndroidADBService.displayAVDName("  "))
+    }
+
     func testAndroidCapabilitiesUseUiAutomator2AndUniquePorts() {
         let base = AppiumControlConfiguration(platform: .android, platformVersion: "16")
         let first = base.isolated(forDeviceUDID: "android-one")

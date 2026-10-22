@@ -46,6 +46,8 @@ enum DevicePlatform: String, Codable, CaseIterable, Sendable {
 enum DeviceTransport: String, Codable, Sendable {
     case usb
     case wireless
+    /// An iOS Simulator or Android emulator running on this Mac.
+    case simulator
 }
 
 struct DeviceIdentity: Identifiable, Hashable, Sendable {
@@ -165,6 +167,8 @@ struct DeviceSession: Identifiable {
             return "usb:\(captureDevice?.uniqueID ?? id)"
         case .wireless:
             return "wireless:\(wirelessDevice?.udid ?? id)"
+        case .simulator:
+            return "simulator:\(id)"
         }
     }
 
@@ -172,6 +176,12 @@ struct DeviceSession: Identifiable {
 
     var isIOSWireless: Bool {
         platform == .iOS && transport == .wireless
+    }
+
+    /// Only a cabled iPhone is mirrored through AVFoundation, the capture
+    /// source macOS guards with the Camera permission.
+    var needsCameraPermission: Bool {
+        platform == .iOS && transport == .usb
     }
 
     @MainActor
@@ -217,6 +227,33 @@ struct DeviceSession: Identifiable {
         self.controlSession = DeviceControlSession(device: device)
         self.iosAgent = nil
         self.mirrorState = .stopped
+    }
+
+    /// An iOS Simulator. Its screen and control both come from the runner
+    /// `SimulatorAgentService` starts inside it, not from an `IOSAgentService`.
+    @MainActor
+    init(device: DeviceIdentity, simulator: SimulatorDevice) {
+        self.id = device.id
+        self.device = device
+        self.transport = .simulator
+        self.captureDevice = nil
+        self.lastUSBCaptureUniqueID = nil
+        self.wirelessDevice = nil
+        self.androidDevice = nil
+        self.mirrorSession = MirrorCaptureSession(simulatorUDID: simulator.udid)
+        self.controlSession = DeviceControlSession(device: device)
+        self.iosAgent = nil
+        self.mirrorState = .stopped
+    }
+
+    var isIOSSimulator: Bool {
+        platform == .iOS && transport == .simulator
+    }
+
+    /// Mirrors whose start can take long enough (a tunnel, a first runner
+    /// build) to show its progress, elapsed time and a cancel button.
+    var showsMirrorStartupProgress: Bool {
+        isIOSWireless || isIOSSimulator
     }
 
     nonisolated static func needsUSBRetarget(

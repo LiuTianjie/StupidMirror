@@ -383,6 +383,10 @@ final class WDAControlBackend: ControlBackend, @unchecked Sendable {
         return response["value"] as? Bool ?? true
     }
 
+    func openURL(_ url: String) async throws {
+        _ = try await http.request("POST", sessionPath("/url"), payload: ["url": url])
+    }
+
     // MARK: Lifecycle
 
     func ping() async throws -> DeviceScreenSize {
