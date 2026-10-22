@@ -120,6 +120,16 @@ enum ControlAction: Equatable {
         return false
     }
 
+    /// One-finger touches made on the mirror; their round trip is what the
+    /// diagnostics report as gesture latency. Typing, buttons and two-finger
+    /// gestures take longer by nature and would skew it.
+    var isPointerGesture: Bool {
+        switch self {
+        case .tap, .doubleTap, .longPress, .swipe, .drag, .flick: true
+        default: false
+        }
+    }
+
     /// Pointer gestures that may be dropped when the device lags: replaying a
     /// stale tap or scroll seconds late is worse than skipping it. Text, key
     /// presses, long presses and multi-touch gestures are always delivered.
@@ -131,8 +141,9 @@ enum ControlAction: Equatable {
     }
 }
 
-/// Keeps interactive input bounded when the device lags: consecutive swipes
-/// collapse to the newest, consecutive taps to the last one, and once the
+/// Keeps interactive input bounded when the device lags: chunks of one
+/// continuing scroll add up into one swipe, any other swipe, flick or drag
+/// replaces the gesture before it, every tap is kept in order, and once the
 /// queue is full the oldest droppable gesture goes first.
 struct ControlActionBuffer {
     private(set) var actions: [ControlAction] = []
@@ -151,9 +162,11 @@ struct ControlActionBuffer {
             // is still waiting, the pair becomes one double tap rather than
             // three taps on the device.
             actions[actions.count - 1] = action
+        } else if let combined = Self.continuingScroll(actions.last, action) {
+            // Chunks of one scroll the device has not reached yet: keep the
+            // whole distance the user scrolled, not just the last chunk.
+            actions[actions.count - 1] = combined
         } else if action.isSwipe, actions.last?.isSwipe == true {
-            actions[actions.count - 1] = action
-        } else if action.isTap, actions.last?.isTap == true {
             actions[actions.count - 1] = action
         } else {
             actions.append(action)
@@ -170,6 +183,31 @@ struct ControlActionBuffer {
     }
 
     static let hardLimit = 32
+
+    /// How far apart, in normalized coordinates, two scroll chunks may start
+    /// and still be one scroll under a resting pointer.
+    static let scrollContinuationSlop: CGFloat = 0.02
+
+    /// The two swipes as one, when the second continues the first: it starts
+    /// where the first started and moves the same way. Anything else (a
+    /// reversed scroll, a flick elsewhere) is a separate gesture; adding
+    /// those up could cancel to a motionless touch, which the phone reads as
+    /// a tap.
+    static func continuingScroll(_ previous: ControlAction?, _ next: ControlAction) -> ControlAction? {
+        guard case let .swipe(from, to, duration)? = previous,
+              case let .swipe(nextStart, nextEnd, nextDuration) = next,
+              hypot(nextStart.x - from.x, nextStart.y - from.y) <= scrollContinuationSlop else {
+            return nil
+        }
+        let first = CGVector(dx: to.x - from.x, dy: to.y - from.y)
+        let second = CGVector(dx: nextEnd.x - nextStart.x, dy: nextEnd.y - nextStart.y)
+        guard first.dx * second.dx + first.dy * second.dy > 0 else { return nil }
+        let end = CGPoint(
+            x: min(max(to.x + second.dx, 0), 1),
+            y: min(max(to.y + second.dy, 0), 1)
+        )
+        return .swipe(from: from, to: end, durationMS: min(duration + nextDuration, 700))
+    }
 
     mutating func popFirst() -> ControlAction? {
         guard !actions.isEmpty else { return nil }
@@ -243,6 +281,9 @@ final class DeviceControlSession: ObservableObject {
     @Published private(set) var statusMessage = "Control not connected"
     @Published private(set) var connectionPhase: ControlConnectionPhase?
     @Published private(set) var connectionStartedAt: Date?
+    /// How long the device took to perform recent interactive gestures, from
+    /// send to answer, newest last.
+    @Published private(set) var recentGestureMS: [Int] = []
 
     private(set) var device: DeviceIdentity
     private var backend: (any ControlBackend)?
@@ -435,8 +476,13 @@ final class DeviceControlSession: ObservableObject {
                     self.lastSentTap = (point, Date())
                 }
                 do {
+                    let clock = ContinuousClock()
+                    let sentAt = clock.now
                     try await Self.perform(action, on: backend)
                     guard self.generation == attempt else { return }
+                    if action.isPointerGesture {
+                        self.recordGestureLatency(sentAt.duration(to: clock.now))
+                    }
                     self.statusMessage = Self.statusText(for: action)
                 } catch {
                     guard self.generation == attempt else { return }
@@ -445,6 +491,22 @@ final class DeviceControlSession: ObservableObject {
                 }
             }
         }
+    }
+
+    private func recordGestureLatency(_ duration: Duration) {
+        let components = duration.components
+        let ms = Int(components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000)
+        recentGestureMS.append(ms)
+        if recentGestureMS.count > 20 {
+            recentGestureMS.removeFirst(recentGestureMS.count - 20)
+        }
+    }
+
+    /// "median 180 ms · slowest 420 ms · 12 gestures", or nil before any.
+    var gestureLatencySummary: (medianMS: Int, slowestMS: Int, count: Int)? {
+        guard !recentGestureMS.isEmpty else { return nil }
+        let sorted = recentGestureMS.sorted()
+        return (sorted[sorted.count / 2], sorted[sorted.count - 1], sorted.count)
     }
 
     nonisolated private static func perform(_ action: ControlAction, on backend: any ControlBackend) async throws {

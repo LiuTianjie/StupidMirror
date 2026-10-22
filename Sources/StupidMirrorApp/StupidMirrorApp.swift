@@ -100,6 +100,12 @@ struct MenuBarContentView: View {
             store.presentActivation()
         }
 
+        Picker(store.t("settings.appearance"), selection: $store.appearance) {
+            ForEach(AppAppearance.allCases) { appearance in
+                Text(store.t(appearance.titleKey)).tag(appearance)
+            }
+        }
+
         Button(store.t("toolbar.settings")) {
             showDashboard()
             store.presentSettings()

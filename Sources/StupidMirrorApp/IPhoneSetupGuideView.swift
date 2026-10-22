@@ -41,28 +41,43 @@ struct IPhoneSetupGuideView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
+            SheetHeader(
+                icon: "iphone.gen3.radiowaves.left.and.right",
+                title: store.t("iphone.setup.title"),
+                subtitle: store.t("iphone.setup.subtitle"),
+                closeHelp: store.t("common.close")
+            ) {
+                dismiss()
+            }
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    usbStep
-                    developerModeStep
-                    accountStep
-                    agentStep
+                VStack(alignment: .leading, spacing: 14) {
+                    GroupLabel(
+                        title: usbSession?.device.name ?? store.t("iphone.setup.usb.waiting"),
+                        trailing: String(format: store.t("iphone.setup.progress"), readySteps)
+                    )
+                    VStack(alignment: .leading, spacing: 0) {
+                        usbStep
+                        RowDivider()
+                        developerModeStep
+                        RowDivider()
+                        accountStep
+                        RowDivider()
+                        agentStep
+                    }
+                    .wellSurface()
 
                     Text(store.t("iphone.setup.note"))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 4)
                 }
-                .padding(20)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
             }
-            Divider()
             footer
         }
-        .frame(minHeight: 520)
+        .frame(minHeight: 560)
         .task {
             await store.refreshIPhoneSetupReadiness()
         }
@@ -71,78 +86,67 @@ struct IPhoneSetupGuideView: View {
         }
     }
 
-    // MARK: Header / footer
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Theme.Palette.accent)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(store.t("iphone.setup.title"))
-                    .font(.title2.weight(.semibold))
-                Text(store.t("iphone.setup.subtitle"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Label(store.t("common.close"), systemImage: "xmark")
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .help(store.t("common.close"))
-        }
-        .padding(20)
+    /// Steps that are already satisfied, at their true count.
+    private var readySteps: Int {
+        var count = 0
+        if usbSession != nil { count += 1 }
+        if readiness?.developerMode == true { count += 1 }
+        if hasSigningTeam { count += 1 }
+        if agentPrepared { count += 1 }
+        return count
     }
 
+    // MARK: Footer
+
     private var footer: some View {
-        HStack {
+        SheetFooter {
             Button(store.t("status.controlOpenDiagnostics")) {
                 store.presentDiagnostics()
             }
+            .buttonStyle(PillButtonStyle(kind: .quiet))
             .disabled(isPreparing)
-            Button(store.t("iphone.setup.recheck")) {
+            Button {
                 Task { await store.refreshIPhoneSetupReadiness() }
+            } label: {
+                Label(store.t("iphone.setup.recheck"), systemImage: "arrow.clockwise")
             }
+            .buttonStyle(PillButtonStyle(kind: .quiet))
             .disabled(isPreparing || isInspecting || usbSession == nil)
             Spacer()
             if isPreparing {
                 Button(store.t("iphone.setup.stop"), role: .cancel) {
                     store.cancelIPhoneSetupPreparation()
                 }
+                .buttonStyle(PillButtonStyle(kind: .secondary))
                 .keyboardShortcut(.cancelAction)
             } else {
                 Button(store.t("common.cancel")) {
                     dismiss()
                 }
+                .buttonStyle(PillButtonStyle(kind: .secondary))
                 .keyboardShortcut(.cancelAction)
             }
             if agentPrepared {
                 Button(store.t("iphone.setup.reprepare")) {
                     store.prepareIPhoneAgent(force: true)
                 }
+                .buttonStyle(PillButtonStyle(kind: .secondary))
                 .disabled(isPreparing || usbSession == nil || !hasSigningTeam)
                 Button(store.t("iphone.setup.finish")) {
                     store.finishIPhoneSetupAndDiscover()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.Palette.accent)
+                .buttonStyle(PillButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(isPreparing)
             } else {
                 Button(store.t("iphone.setup.prepare")) {
                     store.prepareIPhoneAgent()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.Palette.accent)
+                .buttonStyle(PillButtonStyle(kind: .primary))
                 .keyboardShortcut(.defaultAction)
                 .disabled(isPreparing || isInspecting || usbSession == nil || !hasSigningTeam || readiness?.developerMode == false)
             }
         }
-        .padding(20)
     }
 
     // MARK: Steps
@@ -155,44 +159,43 @@ struct IPhoneSetupGuideView: View {
             status: usbSession.map {
                 String(format: store.t("iphone.setup.usb.connected"), $0.device.name)
             } ?? store.t("iphone.setup.usb.waiting"),
-            icon: usbSession == nil ? "iphone.slash" : "checkmark.circle.fill",
-            color: usbSession == nil ? Theme.Palette.pending : Theme.Palette.live
+            glyph: usbSession == nil ? .idle : .done
         )
     }
 
     private var developerModeStep: some View {
-        let (status, icon, color): (String, String, Color) = {
+        let (status, glyph): (String, StatusGlyph.Kind) = {
             guard usbSession != nil else {
-                return (store.t("iphone.setup.developerMode.unknown"), "questionmark.circle", .secondary)
+                return (store.t("iphone.setup.developerMode.unknown"), .idle)
             }
             switch readiness?.developerMode {
             case .some(true):
-                return (store.t("iphone.setup.developerMode.on"), "checkmark.circle.fill", Theme.Palette.live)
+                return (store.t("iphone.setup.developerMode.on"), .done)
             case .some(false):
-                return (store.t("iphone.setup.developerMode.off"), "exclamationmark.triangle.fill", Theme.Palette.danger)
+                return (store.t("iphone.setup.developerMode.off"), .failed)
             case .none:
                 return (
                     store.t(isInspecting ? "iphone.setup.inspecting" : "iphone.setup.developerMode.unknown"),
-                    isInspecting ? "hourglass" : "questionmark.circle",
-                    .secondary
+                    isInspecting ? .working : .idle
                 )
             }
         }()
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 0) {
             setupStep(
                 number: 2,
                 title: store.t("iphone.setup.step.developerMode.title"),
                 body: store.t("iphone.setup.step.developerMode.body"),
                 status: status,
-                icon: icon,
-                color: color
+                glyph: glyph
             )
             if usbSession != nil, readiness?.developerMode == false {
                 Text(store.t("iphone.setup.developerMode.howTo"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 40)
+                    .padding(.leading, Self.stepIndent)
+                    .padding(.trailing, 14)
+                    .padding(.bottom, 12)
             }
         }
     }
@@ -204,8 +207,7 @@ struct IPhoneSetupGuideView: View {
                 title: store.t("iphone.setup.step.account.title"),
                 body: store.t("iphone.setup.step.account.body"),
                 status: nil,
-                icon: nil,
-                color: .secondary
+                glyph: hasSigningTeam ? .done : .idle
             )
 
             HStack(spacing: 10) {
@@ -222,9 +224,11 @@ struct IPhoneSetupGuideView: View {
                         Text(store.t("control.setup.detectAccount"))
                     }
                 }
+                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                 .disabled(store.isDetectingSigningTeams)
             }
-            .padding(.leading, 40)
+            .padding(.leading, Self.stepIndent)
+            .padding(.trailing, 14)
 
             if store.detectedSigningTeams.count > 1 {
                 Picker(store.t("control.setup.chooseAccount"), selection: selectedTeamBinding) {
@@ -233,29 +237,38 @@ struct IPhoneSetupGuideView: View {
                         Text("\(team.name) · \(team.id)").tag(team.id)
                     }
                 }
-                .padding(.leading, 40)
+                .padding(.leading, Self.stepIndent)
+                .padding(.trailing, 14)
             }
 
-            DisclosureGroup(store.t("control.setup.manualEntry")) {
-                TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
-                    .textFieldStyle(.roundedBorder)
-                Text(store.t("control.setup.manualEntryHelp"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            DisclosureGroup {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
+                        .fieldSurface(monospaced: true)
+                    Text(store.t("control.setup.manualEntryHelp"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                }
+                .padding(.top, 6)
+            } label: {
+                Text(store.t("control.setup.manualEntry"))
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.Ink.secondary)
             }
-            .padding(.leading, 40)
+            .padding(.leading, Self.stepIndent)
+            .padding(.trailing, 14)
+            .padding(.bottom, 12)
         }
     }
 
     private var agentStep: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             setupStep(
                 number: 4,
                 title: store.t("iphone.setup.step.agent.title"),
                 body: store.t("iphone.setup.step.agent.body"),
                 status: agentStatus.text,
-                icon: agentStatus.icon,
-                color: agentStatus.color
+                glyph: agentStatus.glyph
             )
             if !isPreparing, usbSession != nil, let readiness {
                 VStack(alignment: .leading, spacing: 4) {
@@ -277,41 +290,37 @@ struct IPhoneSetupGuideView: View {
                     }
                     if readiness.passwordProtected == true {
                         Label(store.t("iphone.setup.passcode.on"), systemImage: "lock")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.Ink.tertiary)
                     }
                 }
-                .padding(.leading, 40)
+                .padding(.leading, Self.stepIndent)
+                .padding(.bottom, 12)
             }
         }
     }
 
-    private var agentStatus: (text: String, icon: String, color: Color) {
+    private var agentStatus: (text: String, glyph: StatusGlyph.Kind) {
         switch phase {
         case let .preparing(step):
             let text = store.t(Self.stepKey(step))
             // The guide may now be looking at another phone than the one
             // being prepared; say which one is busy.
             if let preparing = store.iphoneSetupPreparingSession, preparing.id != usbSession?.id {
-                return (String(format: store.t("iphone.setup.preparingOther"), preparing.device.name) + " " + text,
-                        "hourglass", Theme.Palette.pending)
+                return (String(format: store.t("iphone.setup.preparingOther"), preparing.device.name) + " " + text, .working)
             }
-            return (text, "hourglass", Theme.Palette.pending)
+            return (text, .working)
         case let .ready(reachableOverWiFi):
-            return (
-                store.t(reachableOverWiFi ? "iphone.setup.ready.wifi" : "iphone.setup.ready.usbOnly"),
-                "checkmark.circle.fill",
-                Theme.Palette.live
-            )
+            return (store.t(reachableOverWiFi ? "iphone.setup.ready.wifi" : "iphone.setup.ready.usbOnly"), .done)
         case let .failed(message):
-            return (message, "exclamationmark.triangle.fill", Theme.Palette.danger)
+            return (message, .failed)
         case .inspecting:
-            return (store.t("iphone.setup.inspecting"), "hourglass", .secondary)
+            return (store.t("iphone.setup.inspecting"), .working)
         case .idle:
             if readiness?.runnerInstalled == true, readiness?.wifiConnections == true {
-                return (store.t("iphone.setup.prepared"), "checkmark.circle.fill", Theme.Palette.live)
+                return (store.t("iphone.setup.prepared"), .done)
             }
-            return (store.t("iphone.setup.notPrepared"), "circle.dashed", .secondary)
+            return (store.t("iphone.setup.notPrepared"), .idle)
         }
     }
 
@@ -329,28 +338,39 @@ struct IPhoneSetupGuideView: View {
 
     // MARK: Pieces
 
+    /// Left edge of a step's text, past the number disc.
+    private static let stepIndent: CGFloat = 52
+
     @ViewBuilder
     private var signingStatus: some View {
         if let selectedTeam {
-            Label(store.t("control.setup.accountReady"), systemImage: "checkmark.circle.fill")
-                .foregroundStyle(Theme.Palette.live)
+            pieceLabel(store.t("control.setup.accountReady"), glyph: .done)
                 .help("\(selectedTeam.name) · \(selectedTeam.id)")
         } else if hasSigningTeam {
-            Label(store.t("control.setup.accountConfigured"), systemImage: "checkmark.circle.fill")
-                .foregroundStyle(Theme.Palette.live)
+            pieceLabel(store.t("control.setup.accountConfigured"), glyph: .done)
         } else if store.detectedSigningTeams.count > 1 {
-            Label(store.t("control.setup.chooseAccount"), systemImage: "person.2")
-                .foregroundStyle(Theme.Palette.pending)
+            pieceLabel(store.t("control.setup.chooseAccount"), glyph: .warning)
         } else {
-            Label(store.t("control.setup.accountMissing"), systemImage: "exclamationmark.triangle.fill")
-                .foregroundStyle(Theme.Palette.pending)
+            pieceLabel(store.t("control.setup.accountMissing"), glyph: .warning)
+        }
+    }
+
+    private func pieceLabel(_ text: String, glyph: StatusGlyph.Kind) -> some View {
+        HStack(spacing: 8) {
+            StatusGlyph(kind: glyph, size: 18)
+            Text(text)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.Ink.primary)
         }
     }
 
     private func checkRow(_ text: String, ok: Bool) -> some View {
-        Label(text, systemImage: ok ? "checkmark.circle" : "circle")
-            .font(.caption)
-            .foregroundStyle(ok ? Theme.Palette.live : .secondary)
+        HStack(spacing: 8) {
+            StatusGlyph(kind: ok ? .done : .idle, size: 16)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundStyle(ok ? Theme.Ink.primary : Theme.Ink.secondary)
+        }
     }
 
     private func setupStep(
@@ -358,31 +378,48 @@ struct IPhoneSetupGuideView: View {
         title: String,
         body: String,
         status: String?,
-        icon: String?,
-        color: Color
+        glyph: StatusGlyph.Kind
     ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 14) {
             Text("\(number)")
-                .font(.callout.bold())
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(Theme.Palette.accent, in: Circle())
+                .font(Theme.mono(12, weight: .medium))
+                .foregroundStyle(Theme.Ink.secondary)
+                .frame(width: 24, height: 24)
+                .background(Theme.Surface.raised, in: Circle())
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.headline)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Theme.Ink.primary)
                 Text(body)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.Ink.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if let status, let icon {
-                    Label(status, systemImage: icon)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(color)
-                        .padding(.top, 2)
+                if let status {
+                    HStack(spacing: 8) {
+                        StatusGlyph(kind: glyph, size: 18)
+                        Text(status)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(statusInk(glyph))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
                 }
             }
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
         .accessibilityElement(children: .combine)
+    }
+
+    private func statusInk(_ glyph: StatusGlyph.Kind) -> Color {
+        switch glyph {
+        case .done: Theme.Palette.live
+        case .failed: Theme.Palette.danger
+        case .warning, .working: Theme.Palette.pending
+        case .control: Theme.Palette.control
+        case .idle: Theme.Ink.secondary
+        }
     }
 }

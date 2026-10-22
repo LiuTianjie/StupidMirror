@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        AppAppearance.stored.apply()
         installSignalHandlers()
         DockPresence.install()
         AppUpdater.shared.start()

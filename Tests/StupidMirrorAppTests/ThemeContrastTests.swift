@@ -55,6 +55,42 @@ final class ThemeContrastTests: XCTestCase {
         }
     }
 
+    func testTextTokensMeetNormalTextContrastOnEverySurface() throws {
+        let inks: [(String, Color)] = [
+            ("primary", Theme.Ink.primary),
+            ("secondary", Theme.Ink.secondary),
+            ("tertiary", Theme.Ink.tertiary),
+        ]
+        let surfaces: [(String, Color)] = [
+            ("ground", Theme.Surface.ground),
+            ("panel", Theme.Surface.panel),
+            ("well", Theme.Surface.well),
+            ("raised", Theme.Surface.raised),
+            ("selected", Theme.Surface.selected),
+        ]
+
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            for (surfaceName, surface) in surfaces {
+                for (inkName, ink) in inks {
+                    let ratio = try contrastRatio(
+                        foreground: resolved(ink, appearance: appearance),
+                        background: resolved(surface, appearance: appearance)
+                    )
+                    XCTAssertGreaterThanOrEqual(
+                        ratio,
+                        4.5,
+                        "\(inkName) on \(surfaceName) is only \(ratio):1 in \(appearance.rawValue)"
+                    )
+                }
+            }
+            let buttonRatio = try contrastRatio(
+                foreground: resolved(Theme.Ink.inverse, appearance: appearance),
+                background: resolved(Theme.Ink.primaryFill, appearance: appearance)
+            )
+            XCTAssertGreaterThanOrEqual(buttonRatio, 4.5, "primary button label in \(appearance.rawValue)")
+        }
+    }
+
     private func resolved(_ color: Color, appearance: NSAppearance.Name) -> NSColor {
         let resolvedAppearance = NSAppearance(named: appearance)!
         var result = NSColor.clear

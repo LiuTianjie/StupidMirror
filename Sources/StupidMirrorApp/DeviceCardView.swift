@@ -1,48 +1,70 @@
 import SwiftUI
 
-// Sidebar row: status dot, device name, one-line status. Native list feel.
+// Sidebar row: platform icon, name, state and transport, a state dot.
 struct DeviceRowView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
     @ObservedObject private var controlSession: DeviceControlSession
     @State private var confirmsRemoval = false
+    @State private var isHovered = false
 
     let session: DeviceSession
+    let isSelected: Bool
+    let select: () -> Void
 
-    init(session: DeviceSession) {
+    init(session: DeviceSession, isSelected: Bool, select: @escaping () -> Void) {
         self.session = session
+        self.isSelected = isSelected
+        self.select = select
         self.mirrorSession = session.mirrorSession
         self.controlSession = session.controlSession
     }
 
     private var isConnected: Bool { session.device.connectionState == .connected }
-    private var isLive: Bool { mirrorSession.state == .running && isConnected }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: session.platform.systemImage)
-                .font(.system(size: 16))
-                .foregroundStyle(isConnected ? .primary : .secondary)
-                .frame(width: 22)
+        Button(action: select) {
+            HStack(spacing: 10) {
+                Image(systemName: session.platform.systemImage)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.tertiary)
+                    .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.device.name)
-                    .font(.body)
-                    .lineLimit(1)
-                Text(statusLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.device.name)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
+                        .lineLimit(1)
+                    Text(statusLabel)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+
+                if controlSession.isReady {
+                    Image(systemName: "hand.tap")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.Palette.control)
+                        .help(store.controlStateLabel(controlSession.state))
+                }
+
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 7, height: 7)
             }
-
-            Spacer(minLength: 0)
-
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
+            .padding(.horizontal, 10)
+            .frame(height: 48)
+            .background {
+                RoundedRectangle(cornerRadius: Theme.Radius.control + 2, style: .continuous)
+                    .fill(isSelected ? Theme.Surface.selected : (isHovered ? Theme.Surface.raised.opacity(0.6) : .clear))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control + 2, style: .continuous))
         }
-        .padding(.vertical, 3)
+        .buttonStyle(.plain)
         .opacity(isConnected ? 1 : 0.6)
+        .onHover { isHovered = $0 }
         .contextMenu {
             Button(store.t("card.openMirror")) { store.start(session) }
                 .disabled(!store.canAttemptConnection(session))
@@ -67,18 +89,14 @@ struct DeviceRowView: View {
         } message: {
             Text(String(format: store.t("device.remove.message"), session.device.name))
         }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var statusLabel: String {
         let state = isConnected
             ? store.mirrorStateLabel(mirrorSession.state)
             : store.connectionStateLabel(session.device.connectionState)
-        let transport = session.platform == .android
-            ? "ADB"
-            : (session.transport == .wireless
-                ? store.t("transport.wireless")
-                : store.t("transport.usb"))
-        return "\(state) · \(transport)"
+        return "\(state) · \(session.transportLabel(store))"
     }
 
     private var statusColor: Color {
@@ -86,12 +104,21 @@ struct DeviceRowView: View {
         case .running: isConnected ? Theme.Palette.live : Theme.Palette.pending
         case .starting: Theme.Palette.pending
         case .failed: Theme.Palette.danger
-        case .stopped: isConnected ? Color.secondary.opacity(0.5) : Theme.Palette.pending
+        case .stopped: isConnected ? Theme.Ink.tertiary.opacity(0.6) : Theme.Palette.pending
         }
     }
 }
 
-// Detail pane: large preview, device meta, native action buttons.
+extension DeviceSession {
+    @MainActor
+    func transportLabel(_ store: DeviceGalleryStore) -> String {
+        if platform == .android { return store.t("transport.adb") }
+        return transport == .wireless ? store.t("transport.wireless") : store.t("transport.usb")
+    }
+}
+
+// Detail panel: who the device is, two status lines (mirror, control), the
+// screen in a well, and the device's actions in one row under it.
 struct DeviceDetailView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
@@ -106,48 +133,171 @@ struct DeviceDetailView: View {
     }
 
     private var isConnected: Bool { session.device.connectionState == .connected }
-    private var isLive: Bool { mirrorSession.state == .running && isConnected }
 
     var body: some View {
-        VStack(spacing: 0) {
-            detailHeader
-            Divider()
+        VStack(alignment: .leading, spacing: 0) {
+            PanelHeader(
+                icon: session.platform.systemImage,
+                title: session.device.name,
+                subtitle: headerSubtitle
+            ) {
+                QuietChip(title: session.transportLabel(store))
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+
+            VStack(alignment: .leading, spacing: 10) {
+                CheckLine(
+                    glyph: mirrorGlyph,
+                    lead: store.t("diagnostic.mirror"),
+                    object: mirrorStatusLabel,
+                    detail: mirrorDetail,
+                    detailColor: mirrorDetailColor
+                )
+                CheckLine(
+                    glyph: controlGlyph,
+                    lead: store.t("diagnostic.control"),
+                    object: controlStatusLabel,
+                    detail: controlDetail,
+                    detailColor: controlDetailColor
+                )
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 14)
+
             preview
+                .padding(Theme.Spacing.lg)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(Theme.Spacing.xl)
+                .wellSurface()
+                .padding(.horizontal, 10)
+
+            DeviceActionDock(session: session)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+        }
+        .panelSurface()
+    }
+
+    /// "iPhone18,4 · iOS 27.0 · 00008150", one separator throughout.
+    private var headerSubtitle: String {
+        let device = session.device
+        var parts = [device.productType]
+        if let version = device.osVersion, !version.isEmpty {
+            let platform = session.platform == .android ? "Android" : "iOS"
+            parts.append(version.hasPrefix(platform) ? version : "\(platform) \(version)")
+        }
+        if let udid = device.udid, !udid.isEmpty {
+            parts.append(String(udid.prefix(8)))
+        }
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    // MARK: Status lines
+
+    private var mirrorGlyph: StatusGlyph.Kind {
+        guard isConnected else { return .working }
+        switch mirrorSession.state {
+        case .running: return .done
+        case .starting: return .working
+        case .failed: return .failed
+        case .stopped: return .idle
         }
     }
 
-    private var detailHeader: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            Image(systemName: session.platform.systemImage)
-                .font(.title2)
-                .foregroundStyle(Theme.Palette.accent)
+    private var mirrorStatusLabel: String {
+        isConnected
+            ? store.mirrorStateLabel(mirrorSession.state)
+            : store.connectionStateLabel(session.device.connectionState)
+    }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.device.name)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(session.device.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    private var mirrorDetail: String? {
+        guard isConnected else { return store.t("mirror.reconnectingBody") }
+        switch mirrorSession.state {
+        case .running:
+            if let ratio = mirrorSession.frameAspectRatio {
+                return session.transportLabel(store) + " · " + aspectLabel(ratio)
             }
-
-            StatusPill(
-                title: session.platform == .android
-                    ? store.t("transport.adb")
-                    : (session.transport == .wireless
-                        ? store.t("transport.wireless")
-                        : store.t("transport.usb")),
-                color: session.transport == .wireless ? Theme.Palette.control : .secondary
-            )
-
-            Spacer(minLength: 0)
+            return session.transportLabel(store)
+        case .starting:
+            return mirrorSession.wirelessStartupDetail
+        case let .failed(message):
+            return message
+        case .stopped:
+            return nil
         }
-        .padding(.horizontal, Theme.Spacing.lg)
-        .frame(height: 56)
-        .background(.bar)
+    }
+
+    private var mirrorDetailColor: Color {
+        switch mirrorSession.state {
+        case .running: Theme.Palette.live
+        case .failed: Theme.Palette.danger
+        default: Theme.Ink.tertiary
+        }
+    }
+
+    private var controlGlyph: StatusGlyph.Kind {
+        if !store.canUseControl { return .warning }
+        switch controlSession.state {
+        case .ready: return .control
+        case .connecting: return .working
+        case .failed: return .failed
+        case .unavailable: return .idle
+        }
+    }
+
+    private var controlStatusLabel: String {
+        if !store.canUseControl {
+            return store.t("control.state.activationRequired")
+        }
+        switch controlSession.state {
+        case .connecting:
+            return compactControlStatus(controlSession.statusMessage)
+        case let .failed(message):
+            return localizedControlFailure(message)
+        case .unavailable:
+            return store.t("dashboard.control.notConnected")
+        default:
+            return store.controlStateLabel(controlSession.state)
+        }
+    }
+
+    private var controlDetail: String? {
+        if !store.canUseControl { return nil }
+        switch controlSession.state {
+        case .ready: return store.t("dashboard.control.readyDetail")
+        case .unavailable: return store.t("dashboard.control.optional")
+        default: return nil
+        }
+    }
+
+    private var controlDetailColor: Color {
+        controlSession.isReady ? Theme.Palette.control : Theme.Ink.tertiary
+    }
+
+    private func aspectLabel(_ ratio: Double) -> String {
+        ratio < 1 ? store.t("dashboard.orientation.portrait") : store.t("dashboard.orientation.landscape")
+    }
+
+    private func localizedControlFailure(_ message: String) -> String {
+        if message.hasPrefix("control.error.") {
+            return store.t(message)
+        }
+        return message.isEmpty ? store.t("control.state.failed") : message
+    }
+
+    private func compactControlStatus(_ message: String) -> String {
+        if message.localizedCaseInsensitiveContains("Appium") {
+            return store.t("control.phase.appium")
+        }
+        if message.localizedCaseInsensitiveContains("WebDriverAgent")
+            || message.localizedCaseInsensitiveContains("WDA") {
+            return store.t("control.phase.wda")
+        }
+        if message.localizedCaseInsensitiveContains("screen size") {
+            return store.t("control.phase.screen")
+        }
+        return store.t("control.state.connecting")
     }
 
     // MARK: Preview
@@ -162,7 +312,6 @@ struct DeviceDetailView: View {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
                     .fill(Color.black)
                     .frame(width: size.width, height: size.height)
-                    .shadow(color: .black.opacity(0.25), radius: 16, y: 8)
 
                 Group {
                     if (session.platform == .android || session.transport == .wireless),
@@ -184,9 +333,14 @@ struct DeviceDetailView: View {
                 .overlay {
                     AutomationActionOverlayView(actions: mirrorSession.automationActions)
                 }
+                .overlay {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(Theme.Surface.controlStroke, lineWidth: 1)
+                        .allowsHitTesting(false)
+                }
 
                 if controlSession.isConnecting {
-                    Color.black.opacity(0.42)
+                    Color.black.opacity(0.5)
                         .frame(width: size.width, height: size.height)
                         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                         .allowsHitTesting(false)
@@ -205,58 +359,57 @@ struct DeviceDetailView: View {
 
     private var placeholder: some View {
         ZStack {
-            Color(nsColor: .windowBackgroundColor)
-            VStack(spacing: 8) {
+            Theme.Surface.panel
+            VStack(spacing: 10) {
                 if case let .failed(message) = mirrorSession.state {
-                    Image(systemName: "photo.badge.exclamationmark")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.secondary)
+                    StatusGlyph(kind: .failed, size: 30)
                     Text(message)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.secondary)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: 220)
                 } else if mirrorSession.state == .starting {
-                    ProgressView().controlSize(.small)
+                    StatusGlyph(kind: .working, size: 30)
                     if session.isIOSWireless {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(spacing: 4) {
                                 Text(mirrorSession.wirelessStartupDetail
                                     ?? store.t("detail.wirelessStarting"))
+                                    .foregroundStyle(Theme.Ink.secondary)
                                 Text(String(
                                     format: store.t("agent.start.elapsed"),
                                     wirelessStartupElapsed(at: context.date)
                                 ))
-                                .foregroundStyle(.tertiary)
+                                .font(Theme.mono(11.5))
+                                .foregroundStyle(Theme.Palette.pending)
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: 220)
                         }
                         Button(store.t("agent.start.cancel")) {
                             store.stop(session)
                         }
-                        .buttonStyle(.link)
-                        .controlSize(.small)
+                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     }
                 } else if session.isIOSWireless && mirrorSession.state == .stopped {
-                    Image(systemName: "play.circle")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.secondary)
+                    StatusGlyph(kind: .idle, size: 30)
                     Text(store.t("detail.wirelessStopped"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 200)
                 } else if store.thumbnailErrors[session.id] != nil {
-                    Image(systemName: "photo.badge.exclamationmark")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.secondary)
+                    StatusGlyph(kind: .warning, size: 30)
                 } else if isConnected {
-                    ProgressView().controlSize(.small)
+                    StatusGlyph(kind: .working, size: 30)
                 } else {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 26))
-                        .foregroundStyle(.secondary)
+                    StatusGlyph(kind: .working, size: 30)
+                    Text(store.t("mirror.reconnectingBody"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 200)
                 }
             }
         }
@@ -296,51 +449,50 @@ struct ControlConnectionLoadingView: View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let elapsed = elapsedSeconds(at: timeline.date)
 
-            VStack(spacing: 12) {
-                ProgressView()
-                    .controlSize(.regular)
-                    .tint(Theme.Palette.accent)
-
-                VStack(spacing: 4) {
-                    Text(store.t(titleKey))
-                        .font(.headline)
-                        .foregroundStyle(Theme.Overlay.primaryText)
-                    Text(store.t(phaseTitleKey))
-                        .font(.callout)
-                        .foregroundStyle(Theme.Overlay.secondaryText)
-                        .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    StatusGlyph(kind: .working, size: 26)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(store.t(titleKey))
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(Theme.Overlay.primaryText)
+                        Text(store.t(phaseTitleKey))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.Overlay.secondaryText)
+                    }
+                    Spacer(minLength: 8)
+                    Text(String(
+                        format: store.t("control.loading.elapsed"),
+                        elapsed / 60,
+                        elapsed % 60
+                    ))
+                    .font(Theme.mono(12, weight: .medium))
+                    .foregroundStyle(Theme.Palette.pending)
                 }
 
                 Text(store.t(expectationKey))
-                    .font(.caption)
+                    .font(.system(size: 12))
                     .foregroundStyle(Theme.Overlay.secondaryText)
-                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                Text(String(
-                    format: store.t("control.loading.elapsed"),
-                    elapsed / 60,
-                    elapsed % 60
-                ))
-                .font(.system(.caption, design: .monospaced).weight(.medium))
-                .foregroundStyle(Theme.Palette.pending)
-
-                Text(store.t(keepAwakeKey))
-                    .font(.caption2)
-                    .foregroundStyle(Theme.Overlay.tertiaryText)
-                    .multilineTextAlignment(.center)
-
-                Button(store.t("common.cancel"), action: cancel)
-                    .controlSize(.small)
-                    .tint(Theme.Overlay.primaryText)
+                HStack(alignment: .center, spacing: 10) {
+                    Text(store.t(keepAwakeKey))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.Overlay.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button(store.t("common.cancel"), action: cancel)
+                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                }
             }
-            .padding(18)
-            .frame(maxWidth: 320)
+            .padding(16)
+            .frame(maxWidth: 330)
             .background(Theme.Overlay.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                    .stroke(Theme.Overlay.stroke, lineWidth: 1)
+                    .strokeBorder(Theme.Overlay.stroke, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+            .shadow(color: .black.opacity(0.3), radius: 18, y: 8)
         }
     }
 
@@ -431,9 +583,10 @@ struct ControlConnectionLoadingDebugPreview: View {
 }
 #endif
 
-// Lives in the full-width bottom bar. Status pills + actions for the
-// currently selected device.
-struct DeviceActionBar: View {
+// The row under the screen: phone navigation on the left, then refresh,
+// more, control and the mirror window. Opening the mirror is the one white
+// pill on the panel.
+struct DeviceActionDock: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
     @ObservedObject private var controlSession: DeviceControlSession
@@ -449,21 +602,67 @@ struct DeviceActionBar: View {
 
     private var isConnected: Bool { session.device.connectionState == .connected }
     private var isLive: Bool { mirrorSession.state == .running && isConnected }
+    private var navigationDisabled: Bool { !store.canUseControl || !controlSession.isReady }
 
     var body: some View {
-        HStack(spacing: Theme.Spacing.sm) {
-            StatusPill(title: mirrorStatusLabel, color: mirrorStatusColor)
-            StatusPill(title: controlStatusLabel, color: controlColor)
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Button {
+                    store.pressBack(for: session)
+                } label: {
+                    Label(store.t("mirror.back"), systemImage: "chevron.backward")
+                }
+                .help(store.t("mirror.back"))
+
+                Button {
+                    store.pressHome(for: session)
+                } label: {
+                    Label(store.t("mirror.home"), systemImage: "house")
+                }
+                .help(store.t("mirror.home"))
+
+                Button {
+                    store.openAppSwitcher(for: session)
+                } label: {
+                    Label(store.t("mirror.appSwitcher"), systemImage: "rectangle.grid.2x2")
+                }
+                .help(store.t("mirror.appSwitcher"))
+            }
+            .buttonStyle(IconButtonStyle())
+            .disabled(navigationDisabled)
+            .padding(3)
+            .outlinedCapsule(fill: Theme.Surface.well, stroke: Theme.Surface.hairline)
+
+            Spacer(minLength: 8)
 
             Button {
                 store.refreshThumbnail(for: session)
             } label: {
                 Label(store.t("card.refreshThumbnail"), systemImage: "arrow.clockwise")
             }
-            .labelStyle(.iconOnly)
-            .controlSize(.small)
+            .buttonStyle(IconButtonStyle())
             .disabled(!isConnected)
             .help(store.t("card.refreshThumbnail"))
+
+            Menu {
+                Button(store.t("device.remove"), role: .destructive) {
+                    confirmsRemoval = true
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.Ink.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(Theme.Surface.raised, in: Circle())
+                    .overlay { Circle().strokeBorder(Theme.Surface.hairline, lineWidth: 1) }
+                    .contentShape(Circle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(store.t("device.actions"))
+            .accessibilityLabel(store.t("device.actions"))
 
             Button {
                 if controlSession.isReady || controlSession.isConnecting {
@@ -472,44 +671,11 @@ struct DeviceActionBar: View {
                     store.connectControl(for: session)
                 }
             } label: {
-                Label(
-                    controlButtonTitle,
-                    systemImage: controlButtonIcon
-                )
+                Label(controlButtonTitle, systemImage: controlButtonIcon)
             }
-            .controlSize(.small)
+            .buttonStyle(PillButtonStyle(kind: .secondary))
             .disabled(!store.canAttemptConnection(session) || (store.canUseControl && session.device.udid == nil))
             .help(store.t(store.canUseControl ? "detail.controlHelp" : "detail.controlActivationHelp"))
-
-            Button {
-                store.pressBack(for: session)
-            } label: {
-                Label(store.t("mirror.back"), systemImage: "chevron.backward")
-            }
-            .labelStyle(.iconOnly)
-            .controlSize(.small)
-            .disabled(!store.canUseControl || !controlSession.isReady)
-            .help(store.t("mirror.back"))
-
-            Button {
-                store.pressHome(for: session)
-            } label: {
-                Label(store.t("mirror.home"), systemImage: "house")
-            }
-            .labelStyle(.iconOnly)
-            .controlSize(.small)
-            .disabled(!store.canUseControl || !controlSession.isReady)
-            .help(store.t("mirror.home"))
-
-            Button {
-                store.openAppSwitcher(for: session)
-            } label: {
-                Label(store.t("mirror.appSwitcher"), systemImage: "rectangle.grid.2x2")
-            }
-            .labelStyle(.iconOnly)
-            .controlSize(.small)
-            .disabled(!store.canUseControl || !controlSession.isReady)
-            .help(store.t("mirror.appSwitcher"))
 
             Button {
                 isLive ? store.stop(session) : store.start(session)
@@ -519,21 +685,8 @@ struct DeviceActionBar: View {
                     systemImage: isLive ? "stop.fill" : "play.fill"
                 )
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .tint(isLive ? Theme.Palette.danger : Theme.Palette.accent)
+            .buttonStyle(PillButtonStyle(kind: isLive ? .secondary : .primary))
             .disabled(!store.canAttemptConnection(session))
-
-            Menu {
-                Button(store.t("device.remove"), role: .destructive) {
-                    confirmsRemoval = true
-                }
-            } label: {
-                Label(store.t("device.actions"), systemImage: "ellipsis.circle")
-            }
-            .labelStyle(.iconOnly)
-            .controlSize(.small)
-            .help(store.t("device.actions"))
         }
         .confirmationDialog(
             store.t("device.remove.title"),
@@ -547,12 +700,6 @@ struct DeviceActionBar: View {
         } message: {
             Text(String(format: store.t("device.remove.message"), session.device.name))
         }
-    }
-
-    private var mirrorStatusLabel: String {
-        isConnected
-            ? store.mirrorStateLabel(mirrorSession.state)
-            : store.connectionStateLabel(session.device.connectionState)
     }
 
     private var controlButtonTitle: String {
@@ -569,61 +716,7 @@ struct DeviceActionBar: View {
         if controlSession.isReady || controlSession.isConnecting {
             "bolt.slash"
         } else {
-            "square.and.arrow.down"
-        }
-    }
-
-    private var controlStatusLabel: String {
-        if !store.canUseControl {
-            return store.t("control.state.activationRequired")
-        }
-        switch controlSession.state {
-        case .connecting:
-            return compactControlStatus(controlSession.statusMessage)
-        case let .failed(message):
-            return localizedControlFailure(message)
-        default:
-            return store.controlStateLabel(controlSession.state)
-        }
-    }
-
-    private func localizedControlFailure(_ message: String) -> String {
-        if message.hasPrefix("control.error.") {
-            return store.t(message)
-        }
-        return message.isEmpty ? store.t("control.state.failed") : message
-    }
-
-    private func compactControlStatus(_ message: String) -> String {
-        if message.localizedCaseInsensitiveContains("Appium") {
-            return store.t("control.phase.appium")
-        }
-        if message.localizedCaseInsensitiveContains("WebDriverAgent")
-            || message.localizedCaseInsensitiveContains("WDA") {
-            return store.t("control.phase.wda")
-        }
-        if message.localizedCaseInsensitiveContains("screen size") {
-            return store.t("control.phase.screen")
-        }
-        return store.t("control.state.connecting")
-    }
-
-    private var mirrorStatusColor: Color {
-        switch mirrorSession.state {
-        case .running: isConnected ? Theme.Palette.live : Theme.Palette.pending
-        case .starting: Theme.Palette.pending
-        case .failed: Theme.Palette.danger
-        case .stopped: isConnected ? Color.secondary : Theme.Palette.pending
-        }
-    }
-
-    private var controlColor: Color {
-        if !store.canUseControl { return Theme.Palette.pending }
-        switch controlSession.state {
-        case .ready: return Theme.Palette.control
-        case .connecting: return Theme.Palette.pending
-        case .failed: return Theme.Palette.danger
-        case .unavailable: return .secondary
+            "hand.tap"
         }
     }
 }

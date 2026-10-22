@@ -25,11 +25,14 @@ actor WDAStub {
     var attributeValue: String?
     var placeholderValue: String?
     var activeStatus = 200
+    /// 404 is a runner built before the fast touch route existed.
+    var fastTouchStatus = 404
 
-    init(attributeValue: String? = "", placeholderValue: String? = nil, activeStatus: Int = 200) {
+    init(attributeValue: String? = "", placeholderValue: String? = nil, activeStatus: Int = 200, fastTouchStatus: Int = 404) {
         self.attributeValue = attributeValue
         self.placeholderValue = placeholderValue
         self.activeStatus = activeStatus
+        self.fastTouchStatus = fastTouchStatus
     }
 
     func response(for request: URLRequest) throws -> (Data, URLResponse) {
@@ -46,6 +49,11 @@ actor WDAStub {
         var status = 200
         var value: Any = [:]
         switch true {
+        case path == "/stupidmirror/touch":
+            status = fastTouchStatus
+            value = status == 200
+                ? NSNull()
+                : ["error": "unknown command", "message": "Unhandled endpoint: /stupidmirror/touch"]
         case path.hasSuffix("/session") && request.httpMethod == "POST":
             value = ["sessionId": "session-1", "capabilities": [:]]
         case path.hasSuffix("/window/size"):
@@ -153,7 +161,9 @@ final class WDAControlBackendTests: XCTestCase {
         try await backend.press(.home)
         try await backend.press(.back)
         try await backend.press(.appSwitcher)
-        let requests = await stub.requests
+        var requests = await stub.requests
+        XCTAssertEqual(requests.first?.path, "/stupidmirror/touch", "the fast route is tried once")
+        requests.removeFirst()
         XCTAssertEqual(requests.map(\.path), [
             "/session/session-1/wda/tap",
             "/session/session-1/wda/pressAndDragWithVelocity",
@@ -174,6 +184,44 @@ final class WDAControlBackendTests: XCTestCase {
         // The back gesture starts at the left screen edge.
         XCTAssertEqual(requests[4].body?["fromX"], 2.0)
         XCTAssertEqual(requests[5].body?["holdDuration"], 0.6)
+    }
+
+    func testGesturesUseTheFastTouchRouteWhenTheRunnerHasIt() async throws {
+        let stub = WDAStub(fastTouchStatus: 200)
+        let backend = backend(stub)
+        try await backend.tap(CGPoint(x: 10.4, y: 20.6))
+        try await backend.drag(from: CGPoint(x: 0, y: 0), to: CGPoint(x: 100, y: 100), durationMS: 220)
+        try await backend.longPress(CGPoint(x: 50, y: 60), durationSeconds: 0.8)
+        try await backend.doubleTap(CGPoint(x: 5, y: 6))
+        try await backend.dragPath([
+            DevicePathSample(point: CGPoint(x: 1, y: 2), offsetMS: 0),
+            DevicePathSample(point: CGPoint(x: 3, y: 40), offsetMS: 90),
+            DevicePathSample(point: CGPoint(x: 5, y: 80), offsetMS: 180)
+        ])
+        let requests = await stub.requests
+        XCTAssertEqual(Set(requests.map(\.path)), ["/stupidmirror/touch"])
+
+        func fingers(_ index: Int) -> [[[Double]]] {
+            (requests[index].json?["fingers"] as? [[[Double]]]) ?? []
+        }
+        XCTAssertEqual(requests[0].json?["orientation"] as? Int, 1, "portrait needs no device lookup")
+        XCTAssertEqual(fingers(0), [[[10, 21, 0], [10, 21, WDAFastTouch.tapSeconds]]])
+        XCTAssertEqual(fingers(1), [[[0, 0, 0], [100, 100, 0.22]]], "a swipe lifts at its end while moving")
+        XCTAssertEqual(fingers(2), [[[50, 60, 0], [50, 60, 0.8]]])
+        XCTAssertEqual(fingers(3).count, 2, "a double tap is two touches in one event")
+        XCTAssertEqual(fingers(3)[1].first?[2] ?? 0, WDAFastTouch.tapSeconds + WDAFastTouch.doubleTapGapSeconds, accuracy: 0.0001)
+        XCTAssertEqual(fingers(4), [[[1, 2, 0], [3, 40, 0.09], [5, 80, 0.18]]])
+    }
+
+    func testLandscapeLetsTheRunnerResolveWhichSide() {
+        let payload = WDAFastTouch.payload(WDAFastTouch.tap(.zero), landscape: true)
+        XCTAssertEqual(payload["orientation"] as? Int, 0)
+    }
+
+    func testOnlyAMissingRouteFallsBack() {
+        XCTAssertTrue(WDAFastTouch.isMissingRoute(.rejected("WebDriverAgent HTTP 404: Unhandled endpoint: /stupidmirror/touch")))
+        XCTAssertFalse(WDAFastTouch.isMissingRoute(.rejected("WebDriverAgent HTTP 500: Failed to synthesize event")))
+        XCTAssertFalse(WDAFastTouch.isMissingRoute(.sessionLost("gone")))
     }
 
     func testDragVelocityIsBoundedForTinyAndInstantMoves() {

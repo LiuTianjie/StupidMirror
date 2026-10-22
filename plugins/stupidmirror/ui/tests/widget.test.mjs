@@ -27,6 +27,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
   const listeners = new Map();
   const calls = [];
   const sentMessages = [];
+  const messageOptions = [];
   const contextUpdates = [];
   const drawnRegions = [];
   const lifecycle = [];
@@ -77,7 +78,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     async close() { this.onclose?.(); }
     getHostContext() { return context; }
     getHostCapabilities() { return {message:{text:{},...(messageImage ? {image:{}} : {})},updateModelContext:{image:{}}}; }
-    async sendMessage(params) { sentMessages.push(params); return messageReply ? messageReply(params) : {}; }
+    async sendMessage(params, options) { sentMessages.push(params); messageOptions.push(options); return messageReply ? messageReply(params) : {}; }
     async updateModelContext(params) { contextUpdates.push(params); return {}; }
     async requestDisplayMode(params) { lifecycle.push(params.mode); return { mode: params.mode }; }
     callServerTool(params, options) {
@@ -108,7 +109,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     clearTimeout: id => timers.delete(id),
   });
   return {
-    app: instance, calls, sentMessages, contextUpdates, drawnRegions, lifecycle, elements, document, timers, resize,
+    app: instance, calls, sentMessages, messageOptions, contextUpdates, drawnRegions, lifecycle, elements, document, timers, resize,
     requestOptions, stageSize,
     get layoutReads() { return layoutReads; },
     get imageWrites() { return imageWrites; },
@@ -881,6 +882,38 @@ test('a lost annotation acknowledgement remains uncertain and is never automatic
   assert.match(h.elements['annotation-hint'].textContent,/发送未确认/);
   assert.match(h.elements['annotation-hint'].textContent,/Request timed out/);
   await h.tick();await flush();assert.equal(h.sentMessages.length,1);
+});
+
+test('an unbound widget conversation is not an uncertain delivery and preserves the draft without replay',async()=>{
+  const h=await harness({messageReply:async()=>{throw new Error('The widget conversation is not ready yet.');}});
+  h.app.ontoolresult({structuredContent:readyPreview()});h.elements['annotate-button'].click();
+  pointerDispatch(h,'pointerdown',200,250);pointerDispatch(h,'pointerup',400,650);
+  h.elements['annotation-note'].value='继续检查这里';
+  h.elements['annotation-send'].click();await flush();
+  assert.match(h.elements['annotation-hint'].textContent,/标注未发送.*会话尚未绑定/);
+  assert.match(h.elements['annotation-hint'].textContent,/show_screen/);
+  assert.doesNotMatch(h.elements['annotation-hint'].textContent,/发送未确认/);
+  assert.equal(h.elements['annotation-note'].value,'继续检查这里');
+  assert.equal(h.elements['annotation-send'].disabled,false);
+  await h.tick();assert.equal(h.sentMessages.length,1);
+});
+
+test('a host-queued annotation waits beyond the default timeout without duplicate submission',async()=>{
+  let accept;
+  const h=await harness({messageReply:()=>new Promise(resolve=>{accept=resolve;})});
+  h.app.ontoolresult({structuredContent:readyPreview()});h.elements['annotate-button'].click();
+  pointerDispatch(h,'pointerdown',200,250);pointerDispatch(h,'pointerup',400,650);
+  h.elements['annotation-send'].click();await flush();
+  assert.equal(h.messageOptions[0].timeout,600000);
+  assert.match(h.elements['annotation-hint'].textContent,/等待接收/);
+  // Advance the independent preview clock past the SDK's normal 60s timeout.
+  for(let i=0;i<260;i++)await h.tick();
+  h.elements['annotation-send'].click();await flush();
+  assert.equal(h.sentMessages.length,1);
+  assert.equal(h.elements['annotation-note'].disabled,true);
+  accept({});await flush();
+  assert.equal(h.elements['annotation-editor'].hidden,true);
+  assert.equal(h.elements['annotate-button'].disabled,false);
 });
 
 const annotationRects = h => h.elements['annotation-overlay'].children

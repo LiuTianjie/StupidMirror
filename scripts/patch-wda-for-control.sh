@@ -10,6 +10,9 @@ icon_script_path="${APPIUM_WDA_ICON_SCRIPT:-${wda_root}/Scripts/embed-runner-ico
 runner_source_path="${APPIUM_WDA_RUNNER_SOURCE:-${wda_root}/WebDriverAgentRunner/UITestingUITests.m}"
 mjpeg_source_path="${APPIUM_WDA_MJPEG_SOURCE:-${wda_root}/WebDriverAgentLib/Utilities/FBMjpegServer.m}"
 session_commands_path="${APPIUM_WDA_SESSION_COMMANDS:-${wda_root}/WebDriverAgentLib/Commands/FBSessionCommands.m}"
+custom_commands_path="${APPIUM_WDA_CUSTOM_COMMANDS:-${wda_root}/WebDriverAgentLib/Commands/FBCustomCommands.m}"
+touch_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorTouchCommands.inc"
+touch_include_path="${wda_root}/WebDriverAgentLib/Commands/FBStupidMirrorTouchCommands.inc"
 h264_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorH264Server.inc"
 h264_include_path="${wda_root}/WebDriverAgentLib/Utilities/FBStupidMirrorH264Server.inc"
 
@@ -265,7 +268,25 @@ patch_srt_status() {
   echo "Installed WDA SRT status patch: $session_commands_path"
 }
 
+# Interactive touches skip WDA's per-call foreground-app lookup; see the
+# include for the route. The include is copied on every run so an updated
+# StupidMirror always builds its current version.
+patch_fast_touch() {
+  if [ ! -f "$custom_commands_path" ] || [ ! -f "$touch_include_source" ]; then
+    echo "WDA fast-touch patch inputs are unavailable." >&2
+    return
+  fi
+  cp "$touch_include_source" "$touch_include_path"
+  if grep -q 'STUPIDMIRROR_FAST_TOUCH' "$custom_commands_path"; then
+    echo "WDA fast-touch patch already installed."
+    return
+  fi
+  printf '\n// STUPIDMIRROR_FAST_TOUCH\n#include "FBStupidMirrorTouchCommands.inc"\n' >> "$custom_commands_path"
+  echo "Installed WDA fast-touch patch: $custom_commands_path"
+}
+
 patch_icon_script
 patch_local_network_service
 patch_h264_stream
 patch_srt_status
+patch_fast_touch

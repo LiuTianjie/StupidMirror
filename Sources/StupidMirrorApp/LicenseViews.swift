@@ -10,111 +10,98 @@ struct LicenseActivationView: View {
     @State private var password = ""
     @State private var errorMessage: String?
 
+    private var isBusy: Bool { licenseManager.isActivating || licenseManager.isSigningIn }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(store.t("license.activation.title"))
-                        .font(.title2.weight(.semibold))
-                    Text(store.t("license.activation.subtitle"))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button {
-                    store.cancelActivation()
-                } label: {
-                    Label(store.t("common.close"), systemImage: "xmark")
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .disabled(licenseManager.isActivating || licenseManager.isSigningIn)
+            SheetHeader(
+                icon: "key",
+                title: store.t("license.activation.title"),
+                subtitle: store.t("license.activation.subtitle"),
+                closeHelp: store.t("common.close"),
+                closeDisabled: isBusy
+            ) {
+                store.cancelActivation()
             }
-            .padding(20)
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+            VStack(alignment: .leading, spacing: 18) {
                 licenseStatus
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(store.t("license.code"))
-                        .font(.headline)
+                    GroupLabel(title: store.t("license.code"))
                     TextField(store.t("license.code.placeholder"), text: $code)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.body.monospaced())
-                        .disabled(licenseManager.isActivating || licenseManager.isSigningIn)
+                        .fieldSurface(monospaced: true)
+                        .disabled(isBusy)
                         .onSubmit(submit)
                     Text(store.t("license.code.help"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .padding(.horizontal, 4)
                 }
 
                 if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(Theme.Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack {
-                    Spacer()
-                    Button(store.t("common.cancel")) {
-                        store.cancelActivation()
+                    HStack(alignment: .top, spacing: 10) {
+                        StatusGlyph(kind: .failed, size: 18)
+                        Text(errorMessage)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.Palette.danger)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .disabled(licenseManager.isActivating || licenseManager.isSigningIn)
-
-                    Button(action: submit) {
-                        if licenseManager.isActivating {
-                            HStack(spacing: 7) {
-                                ProgressView().controlSize(.small)
-                                Text(store.t("license.redeeming"))
-                            }
-                        } else {
-                            Label(store.t("license.redeem"), systemImage: "key.fill")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.Palette.accent)
-                    .disabled(
-                        code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            || licenseManager.isActivating
-                            || licenseManager.isSigningIn
-                    )
                 }
 
                 purchaseLinks
 
-                DisclosureGroup(store.t("license.account.optional")) {
+                DisclosureGroup {
                     VStack(alignment: .leading, spacing: 12) {
                         accountSection
                         if licenseManager.needsClaim {
                             claimBanner
                         }
                     }
-                    .padding(.top, 8)
+                    .padding(.top, 10)
+                } label: {
+                    Text(store.t("license.account.optional"))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.Ink.secondary)
                 }
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 18)
+
+            SheetFooter {
+                Spacer()
+                Button(store.t("common.cancel")) {
+                    store.cancelActivation()
+                }
+                .buttonStyle(PillButtonStyle(kind: .quiet))
+                .disabled(isBusy)
+
+                Button(action: submit) {
+                    if licenseManager.isActivating {
+                        Label(store.t("license.redeeming"), systemImage: "hourglass")
+                    } else {
+                        Label(store.t("license.redeem"), systemImage: "key")
+                    }
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary))
+                .keyboardShortcut(.defaultAction)
+                .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isBusy)
+            }
         }
-        .interactiveDismissDisabled(licenseManager.isActivating || licenseManager.isSigningIn)
+        .interactiveDismissDisabled(isBusy)
     }
 
     private var licenseStatus: some View {
-        HStack(spacing: 10) {
-            Image(systemName: statusIcon)
-                .font(.title3)
-                .foregroundStyle(statusColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(statusTitle)
-                    .font(.headline)
-                if let detail = statusDetail {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
+        CheckLine(
+            glyph: statusGlyph,
+            lead: store.t("license.status.subtitle"),
+            object: statusTitle,
+            detail: statusDetail,
+            detailColor: Theme.Ink.tertiary
+        )
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .wellSurface()
     }
 
     private var accountSection: some View {
@@ -123,10 +110,10 @@ struct LicenseActivationView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(store.t("license.signedIn"))
-                            .font(.headline)
+                            .font(.system(size: 13, weight: .medium))
                         Text(session.email ?? session.userID.uuidString)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(Theme.mono(11.5))
+                            .foregroundStyle(Theme.Ink.tertiary)
                     }
                     Spacer()
                     Button(store.t("license.signOut")) {
@@ -134,89 +121,103 @@ struct LicenseActivationView: View {
                             await store.signOutLicense()
                         }
                     }
-                    .disabled(licenseManager.isSigningIn || licenseManager.isActivating)
+                    .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                    .disabled(isBusy)
                 }
             } else {
                 Text(store.t("license.signIn.help"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 8) {
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
                     Button {
                         signIn(.google)
                     } label: {
                         Label(store.t("license.signIn.google"), systemImage: "globe")
                     }
+                    .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     Button {
                         signIn(.github)
                     } label: {
                         Label(store.t("license.signIn.github"), systemImage: "chevron.left.forwardslash.chevron.right")
                     }
+                    .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     if licenseManager.isSigningIn {
-                        ProgressView().controlSize(.small)
+                        StatusGlyph(kind: .working, size: 20)
                     }
                 }
-                .disabled(licenseManager.isSigningIn || licenseManager.isActivating)
+                .disabled(isBusy)
 
                 VStack(alignment: .leading, spacing: 8) {
                     TextField(store.t("license.signIn.email"), text: $email)
-                        .textFieldStyle(.roundedBorder)
+                        .fieldSurface()
                     SecureField(store.t("license.signIn.password"), text: $password)
-                        .textFieldStyle(.roundedBorder)
+                        .fieldSurface()
                     Button(store.t("license.signIn.emailSubmit")) {
                         signInWithEmail()
                     }
+                    .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     .disabled(
                         email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                             || password.isEmpty
-                            || licenseManager.isSigningIn
-                            || licenseManager.isActivating
+                            || isBusy
                     )
                 }
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+        .padding(14)
+        .wellSurface()
     }
 
     private var claimBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.t("license.claim.title"))
-                .font(.headline)
-            Text(store.t("license.claim.help"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button {
-                Task { @MainActor in
-                    errorMessage = nil
-                    do {
-                        try await store.claimLicense()
-                    } catch {
-                        errorMessage = localizedActivationError(error)
+        HStack(alignment: .top, spacing: 12) {
+            StatusGlyph(kind: .warning)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(store.t("license.claim.title"))
+                    .font(.system(size: 13, weight: .semibold))
+                Text(store.t("license.claim.help"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Task { @MainActor in
+                        errorMessage = nil
+                        do {
+                            try await store.claimLicense()
+                        } catch {
+                            errorMessage = localizedActivationError(error)
+                        }
                     }
+                } label: {
+                    Label(store.t("license.claim"), systemImage: "person.crop.circle.badge.checkmark")
                 }
-            } label: {
-                Label(store.t("license.claim"), systemImage: "person.crop.circle.badge.checkmark")
+                .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
+                .disabled(licenseManager.authSession == nil || isBusy)
             }
-            .disabled(licenseManager.authSession == nil || licenseManager.isActivating || licenseManager.isSigningIn)
         }
-        .padding(12)
-        .background(Theme.Palette.pending.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .wellSurface()
     }
 
     private var purchaseLinks: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(store.t("license.purchase.title"))
-                .font(.headline)
-            Text(store.t("license.purchase.help"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 12) {
-                Link(store.t("license.purchase.online"), destination: LicensePurchaseURLs.buyURL)
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.t("license.purchase.title"))
+                    .font(.system(size: 13, weight: .medium))
+                Text(store.t("license.purchase.help"))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .font(.caption.weight(.medium))
+            Spacer(minLength: 8)
+            Link(destination: LicensePurchaseURLs.buyURL) {
+                Label(store.t("license.purchase.online"), systemImage: "arrow.up.right")
+            }
+            .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+        .padding(14)
+        .wellSurface()
     }
 
     private func signIn(_ provider: LicenseAuthProvider) {
@@ -295,21 +296,12 @@ struct LicenseActivationView: View {
         }
     }
 
-    private var statusIcon: String {
+    private var statusGlyph: StatusGlyph.Kind {
         switch licenseManager.state {
-        case .licensed: "checkmark.seal.fill"
-        case .unlicensed: "lock.open.fill"
-        case .checking: "arrow.triangle.2.circlepath"
-        case .unavailable: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var statusColor: Color {
-        switch licenseManager.state {
-        case .licensed: Theme.Palette.live
-        case .unlicensed: Theme.Palette.pending
-        case .unavailable: Theme.Palette.danger
-        case .checking: .secondary
+        case .licensed: licenseManager.needsClaim ? .warning : .done
+        case .unlicensed: .warning
+        case .checking: .working
+        case .unavailable: .failed
         }
     }
 
@@ -350,26 +342,41 @@ struct LicenseSettingsSection: View {
     @ObservedObject var licenseManager: LicenseManager
 
     var body: some View {
-        Section(store.t("license.section")) {
-            HStack {
-                Label(statusTitle, systemImage: statusIcon)
+        SettingsGroup(title: store.t("license.section")) {
+            HStack(spacing: 12) {
+                StatusGlyph(kind: statusGlyph)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(statusTitle)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(capabilitySummary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if case .unavailable = licenseManager.state {
+                        Text(store.t("license.error.storage"))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.Palette.danger)
+                    }
+                }
+                Spacer(minLength: 12)
+                Button {
+                    store.presentActivation()
+                } label: {
+                    Label(store.t("license.openActivation"), systemImage: "key")
+                }
+                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+        }
+    }
 
-            Text(capabilitySummary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if case .unavailable = licenseManager.state {
-                Text(store.t("license.error.storage"))
-                    .font(.caption)
-                    .foregroundStyle(Theme.Palette.danger)
-            }
-
-            Button {
-                store.presentActivation()
-            } label: {
-                Label(store.t("license.openActivation"), systemImage: "key")
-            }
+    private var statusGlyph: StatusGlyph.Kind {
+        switch licenseManager.state {
+        case .licensed: licenseManager.needsClaim ? .warning : .done
+        case .unlicensed: .warning
+        case .checking: .working
+        case .unavailable: .failed
         }
     }
 
@@ -379,15 +386,6 @@ struct LicenseSettingsSection: View {
         case .unlicensed: store.t("license.status.unlicensed")
         case .licensed: store.t("license.status.licensed")
         case .unavailable: store.t("license.status.unavailable")
-        }
-    }
-
-    private var statusIcon: String {
-        switch licenseManager.state {
-        case .licensed: "checkmark.seal.fill"
-        case .unlicensed: "lock.open.fill"
-        case .checking: "arrow.triangle.2.circlepath"
-        case .unavailable: "exclamationmark.triangle.fill"
         }
     }
 
