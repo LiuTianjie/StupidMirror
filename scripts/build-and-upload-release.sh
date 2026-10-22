@@ -287,7 +287,7 @@ assert_release_app() {
     find "${app}/Contents/Resources/Appium" -type f -print0 \
       | while IFS= read -r -d '' candidate; do
           # Static archives are build inputs, not signed code (see build-app.sh).
-          case "$candidate" in *.a) continue ;; esac
+          [[ "$candidate" == *.a ]] && continue
           if file -b "$candidate" | grep -q 'Mach-O'; then
             printf '%s\0' "$candidate"
           fi
