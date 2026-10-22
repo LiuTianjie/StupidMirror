@@ -11,6 +11,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     /// endpoint itself arrives later through `connectWirelessVideo`.
     private(set) var wirelessDeviceUDID: String?
     private(set) var androidDevice: AndroidDeviceMetadata?
+    /// Set for an iOS Simulator, mirrored from its runner's MJPEG stream.
+    private(set) var simulatorUDID: String?
 
     @Published private(set) var state: MirrorState = .stopped
     // Live aspect ratio read from actual frames, so the window can follow
@@ -44,6 +46,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     private var lastObservedAspectRatio: Double?
     private var wirelessSRTStream: WirelessSRTH264Stream?
     private var androidStream: AndroidScrcpyStream?
+    private var simulatorStream: SimulatorMJPEGStream?
+    private var simulatorStartTask: Task<Void, Never>?
     private var androidAudioEnabled = false
     private var wirelessStreamURL: URL?
     private var wirelessRetryTask: Task<Void, Never>?
@@ -95,6 +99,16 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         installRuntimeErrorObserver()
     }
 
+    init(simulatorUDID: String) {
+        self.device = nil
+        self.wirelessDeviceUDID = nil
+        self.androidDevice = nil
+        self.simulatorUDID = simulatorUDID
+        super.init()
+        sessionQueue.setSpecific(key: sessionQueueKey, value: 1)
+        installRuntimeErrorObserver()
+    }
+
     deinit {
         if let runtimeErrorObserver {
             NotificationCenter.default.removeObserver(runtimeErrorObserver)
@@ -103,6 +117,8 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         automationActionClearTask?.cancel()
         wirelessSRTStream?.stop()
         androidStream?.stop()
+        simulatorStartTask?.cancel()
+        simulatorStream?.stop()
         clearSampleBufferConsumers()
         if DispatchQueue.getSpecific(key: sessionQueueKey) != nil {
             tearDownOnSessionQueue()
@@ -211,6 +227,16 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             wirelessOnRunning = onRunning
             wirelessGeneration &+= 1
             startAndroidAttempt(generation: wirelessGeneration)
+            return
+        }
+
+        if simulatorUDID != nil {
+            wirelessStartedAt = Date()
+            wirelessStartupBeganAt = wirelessStartedAt
+            wirelessStartupDetail = "Starting the simulator screen agent…"
+            wirelessOnRunning = onRunning
+            wirelessGeneration &+= 1
+            startSimulatorAttempt(generation: wirelessGeneration)
             return
         }
 
@@ -333,6 +359,10 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         wirelessSRTStream = nil
         androidStream?.stop()
         androidStream = nil
+        simulatorStartTask?.cancel()
+        simulatorStartTask = nil
+        simulatorStream?.stop()
+        simulatorStream = nil
         wirelessOnRunning = nil
         wirelessStartedAt = nil
         wirelessStartupDetail = nil
@@ -1048,6 +1078,85 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             self?.startAndroidAttempt(generation: generation)
+        }
+    }
+
+    // MARK: iOS Simulator
+
+    /// Brings the simulator's runner up (building it the first time), then
+    /// reads its MJPEG stream. Frames take the same path as Wi-Fi and Android.
+    @MainActor
+    private func startSimulatorAttempt(generation: UInt64) {
+        guard generation == wirelessGeneration,
+              state == .starting,
+              let udid = simulatorUDID,
+              !disposed else { return }
+        simulatorStartTask?.cancel()
+        simulatorStartTask = Task { @MainActor [weak self] in
+            do {
+                let endpoint = try await SimulatorAgentService.shared.ensureRunning(udid: udid) { detail in
+                    await MainActor.run {
+                        guard let self, generation == self.wirelessGeneration, self.state == .starting else { return }
+                        self.wirelessStartupDetail = detail
+                    }
+                }
+                guard let self, !Task.isCancelled,
+                      generation == self.wirelessGeneration,
+                      self.state == .starting || self.state == .running else { return }
+                self.wirelessStartupDetail = "Connecting the simulator screen…"
+                let stream = SimulatorMJPEGStream(
+                    url: endpoint.mjpegURL,
+                    onFrame: { [weak self] sampleBuffer in
+                        self?.receiveWirelessSampleBuffer(sampleBuffer, generation: generation)
+                    },
+                    onFailure: { [weak self] error in
+                        Task { @MainActor in
+                            self?.handleSimulatorFailure(error, generation: generation)
+                        }
+                    }
+                )
+                self.simulatorStream?.stop()
+                self.simulatorStream = stream
+                stream.start()
+            } catch is CancellationError {
+                return
+            } catch {
+                guard let self, generation == self.wirelessGeneration, self.state == .starting else { return }
+                self.simulatorStartTask = nil
+                self.wirelessOnRunning = nil
+                self.wirelessStartupDetail = nil
+                self.wirelessStartupBeganAt = nil
+                self.state = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    /// The stream dropped: the runner may have been restarted (control
+    /// reconnecting) or the simulator rebooted. Retry for a while, asking the
+    /// agent service again each time so a dead runner is relaunched.
+    @MainActor
+    private func handleSimulatorFailure(_ error: Error, generation: UInt64) {
+        guard generation == wirelessGeneration,
+              state == .starting || state == .running,
+              !disposed else { return }
+        simulatorStream?.stop()
+        simulatorStream = nil
+        lastStreamFailureAt = lastStreamFailureAt ?? Date()
+        guard Self.shouldRetryWirelessFailure(lastFailureAt: lastStreamFailureAt, window: 60) else {
+            state = .failed(error.localizedDescription)
+            wirelessOnRunning = nil
+            wirelessStartupDetail = nil
+            wirelessStartupBeganAt = nil
+            return
+        }
+        state = .starting
+        wirelessStartupBeganAt = wirelessStartupBeganAt ?? Date()
+        wirelessStartupDetail = "Reconnecting the simulator screen…"
+        wirelessRetryTask?.cancel()
+        wirelessRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.startSimulatorAttempt(generation: generation)
         }
     }
 

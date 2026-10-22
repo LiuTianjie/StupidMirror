@@ -137,6 +137,9 @@ nested_binaries() {
   fi
   find "${roots[@]}" -type f -print0 \
     | while IFS= read -r -d '' candidate; do
+        # Static archives are build inputs (the libsrt slices the screen agent
+        # links), not code that runs; a universal one would read as Mach-O.
+        case "$candidate" in *.a) continue ;; esac
         if file -b "$candidate" | grep -q 'Mach-O'; then
           printf '%s\0' "$candidate"
         fi

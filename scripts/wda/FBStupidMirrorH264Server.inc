@@ -217,7 +217,10 @@ static void SMH264CompressionOutputCallback(
 
 - (void)receiveControlMessagesFromClient:(SRTSOCKET)client
 {
-  char buffer[64];
+  // Live-mode SRT rejects a receive buffer smaller than the negotiated payload
+  // size without consuming the message, so a short buffer turns this loop
+  // into a busy spin that never sees a key-frame request.
+  char buffer[SMSRTMaximumMessageSize];
   const uint8_t keyFrameRequest[] = {'S', 'M', 'K', 'F'};
   while (self.isRunning && srt_getsockstate(client) == SRTS_CONNECTED) {
     int received = srt_recvmsg(client, buffer, sizeof(buffer));

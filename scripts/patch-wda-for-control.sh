@@ -11,6 +11,8 @@ runner_source_path="${APPIUM_WDA_RUNNER_SOURCE:-${wda_root}/WebDriverAgentRunner
 mjpeg_source_path="${APPIUM_WDA_MJPEG_SOURCE:-${wda_root}/WebDriverAgentLib/Utilities/FBMjpegServer.m}"
 session_commands_path="${APPIUM_WDA_SESSION_COMMANDS:-${wda_root}/WebDriverAgentLib/Commands/FBSessionCommands.m}"
 custom_commands_path="${APPIUM_WDA_CUSTOM_COMMANDS:-${wda_root}/WebDriverAgentLib/Commands/FBCustomCommands.m}"
+tcp_socket_path="${APPIUM_WDA_TCP_SOCKET:-${wda_root}/WebDriverAgentLib/Routing/FBTCPSocket.m}"
+web_server_path="${APPIUM_WDA_WEB_SERVER:-${wda_root}/WebDriverAgentLib/Routing/FBWebServer.m}"
 touch_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorTouchCommands.inc"
 touch_include_path="${wda_root}/WebDriverAgentLib/Commands/FBStupidMirrorTouchCommands.inc"
 h264_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorH264Server.inc"
@@ -285,8 +287,76 @@ patch_fast_touch() {
   echo "Installed WDA fast-touch patch: $custom_commands_path"
 }
 
+# A simulator's runner listens on the Mac itself. USE_IP=127.0.0.1 already
+# keeps WDA's HTTP server off the network; the MJPEG server ignored it and
+# listened on every interface, which would show the simulator's screen to the
+# LAN. It now binds the same address. Without USE_IP (an iPhone) the address
+# is nil and it still listens on every interface, as the tunnel needs.
+#
+# MJPEG_SERVER_FRAMERATE sets the stream's rate at launch; stock WDA only
+# takes it through a session's settings, which the mirror does not open.
+patch_mjpeg_server_launch_options() {
+  if [ ! -f "$tcp_socket_path" ] || [ ! -f "$web_server_path" ]; then
+    echo "WDA routing sources not found. Install the Appium XCUITest driver first." >&2
+    return
+  fi
+  if grep -q 'STUPIDMIRROR_MJPEG_BINDING' "$tcp_socket_path"; then
+    echo "WDA MJPEG binding patch already installed."
+  else
+    local tmp_path
+    tmp_path="$(mktemp)"
+    awk '
+      /^#import "FBTCPSocket.h"$/ {
+        print
+        print ""
+        print "// STUPIDMIRROR_MJPEG_BINDING"
+        print "#import \"FBConfiguration.h\""
+        next
+      }
+      /\[self.listeningSocket acceptOnPort:self.port error:error\]/ {
+        sub(/acceptOnPort:self.port error:error/, "acceptOnInterface:FBConfiguration.bindingIPAddress port:self.port error:error")
+      }
+      { print }
+    ' "$tcp_socket_path" > "$tmp_path"
+    if ! grep -q 'acceptOnInterface:FBConfiguration.bindingIPAddress' "$tmp_path"; then
+      rm -f "$tmp_path"
+      echo "WDA MJPEG binding patch did not apply." >&2
+      exit 1
+    fi
+    cat "$tmp_path" > "$tcp_socket_path"
+    rm -f "$tmp_path"
+    echo "Installed WDA MJPEG binding patch: $tcp_socket_path"
+  fi
+
+  if grep -q 'STUPIDMIRROR_MJPEG_FRAMERATE' "$web_server_path"; then
+    echo "WDA MJPEG frame-rate patch already installed."
+    return
+  fi
+  local rate_tmp
+  rate_tmp="$(mktemp)"
+  awk '
+    /NSString \*scalingFactor = \[env objectForKey:@"MJPEG_SCALING_FACTOR"\];/ {
+      print "  // STUPIDMIRROR_MJPEG_FRAMERATE"
+      print "  NSString *framerate = [env objectForKey:@\"MJPEG_SERVER_FRAMERATE\"];"
+      print "  if (framerate != nil && [framerate length] > 0) {"
+      print "    [FBConfiguration setMjpegServerFramerate:(NSUInteger)[framerate integerValue]];"
+      print "  }"
+    }
+    { print }
+  ' "$web_server_path" > "$rate_tmp"
+  if ! grep -q 'STUPIDMIRROR_MJPEG_FRAMERATE' "$rate_tmp"; then
+    rm -f "$rate_tmp"
+    echo "WDA MJPEG frame-rate patch did not apply." >&2
+    exit 1
+  fi
+  cat "$rate_tmp" > "$web_server_path"
+  rm -f "$rate_tmp"
+  echo "Installed WDA MJPEG frame-rate patch: $web_server_path"
+}
+
 patch_icon_script
 patch_local_network_service
 patch_h264_stream
 patch_srt_status
 patch_fast_touch
+patch_mjpeg_server_launch_options

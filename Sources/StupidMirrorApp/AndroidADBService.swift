@@ -1,24 +1,6 @@
 import Darwin
 import Foundation
 
-private final class AndroidCommandOutputBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stdout = Data()
-    private var stderr = Data()
-
-    func setStdout(_ data: Data) {
-        lock.withLock { stdout = data }
-    }
-
-    func setStderr(_ data: Data) {
-        lock.withLock { stderr = data }
-    }
-
-    func snapshot() -> (stdout: Data, stderr: Data) {
-        lock.withLock { (stdout, stderr) }
-    }
-}
-
 struct AndroidDeviceMetadata: Hashable, Sendable {
     static let minimumSupportedSDK = 30
 
@@ -158,11 +140,7 @@ enum AndroidRuntime {
 }
 
 enum AndroidADBService {
-    struct CommandResult: Sendable {
-        let status: Int32
-        let stdout: Data
-        let stderr: Data
-    }
+    typealias CommandResult = HostCommand.Result
 
     enum DiscoveryOutcome: Equatable, Sendable {
         case available([AndroidDeviceMetadata])
@@ -243,56 +221,13 @@ enum AndroidADBService {
         guard FileManager.default.isExecutableFile(atPath: adb) else {
             throw AndroidADBError.adbUnavailable
         }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: adb)
-        process.arguments = arguments
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let exitSemaphore = DispatchSemaphore(value: 0)
-        let readGroup = DispatchGroup()
-        let output = AndroidCommandOutputBox()
-        readGroup.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            output.setStdout(data)
-            readGroup.leave()
-        }
-        readGroup.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            output.setStderr(data)
-            readGroup.leave()
-        }
-        process.terminationHandler = { _ in exitSemaphore.signal() }
-
         do {
-            try process.run()
-        } catch {
-            try? stdoutPipe.fileHandleForReading.close()
-            try? stderrPipe.fileHandleForReading.close()
-            throw AndroidADBError.commandFailed(error.localizedDescription)
-        }
-
-        if exitSemaphore.wait(timeout: .now() + timeout) == .timedOut {
-            process.terminate()
-            if exitSemaphore.wait(timeout: .now() + 0.75) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
-                _ = exitSemaphore.wait(timeout: .now() + 1)
-            }
-            _ = readGroup.wait(timeout: .now() + 1)
+            return try HostCommand.run(adb, arguments: arguments, timeout: timeout)
+        } catch HostCommand.Failure.launchFailed(let message) {
+            throw AndroidADBError.commandFailed(message)
+        } catch HostCommand.Failure.timedOut {
             throw AndroidADBError.timedOut
         }
-        _ = readGroup.wait(timeout: .now() + 2)
-        let captured = output.snapshot()
-        return CommandResult(
-            status: process.terminationStatus,
-            stdout: captured.stdout,
-            stderr: captured.stderr
-        )
     }
 
     private static func metadata(for listed: ListedAndroidDevice, adb: String) -> AndroidDeviceMetadata {
@@ -329,13 +264,18 @@ enum AndroidADBService {
         let osVersion = properties["ro.build.version.release"]
         let sdkVersion = properties["ro.build.version.sdk"].flatMap(Int.init)
         let normalizedManufacturer = manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = model.localizedCaseInsensitiveContains(normalizedManufacturer)
-            ? model
-            : "\(normalizedManufacturer) \(model)"
-        let transport: DeviceTransport = listed.details["usb"] == nil
-            && (listed.serial.contains(":") || listed.serial.hasPrefix("adb-"))
-            ? .wireless
-            : .usb
+        let isEmulator = Self.isEmulator(serial: listed.serial, properties: properties)
+        let avdName = isEmulator ? Self.avdName(serial: listed.serial, properties: properties, adb: adb) : nil
+        let name = avdName
+            ?? (model.localizedCaseInsensitiveContains(normalizedManufacturer)
+                ? model
+                : "\(normalizedManufacturer) \(model)")
+        let transport: DeviceTransport = isEmulator
+            ? .simulator
+            : listed.details["usb"] == nil
+                && (listed.serial.contains(":") || listed.serial.hasPrefix("adb-"))
+                ? .wireless
+                : .usb
         return AndroidDeviceMetadata(
             serial: listed.serial,
             name: name,
@@ -348,6 +288,40 @@ enum AndroidADBService {
             connectionState: state,
             trustState: trust
         )
+    }
+
+    static func isEmulator(serial: String, properties: [String: String]) -> Bool {
+        serial.hasPrefix("emulator-")
+            || properties["ro.boot.qemu"] == "1"
+            || properties["ro.kernel.qemu"] == "1"
+    }
+
+    /// The emulator's AVD name, shown the way the Android Studio device manager
+    /// shows it. Older system images lack the property, so the emulator console
+    /// is asked instead.
+    private static func avdName(serial: String, properties: [String: String], adb: String) -> String? {
+        if let name = properties["ro.boot.qemu.avd_name"].flatMap(displayAVDName) {
+            return name
+        }
+        guard serial.hasPrefix("emulator-"),
+              let result = try? run(adb: adb, arguments: ["-s", serial, "emu", "avd", "name"], timeout: 3),
+              result.status == 0 else { return nil }
+        return parseEmulatorAVDName(String(decoding: result.stdout, as: UTF8.self))
+    }
+
+    /// `adb emu avd name` answers with the name, then a line reading `OK`.
+    static func parseEmulatorAVDName(_ output: String) -> String? {
+        let lines = output.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard lines.last == "OK", lines.count >= 2 else { return nil }
+        return displayAVDName(lines[0])
+    }
+
+    static func displayAVDName(_ raw: String) -> String? {
+        let name = raw.replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? nil : name
     }
 
     private static func errorMessage(_ result: CommandResult) -> String {

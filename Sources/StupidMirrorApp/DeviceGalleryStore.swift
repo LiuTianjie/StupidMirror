@@ -279,15 +279,17 @@ final class DeviceGalleryStore: ObservableObject {
         licenseManager.state.capabilities.controlEnabled
     }
 
+    /// An iPhone whose audio the Mac could play. Simulators play through the
+    /// Mac already.
     var hasConnectedIOSDevice: Bool {
-        connectedSessions.contains { $0.platform == .iOS }
+        connectedSessions.contains { $0.platform == .iOS && !$0.isIOSSimulator }
     }
 
     var cameraPermissionPresentation: CameraPermissionPresentation {
         Self.cameraPermissionPresentation(
             authorizationStatus: permissionStatus,
             hasCameraIndependentConnectedDevice: connectedSessions.contains {
-                $0.platform == .android || $0.transport == .wireless
+                !$0.needsCameraPermission
             }
         )
     }
@@ -751,10 +753,14 @@ final class DeviceGalleryStore: ObservableObject {
             async let androidTask = Task.detached(priority: .utility) {
                 AndroidADBService.discoverDevices()
             }.value
+            async let simulatorTask = Task.detached(priority: .utility) {
+                SimulatorDiscoveryService.discover()
+            }.value
             let devices = canDiscoverUSB ? AVFoundationMirrorBackend.discoverMuxedDevices() : []
             let metadata = await metadataTask
             let wirelessDiscovery = await wirelessTask
             let androidDiscovery = await androidTask
+            let simulatorDiscovery = await simulatorTask
             guard let self else { return }
             guard self.refreshGeneration == generation else { return }
             guard !Task.isCancelled, !self.isShuttingDown else {
@@ -767,7 +773,8 @@ final class DeviceGalleryStore: ObservableObject {
                 devices: devices,
                 metadata: metadata,
                 wirelessDiscovery: wirelessDiscovery,
-                androidDiscovery: androidDiscovery
+                androidDiscovery: androidDiscovery,
+                simulatorDiscovery: simulatorDiscovery
             )
             self.finishRefresh(generation: generation)
         }
@@ -802,7 +809,8 @@ final class DeviceGalleryStore: ObservableObject {
         devices: [AVCaptureDevice],
         metadata: [DeviceMetadata],
         wirelessDiscovery: WirelessDiscoveryOutcome,
-        androidDiscovery: AndroidADBService.DiscoveryOutcome
+        androidDiscovery: AndroidADBService.DiscoveryOutcome,
+        simulatorDiscovery: SimulatorDiscoveryService.Outcome
     ) {
         var remaining = sessions
         var nextSessions: [DeviceSession] = []
@@ -1051,6 +1059,51 @@ final class DeviceGalleryStore: ObservableObject {
             remaining.removeAll { session in
                 guard session.platform == .android else { return false }
                 guard !claimedIDs.contains(session.id) else { return false }
+                nextSessions.append(session)
+                claim(session)
+                return true
+            }
+        }
+
+        switch simulatorDiscovery {
+        case let .available(simulators):
+            for simulator in simulators {
+                let identity = simulator.identity
+                guard !isRemovedDevice(identity.id) else { continue }
+                guard claimedIDs.insert(identity.id).inserted else { continue }
+                claimedIDs.insert(simulator.udid)
+
+                if var existing = takeExisting(
+                    from: &remaining,
+                    id: identity.id,
+                    udid: identity.udid,
+                    captureUniqueID: nil
+                ), existing.isIOSSimulator {
+                    let shouldResume = shouldResumeAfterAdoption(
+                        existing,
+                        becomingConnected: true,
+                        transport: .simulator
+                    )
+                    existing.device = identity
+                    existing.controlSession.updateDevice(identity)
+                    disconnectedSince[existing.id] = nil
+                    if shouldResume {
+                        resumeIDs.insert(existing.id)
+                    }
+                    nextSessions.append(existing)
+                } else {
+                    // Not auto-started: mirroring launches an XCTest runner
+                    // into the simulator, which would collide with the
+                    // developer's own UI-test runs there.
+                    nextSessions.append(DeviceSession(device: identity, simulator: simulator))
+                }
+            }
+            // A simulator that was shut down takes its runner with it.
+            let booted = Set(simulators.map(\.udid))
+            Task { await SimulatorAgentService.shared.retain(only: booted) }
+        case .unavailable:
+            remaining.removeAll { session in
+                guard session.isIOSSimulator, !claimedIDs.contains(session.id) else { return false }
                 nextSessions.append(session)
                 claim(session)
                 return true
@@ -1404,6 +1457,9 @@ final class DeviceGalleryStore: ObservableObject {
         session.mirrorSession.dispose()
         session.iosAgent?.stop()
         session.controlSession.disconnect()
+        if session.isIOSSimulator, let udid = session.device.udid {
+            Task { await SimulatorAgentService.shared.stop(udid: udid) }
+        }
     }
 
     func removeDevice(_ session: DeviceSession) {
@@ -1429,8 +1485,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     func start(_ session: DeviceSession) {
         guard let session = beginConnectionAttemptIfNeeded(for: session),
-              session.platform == .android
-                  || session.transport == .wireless
+              !session.needsCameraPermission
                   || permissionStatus == .authorized else { return }
         select(session)
         requestMirrorStarts([session.id], showWindow: true)
@@ -1554,6 +1609,7 @@ final class DeviceGalleryStore: ObservableObject {
         // finish or are cancelled before the underlying WDA/Appium sessions.
         await mcpServer.shutdown()
         await automationService.shutdownPreview()
+        await automationService.finishAllRecordings()
         refreshGeneration &+= 1
         refreshTask?.cancel()
         refreshTask = nil
@@ -1614,6 +1670,7 @@ final class DeviceGalleryStore: ObservableObject {
             for udid in udids {
                 group.addTask { await IOSAgentService.terminateSharedAgent(udid: udid) }
             }
+            group.addTask { await SimulatorAgentService.shared.stopAll() }
         }
         await appiumService.shutdown()
 
@@ -1669,8 +1726,7 @@ final class DeviceGalleryStore: ObservableObject {
         for sessionID in sessionIDs {
             guard let requested = sessions.first(where: { $0.id == sessionID }),
                   let session = beginConnectionAttemptIfNeeded(for: requested) else { continue }
-            guard session.platform == .android
-                    || session.transport == .wireless
+            guard !session.needsCameraPermission
                     || permissionStatus == .authorized else { continue }
             desiredMirrorIDs.insert(session.id)
             thumbnailCaptures[session.id]?.cancel()
@@ -1873,6 +1929,7 @@ final class DeviceGalleryStore: ObservableObject {
     /// Opens whatever can fix a failed control connection: the iPhone setup
     /// guide when the phone itself still needs preparing, diagnostics otherwise.
     private func presentControlRecovery(for session: DeviceSession, message: String) {
+        if session.isIOSSimulator { return }
         if session.platform == .android {
             presentDiagnostics()
             return
@@ -1942,7 +1999,9 @@ final class DeviceGalleryStore: ObservableObject {
         statusMessage = t("status.controlPreparingAgent")
         session.controlSession.onFailure = { [weak self] message in
             guard let self, !self.isShuttingDown else { return }
-            if !Self.shouldKeepDesiredControlAfterFailure(messageKey: message) {
+            // A simulator's runner fails for local reasons (Xcode, the build)
+            // that a refresh-driven retry every few seconds cannot fix.
+            if session.isIOSSimulator || !Self.shouldKeepDesiredControlAfterFailure(messageKey: message) {
                 self.desiredControlIDs.remove(session.id)
                 self.desiredControlIDs.remove(udid)
             }
@@ -1998,6 +2057,18 @@ final class DeviceGalleryStore: ObservableObject {
                     configuration: configuration,
                     report: report
                 )
+            }
+        }
+        if session.isIOSSimulator {
+            // A simulator needs no signing, tunnel or setup: the runner its
+            // mirror uses is the control endpoint too.
+            return { report in
+                await report(.startingAgent, nil)
+                let endpoint = try await SimulatorAgentService.shared.ensureRunning(udid: udid)
+                await report(.connectingAgent, nil)
+                let backend = try await WDAControlBackend.connect(baseURL: endpoint.controlURL)
+                await report(.finishing, nil)
+                return backend
             }
         }
         let agent = session.iosAgent ?? IOSAgentService()
@@ -2115,7 +2186,7 @@ final class DeviceGalleryStore: ObservableObject {
             }
             return
         }
-        if session.platform == .iOS, session.transport == .usb, permissionStatus != .authorized {
+        if session.needsCameraPermission, permissionStatus != .authorized {
             throw DeviceAutomationError.mirrorFailed(t("permission.usbBanner.body"))
         }
 
@@ -2127,8 +2198,10 @@ final class DeviceGalleryStore: ObservableObject {
         // Returning promptly keeps first-time WDA setup outside the host's tool timeout.
         guard waitUntilRunning else { return }
 
+        // A wireless iPhone opens a tunnel first; a simulator may build its
+        // runner the first time.
         let deadline = ContinuousClock.now + .seconds(
-            session.isIOSWireless ? 120 : 20
+            session.isIOSWireless ? 120 : session.isIOSSimulator ? 200 : 20
         )
         while session.mirrorSession.state != .running {
             if case let .failed(message) = session.mirrorSession.state {
@@ -2183,11 +2256,17 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func stopControl(for session: DeviceSession) {
+        forgetControlIntent(for: session)
+        session.controlSession.disconnect()
+    }
+
+    /// Control is no longer wanted for this device, so a refresh must not
+    /// reconnect it.
+    func forgetControlIntent(for session: DeviceSession) {
         desiredControlIDs.remove(session.id)
         if let udid = session.device.udid {
             desiredControlIDs.remove(udid)
         }
-        session.controlSession.disconnect()
     }
 
     /// The signing identity and per-device build directory used to prepare
@@ -2314,7 +2393,9 @@ final class DeviceGalleryStore: ObservableObject {
         return true
     }
 
-    private func canStartControl(for session: DeviceSession) -> Bool {
+    /// Whether this device may be controlled now: it already is, or a
+    /// control slot is free. App management uses the same rule.
+    func canStartControl(for session: DeviceSession) -> Bool {
         LicenseCapabilityPolicy.canStartControl(
             capabilities: licenseManager.state.capabilities,
             activeIDs: Set(sessions.compactMap { candidate in
@@ -2544,7 +2625,21 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func captureThumbnail(for session: DeviceSession) {
         if let androidDevice = session.androidDevice {
-            captureAndroidThumbnail(for: session, serial: androidDevice.serial)
+            let serial = androidDevice.serial
+            captureHostScreenshotThumbnail(for: session) {
+                try AndroidADBService.captureScreenshot(serial: serial)
+            }
+            return
+        }
+        if session.isIOSSimulator, let udid = session.device.udid {
+            if let liveFrame = session.mirrorSession.latestWirelessFrame,
+               session.mirrorSession.state == .running {
+                applyWirelessImageThumbnail(liveFrame, for: session)
+                return
+            }
+            captureHostScreenshotThumbnail(for: session) {
+                try SimulatorDiscoveryService.screenshotPNG(udid: udid)
+            }
             return
         }
         if session.transport == .wireless {
@@ -2631,7 +2726,12 @@ final class DeviceGalleryStore: ObservableObject {
         )
     }
 
-    private func captureAndroidThumbnail(for session: DeviceSession, serial: String) {
+    /// A thumbnail from a host tool that screenshots the device directly:
+    /// `adb` for Android, `simctl` for an iOS Simulator.
+    private func captureHostScreenshotThumbnail(
+        for session: DeviceSession,
+        load: @escaping @Sendable () throws -> Data
+    ) {
         guard wirelessThumbnailTasks[session.id] == nil else { return }
         let sessionID = session.id
         wirelessThumbnailTasks[sessionID] = Task { @MainActor [weak self] in
@@ -2639,7 +2739,7 @@ final class DeviceGalleryStore: ObservableObject {
             guard let self else { return }
             do {
                 let data = try await Task.detached(priority: .utility) {
-                    try AndroidADBService.captureScreenshot(serial: serial)
+                    try load()
                 }.value
                 try Task.checkCancellation()
                 guard let image = NSImage(data: data) else {

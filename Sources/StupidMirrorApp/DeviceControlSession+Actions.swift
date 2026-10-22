@@ -75,4 +75,8 @@ extension DeviceControlSession {
     func terminateApp(_ identifier: String) async throws -> Bool {
         try await perform { try await $0.terminateApp(identifier) }
     }
+
+    func openURL(_ url: String) async throws {
+        try await perform { try await $0.openURL(url) }
+    }
 }

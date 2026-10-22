@@ -112,6 +112,7 @@ struct DeviceRowView: View {
 extension DeviceSession {
     @MainActor
     func transportLabel(_ store: DeviceGalleryStore) -> String {
+        if transport == .simulator { return store.t("transport.simulator") }
         if platform == .android { return store.t("transport.adb") }
         return transport == .wireless ? store.t("transport.wireless") : store.t("transport.usb")
     }
@@ -320,7 +321,7 @@ struct DeviceDetailView: View {
                     .frame(width: size.width, height: size.height)
 
                 Group {
-                    if (session.platform == .android || session.transport == .wireless),
+                    if !session.needsCameraPermission,
                        let wirelessFrame = mirrorSession.latestWirelessFrame {
                         Image(nsImage: wirelessFrame)
                             .resizable()
@@ -376,7 +377,7 @@ struct DeviceDetailView: View {
                         .frame(maxWidth: 220)
                 } else if mirrorSession.state == .starting {
                     StatusGlyph(kind: .working, size: 30)
-                    if session.isIOSWireless {
+                    if session.showsMirrorStartupProgress {
                         TimelineView(.periodic(from: .now, by: 1)) { context in
                             VStack(spacing: 4) {
                                 Text(mirrorSession.wirelessStartupDetail
