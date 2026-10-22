@@ -12,6 +12,9 @@ const handlePoint = (region: Region, handle: Handle): Point => ({
   y: region.y + region.height * (handle.includes('n') ? 0 : handle.includes('s') ? 1 : .5),
 });
 const copyRegions = (regions: Region[]) => regions.map(region => ({ ...region }));
+// Codex may hold ui/message while the current turn finishes. The SDK's default
+// request timeout can expire before the host's queue is ready to submit it.
+const MESSAGE_TIMEOUT = 10 * 60 * 1000;
 export const regionBetween = (a: Point, b: Point): Region => ({
   x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y),
 });
@@ -195,7 +198,7 @@ export function createAnnotations(app: App, callbacks: {
     if (!caps?.message || (!caps.message.image && !caps.updateModelContext?.image)) {
       callbacks.notify('当前宿主不支持发送截图标注，请在 Codex 插件面板打开。', true); return;
     }
-    sending = true; render(); callbacks.changed(); hint.textContent = '正在发送截图和标注…';
+    sending = true; render(); callbacks.changed(); hint.textContent = '正在发送截图和标注；Codex 忙碌时会等待接收…';
     let messageRequested = false;
     try {
       const data = await annotatedImage(frame, capturedRegions);
@@ -203,7 +206,10 @@ export function createAnnotations(app: App, callbacks: {
       const image = { type: 'image' as const, mimeType: 'image/png', data };
       if (!caps.message.image) await app.updateModelContext({ content: [image] });
       messageRequested = true;
-      const result = await app.sendMessage({ role: 'user', content: [{ type: 'text', text }, ...(caps.message.image ? [image] : [])] });
+      const result = await app.sendMessage(
+        { role: 'user', content: [{ type: 'text', text }, ...(caps.message.image ? [image] : [])] },
+        { timeout: MESSAGE_TIMEOUT },
+      );
       if (result.isError) {
         hint.textContent = '标注未发送：Codex 拒绝接收消息。截图、区域和说明已保留。';
         callbacks.notify('Codex 未接收标注，内容已保留', true);
@@ -212,11 +218,11 @@ export function createAnnotations(app: App, callbacks: {
       sending = false; end(); callbacks.notify('标注已发送给 Codex');
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (/available composer|composer is unavailable|app messages are disabled for this view|composer was closed/i.test(reason)) {
+      if (/available composer|composer is unavailable|app messages are disabled for this view|composer was closed|The widget conversation is not ready yet\./i.test(reason)) {
         // The host rejects these requests before submitting the message. This
         // differs from a lost acknowledgement, and retrying the same detached
         // app view cannot repair its host-owned conversation binding.
-        hint.textContent = '标注未发送：Codex 的聊天发送入口不可用。截图、区域和说明已保留；请回到目标聊天后再试。若仍失败，请从该聊天重新打开 StupidMirror 面板。';
+        hint.textContent = '标注未发送：Codex 的聊天发送入口不可用或会话尚未绑定。截图、区域和说明已保留。请在首次标注生成的聊天中，让 Codex 重新调用 StupidMirror 的 show_screen 打开面板，再继续发送；仅等待回复结束可能无法恢复。';
         callbacks.notify('聊天发送入口不可用，标注尚未发送', true);
       } else if (!messageRequested) {
         hint.textContent = `标注未发送：${reason.slice(0, 240)}。内容已保留。`;

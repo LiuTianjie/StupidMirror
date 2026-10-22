@@ -37,6 +37,7 @@ Available in StupidMirror 0.3.9 (bundled plugin 0.2.4).
 输入栏位于画面下方，只把标注截图和说明发到当前聊天。⌘＋回车或 Ctrl＋回车发送，
 普通回车换行；输入法选字期间不会误发送。标注期间不会误触手机。
 发送失败保留草稿，不会自动重复提交；回到实时画面可继续查看手机。
+发送请求最多等待十分钟，以便 Codex 在忙碌时排队接收；等待期间请勿重复提交。
 
 ## Compact observations / 精简观察
 
@@ -77,9 +78,17 @@ WebRTC 只在本机传输；AI 请求的截图及主动发送的标注仍会交�
 - Annotation unavailable: the host must support image user messages or image
   model-context updates plus text messages. Keep the draft and use a supported host.
 - Annotation reports an unavailable composer: Codex rejected the message before
-  submission. The image, regions and note remain in the panel. Return to the
-  target chat and retry; if it still fails, reopen StupidMirror from that chat.
+  submission. The image, regions and note remain in the panel. If the first
+  annotation created a chat, open that chat and ask Codex to call `show_screen`
+  again, then continue in the new panel. The original panel may still be bound
+  to the pre-chat composer; waiting for the response to finish does not repair
+  that binding. The plugin cannot rebind a host-owned conversation. The same
+  recovery applies to “The widget conversation is not ready yet.”
   A timeout instead means delivery is unconfirmed: check the chat before retrying.
+- Codex can queue messages when the panel has a valid chat/composer binding.
+  The widget allows ten minutes for the host to acknowledge a send. This avoids
+  the SDK's default one-minute timeout during a long reply, but does not repair
+  an unavailable composer or guarantee delivery. No automatic replay is used.
 - A manual MCP entry conflicts: the installer only migrates a matching local
   StupidMirror endpoint. Resolve other entries explicitly rather than overwriting them.
 
