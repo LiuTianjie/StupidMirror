@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.4.0</title>
-      <pubDate>Thu, 22 Oct 2026 10:32:54 +0000</pubDate>
-      <sparkle:version>202610221819</sparkle:version>
-      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+      <title>StupidMirror 0.4.1</title>
+      <pubDate>Thu, 22 Oct 2026 12:14:28 +0000</pubDate>
+      <sparkle:version>202610222003</sparkle:version>
+      <sparkle:shortVersionString>0.4.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>Redesign every window: the dashboard, device panel, settings, MCP, iPhone setup, activation, diagnostics and the mirror window share one neutral system of panels, wells, pill buttons and state marks, with colour kept for state (live, working, failed, control). The dashboard&#x27;s top strip replaces the toolbar, and the selected device shows its mirror and control state as two status lines above the screen.</li><li>Support light and dark appearance. The app follows the system by default; Settings → Interface and the menu bar can pin Light or Dark. Every text colour is tested for 4.5:1 contrast on every surface in both.</li><li>iPhone control: add a <code>/stupidmirror/touch</code> route to the bundled WebDriverAgent that synthesizes taps, double taps, long presses, swipes and drags directly through the test daemon, skipping WebDriverAgent&#x27;s per-call foreground-app lookup and coordinate resolution. Runners prepared by an earlier version keep working through the stock endpoints; run **Prepare Again** in iPhone Setup once over USB to install the route.</li><li>A quick flick now keeps its real start point, direction and speed instead of always becoming the same full-screen page swipe.</li><li>The mouse wheel scrolls the phone (each notch was previously below the minimum distance and dropped), and nearby notches are sent as one scroll.</li><li>Trackpad scrolls are sent once when the fingers lift; macOS momentum is no longer replayed as a second, late scroll.</li><li>Rapid taps are all delivered in order instead of replacing each other while the phone is busy, and scrolls queued behind a slow gesture add up instead of keeping only the last chunk.</li><li>Swipes and drags that run past the edge of the picture are pinned to the screen edge instead of being discarded.</li><li>After release, a tap ripple or the gesture&#x27;s trail fades out on the mirror, so a gesture is acknowledged before the phone answers.</li><li>Diagnostics shows each device&#x27;s median and slowest gesture round-trip time over the last 20 gestures.</li><li>Codex plugin: an annotation send waits up to ten minutes for a busy Codex to accept it instead of the SDK&#x27;s one-minute default, and an unbound widget conversation explains how to reopen the panel.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.4.0/StupidMirror-v0.4.0-macos.zip" type="application/octet-stream" sparkle:edSignature="j6suszvcVxumKOhUfksYcuyGsRPxrZXUOCOslCaBKvCKbQF8peGpClqiHpbemzMoOBqTNMhqbXrgpV07F337CQ==" length="160757306" />
+      <description><![CDATA[<ul><li>New app icon, and a matching template icon in the menu bar that follows light and dark menu bars.</li><li>The device status lines read &quot;镜像 进行中&quot; / &quot;控制 已就绪&quot; (Mirror Live / Control Ready) instead of repeating the noun.</li><li>Redesigned website with new screenshots of the 0.4 interface.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.4.1/StupidMirror-v0.4.1-macos.zip" type="application/octet-stream" sparkle:edSignature="P/XPHc86+kY9BXCLWpKOPt451GnBC75W0Bjwgi6+6afbmISYzFopFCLCutJXNi7f+Bdr4NRCQowoUyV7tO5RBg==" length="159949990" />
     </item>
   </channel>
 </rss>
