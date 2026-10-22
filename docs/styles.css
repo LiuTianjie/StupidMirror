@@ -551,10 +551,12 @@ section[id] {
 }
 
 /* A light travelling round the frame's edge (21st.dev "border beam"). */
+/* The frame is the window's own edge: 1px of beam around the screenshot,
+   its radius matching the window corner (40 px on a 2200 x 1400 image). */
 .beam-frame {
   position: relative;
   padding: 1px;
-  border-radius: 22px;
+  border-radius: calc(1.82% + 1px) / calc(2.86% + 1px);
   background: var(--line-2);
   overflow: hidden;
   box-shadow: 0 40px 120px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04);
@@ -583,9 +585,9 @@ section[id] {
 .beam-frame > .screenshot-button {
   position: relative;
   display: block;
-  border-radius: 21px;
+  border-radius: 1.82% / 2.86%;
   overflow: hidden;
-  background: var(--bg);
+  background: #1b1b1b;
 }
 
 .beam-frame img {
@@ -809,10 +811,8 @@ section[id] {
   font-size: 16px;
 }
 
-.bento-shot {
-  border-radius: 16px;
-  overflow: hidden;
-  border: 1px solid var(--line);
+.bento-shot img {
+  filter: drop-shadow(0 24px 40px rgba(0, 0, 0, 0.45));
 }
 
 .bento-shot img {
@@ -901,41 +901,45 @@ section[id] {
 
 .wireless-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  grid-template-columns: 1fr 1.12fr;
+  gap: 40px;
+  align-items: end;
 }
 
-.shot-card {
+.sheet-figure {
   margin: 0;
-  padding: 14px;
 }
 
-.shot-top {
+.sheet-figure .screenshot-button {
+  display: block;
+  width: 100%;
+}
+
+.sheet-figure img {
+  width: 100%;
+  filter: drop-shadow(0 30px 60px rgba(0, 0, 0, 0.55));
+}
+
+.sheet-figure figcaption {
   display: flex;
-  justify-content: space-between;
-  padding: 4px 8px 12px;
+  gap: 12px;
+  align-items: baseline;
+  margin-top: 18px;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.sheet-figure figcaption span {
   font-family: var(--mono);
   font-size: 11.5px;
   letter-spacing: 0.08em;
   color: var(--faint);
 }
 
-.shot-card .screenshot-button {
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-}
-
-.shot-card figcaption {
-  padding: 14px 8px 4px;
-  font-size: 14px;
-  color: var(--muted);
-}
-
 .stat-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr) 1.4fr;
-  margin-top: 14px;
+  margin-top: 56px;
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   overflow: hidden;
