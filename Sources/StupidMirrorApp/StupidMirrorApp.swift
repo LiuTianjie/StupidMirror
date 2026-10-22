@@ -12,9 +12,12 @@ struct StupidMirrorApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("StupidMirror", systemImage: "iphone.gen3.radiowaves.left.and.right") {
+        MenuBarExtra {
             MenuBarContentView()
                 .environmentObject(store)
+        } label: {
+            Image(nsImage: MenuBarIcon.image)
+                .accessibilityLabel("StupidMirror")
         }
         .menuBarExtraStyle(.menu)
         .commands {

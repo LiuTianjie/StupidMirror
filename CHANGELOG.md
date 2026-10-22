@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - 2026-10-22
+
+- New app icon, and a matching template icon in the menu bar that follows
+  light and dark menu bars.
+- The device status lines read "镜像 进行中" / "控制 已就绪" (Mirror Live /
+  Control Ready) instead of repeating the noun.
+- Redesigned website with new screenshots of the 0.4 interface.
+
 ## 0.4.0 - 2026-10-22
 
 - Redesign every window: the dashboard, device panel, settings, MCP, iPhone

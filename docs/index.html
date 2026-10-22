@@ -7,7 +7,7 @@
       name="description"
       content="StupidMirror is a native macOS iPhone mirroring and automation harness with USB and wireless video, local OCR, MCP control, and optional Android 11+ support."
     />
-    <meta name="theme-color" content="#080b0d" />
+    <meta name="theme-color" content="#08090a" />
     <meta property="og:title" content="StupidMirror | Make a real iPhone observable and operable" />
     <meta
       property="og:description"
@@ -34,6 +34,7 @@
       data-vl-auth-key="vl_web.l013pPwhfHrKStz4q2R3LEb7ZOxMSuOaxGt9C2zICug"
     ></script>
     <script>
+      document.documentElement.classList.add("js");
       if (new URLSearchParams(window.location.search).get("lang") === "zh") {
         document.documentElement.classList.add("locale-pending");
         window.setTimeout(() => document.documentElement.classList.remove("locale-pending"), 1200);
@@ -43,19 +44,18 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="styles.css?v=20261010-030" />
+    <link rel="stylesheet" href="styles.css?v=20261022-040" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
-    <div class="page-noise" aria-hidden="true"></div>
 
     <header class="site-header" data-header>
       <nav class="nav-shell" aria-label="Primary navigation">
         <a class="brand" href="#top" aria-label="StupidMirror home">
-          <img src="assets/app-icon.webp" alt="" width="40" height="40" />
+          <img src="assets/app-icon.webp" alt="" width="28" height="28" />
           <span>StupidMirror</span>
         </a>
 
@@ -81,101 +81,74 @@
         </div>
 
         <div class="nav-actions">
-          <a
-            class="nav-cta"
-            href="https://github.com/LiuTianjie/StupidMirror"
-            target="_blank"
-            rel="noreferrer"
-          >
-            GitHub
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M5 15 15 5M8 5h7v7" />
-            </svg>
-          </a>
-          <a
-            class="nav-cta"
-            href="https://github.com/LiuTianjie/StupidMirror/releases/latest"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Download latest
-            <svg viewBox="0 0 20 20" aria-hidden="true">
-              <path d="M5 15 15 5M8 5h7v7" />
-            </svg>
-          </a>
+          <a class="nav-link" href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">GitHub</a>
+          <a class="button button-primary button-small" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">Download latest</a>
         </div>
       </nav>
     </header>
 
     <main id="main">
+      <!-- Hero: announcement pill, headline, actions, the product in a beam frame. -->
       <section class="hero" id="top">
-        <div class="hero-glow hero-glow-a" aria-hidden="true"></div>
-        <div class="hero-glow hero-glow-b" aria-hidden="true"></div>
-        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="hero-dots" aria-hidden="true"></div>
 
         <div class="hero-copy reveal">
-          <img class="hero-app-icon" src="assets/app-icon.webp" alt="" width="84" height="84" />
-          <div class="hero-kicker">StupidMirror for macOS</div>
+          <a class="announce" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
+            <span class="announce-tag">0.4</span>
+            <span class="announce-text">Redesigned. Light and dark. Faster iPhone control.</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg>
+          </a>
           <h1>
-            <span class="hero-title-solid">Put your iPhone on your Mac.</span>
-            <span class="hero-title-outline">Leave the rest to</span>
-            <span class="hero-title-outline">StupidMirror.</span>
+            <span class="hero-line">Put your iPhone on your Mac.</span>
+            <span class="hero-line hero-line-soft">Leave the rest to <span class="brand-gradient">StupidMirror.</span></span>
           </h1>
           <p class="hero-lead">
             Mirror a real iPhone over USB or Wi-Fi. Then let local OCR,
             Accessibility, and MCP make it operable by you and your AI agent.
           </p>
           <div class="hero-actions">
-            <a
-              class="button button-primary"
-              href="https://github.com/LiuTianjie/StupidMirror/releases/latest"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a class="button button-primary" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
+              <svg class="apple" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.37 12.6c-.02-2.13 1.74-3.15 1.82-3.2-1-1.45-2.54-1.65-3.08-1.67-1.31-.13-2.56.77-3.22.77-.67 0-1.69-.75-2.78-.73-1.43.02-2.75.83-3.48 2.11-1.49 2.58-.38 6.39 1.06 8.48.71 1.02 1.55 2.17 2.65 2.13 1.07-.04 1.47-.69 2.76-.69 1.29 0 1.65.69 2.78.67 1.15-.02 1.87-1.04 2.57-2.07.81-1.18 1.14-2.33 1.16-2.39-.03-.01-2.22-.85-2.24-3.41ZM14.26 6.35c.59-.71.98-1.7.87-2.69-.85.03-1.88.57-2.49 1.28-.55.63-1.03 1.64-.9 2.61.95.07 1.92-.48 2.52-1.2Z" /></svg>
               Download for macOS
             </a>
-            <a class="button button-purchase" href="https://wzyp.cn/item/exords" target="_blank" rel="noreferrer">Buy activation code<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M8 5h7v7" /></svg></a>
-            <a
-              class="button button-ghost"
-              href="https://github.com/LiuTianjie/StupidMirror"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a class="button button-secondary" href="https://wzyp.cn/item/exords" target="_blank" rel="noreferrer">Buy activation code</a>
+            <a class="button button-quiet" href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">
               View source
-              <svg viewBox="0 0 20 20" aria-hidden="true">
-                <path d="M5 15 15 5M8 5h7v7" />
-              </svg>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M8 5h7v7" /></svg>
             </a>
           </div>
           <div class="hero-meta" aria-label="Product information">
-            <span>v0.4.0</span>
-            <span>macOS 15+</span>
-            <span>USB / LAN / LOCAL MCP</span>
+            <span>v0.4.1</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
           </div>
         </div>
 
         <div class="hero-stage reveal">
-          <button
-            class="screenshot-button hero-product-shot"
-            type="button"
-            data-lightbox="assets/dashboard.webp"
-            aria-label="Enlarge the StupidMirror dashboard"
-          >
-            <img
-              src="assets/dashboard.webp"
-              alt="The StupidMirror dashboard mirroring an iPhone"
-              width="1900"
-              height="1585"
-            />
-          </button>
+          <div class="beam-frame">
+            <button class="screenshot-button" type="button" data-lightbox="assets/dashboard.webp" aria-label="Enlarge the StupidMirror dashboard">
+              <img src="assets/dashboard.webp" alt="The StupidMirror dashboard mirroring an iPhone" width="1900" height="1273" />
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Marquee: what it plugs into. -->
+      <section class="marquee-band" aria-label="Works with">
+        <p class="marquee-label">Works with</p>
+        <div class="marquee" data-marquee>
+          <div class="marquee-track">
+            <span>Codex</span><span>Claude Code</span><span>Model Context Protocol</span><span>iPhone over USB</span>
+            <span>iPhone over Wi-Fi</span><span>Android 11+</span><span>WebDriverAgent</span><span>Vision OCR</span>
+            <span>VideoToolbox H.264</span><span>iOS Accessibility</span>
+          </div>
         </div>
       </section>
 
       <section class="manifesto section-shell">
-        <div class="section-index reveal">01 / MIRROR</div>
+        <p class="section-index reveal">01 / MIRROR</p>
         <div class="manifesto-copy reveal">
           <p class="display-line">It is a mirror,</p>
-          <p class="display-line muted">and a device operations console.</p>
+          <p class="display-line display-soft">and a device operations console.</p>
         </div>
         <p class="manifesto-note reveal">
           Mirroring, control, and automation no longer live in separate tools.
@@ -183,387 +156,269 @@
         </p>
       </section>
 
-      <section class="mirror-section section-shell" id="mirror">
-        <div class="mirror-visual reveal">
-          <div class="image-frame image-frame-light">
-            <div class="frame-label">
-              <span>CAMERA / MIRROR</span>
-              <span>LIVE</span>
-            </div>
-            <button
-              class="screenshot-button"
-              type="button"
-              data-lightbox="assets/camera-mirror.webp"
-              aria-label="Enlarge the camera mirroring screenshot"
-            >
-              <img
-                src="assets/camera-mirror.webp"
-                alt="StupidMirror keeps both mirror windows live while the iPhone camera is open"
-                loading="lazy"
-                width="2200"
-                height="1382"
-              />
-            </button>
+      <!-- Bento: the mirror and what makes it native. -->
+      <section class="section-shell bento" id="mirror">
+        <article class="card spotlight bento-hero reveal">
+          <div class="card-copy">
+            <p class="eyebrow">A mirror built to stay live</p>
+            <h2>No lock screen.<br />No context switching.</h2>
+            <p>
+              StupidMirror uses the iPhone screen source exposed directly by macOS.
+              Even while the iPhone camera is active, the dashboard and standalone mirror keep rendering.
+            </p>
           </div>
+          <button class="screenshot-button bento-shot" type="button" data-lightbox="assets/camera-mirror.webp" aria-label="Enlarge the camera mirroring screenshot">
+            <img src="assets/camera-mirror.webp" alt="StupidMirror keeps both mirror windows live while the iPhone camera is open" loading="lazy" width="2200" height="1422" />
+          </button>
           <span class="visual-caption">Open the camera. The mirror stays live.</span>
-        </div>
+        </article>
 
-        <div class="mirror-copy reveal">
-          <div class="eyebrow eyebrow-dark">A mirror built to stay live</div>
-          <h2>No lock screen.<br />No context switching.</h2>
-          <p>
-            StupidMirror uses the iPhone screen source exposed directly by macOS.
-            Even while the iPhone camera is active, the dashboard and standalone mirror keep rendering.
-          </p>
-          <div class="feature-list">
-            <article>
-              <span>01</span>
-              <div><strong>Plug in over USB</strong><p>Connect, trust the Mac, and the device appears.</p></div>
-            </article>
-            <article>
-              <span>02</span>
-              <div><strong>Standalone mirror</strong><p>True device proportions for debugging, capture, and demos.</p></div>
-            </article>
-            <article>
-              <span>03</span>
-              <div><strong>Multiple iPhones</strong><p>Enter an SM- activation code to unlock multiple devices. No sign-in required.</p></div>
-            </article>
-          </div>
-        </div>
-      </section>
+        <article class="card spotlight reveal">
+          <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7ZM12 16v5" /></svg></span>
+          <h3>Plug in over USB</h3>
+          <p>Connect, trust the Mac, and the device appears.</p>
+        </article>
+        <article class="card spotlight reveal">
+          <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5" /><path d="M11 18h2" /></svg></span>
+          <h3>Standalone mirror</h3>
+          <p>True device proportions for debugging, capture, and demos.</p>
+        </article>
+        <article class="card spotlight reveal">
+          <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="8" height="14" rx="2" /><rect x="13" y="5" width="8" height="14" rx="2" /></svg></span>
+          <h3>Multiple iPhones</h3>
+          <p>Enter an SM- activation code to unlock multiple devices. No sign-in required.</p>
+        </article>
+        <article class="card spotlight reveal">
+          <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z" /></svg></span>
+          <h3>Native speed</h3>
+          <p>Swift, AVFoundation, and CoreMediaIO — without a heavyweight browser shell.</p>
+        </article>
+        <article class="card spotlight reveal">
+          <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7M17 14l3 3-3 3" /></svg></span>
+          <h3>Local recognition</h3>
+          <p>macOS Vision OCR and iOS Accessibility replace visual guesswork with real targets.</p>
+        </article>
+        <article class="card spotlight reveal">
+          <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 11V6a3 3 0 0 1 6 0v8M6 13l3 7h8l2-6-4-1" /></svg></span>
+          <h3>MCP control</h3>
+          <p>Tap, swipe, long-press, type, and clear on iPhone or Android 11+ from an agent workflow.</p>
+        </article>
 
-      <section class="capability-band">
-        <div class="section-shell capability-grid">
-          <article class="capability-card reveal">
-            <span class="cap-index">01 / NATIVE</span>
-            <h3>Native speed</h3>
-            <p>Swift, AVFoundation, and CoreMediaIO — without a heavyweight browser shell.</p>
-          </article>
-          <article class="capability-card reveal">
-            <span class="cap-index">02 / WIRELESS</span>
-            <h3>Wireless freedom</h3>
-            <p>Prepare once over USB, then discover and mirror on the same local network.</p>
-          </article>
-          <article class="capability-card reveal">
-            <span class="cap-index">03 / VISION</span>
-            <h3>Local recognition</h3>
-            <p>macOS Vision OCR and iOS Accessibility replace visual guesswork with real targets.</p>
-          </article>
-          <article class="capability-card reveal">
-            <span class="cap-index">04 / MCP</span>
-            <h3>MCP control</h3>
-            <p>Tap, swipe, long-press, type, and clear on iPhone or Android 11+ from an agent workflow.</p>
-          </article>
-        </div>
-        <aside class="section-shell android-compat reveal" aria-label="Android compatibility">
-          <div class="android-compat-copy">
-            <span class="android-kicker">ALSO ON ANDROID</span>
+        <article class="card spotlight bento-wide android-card reveal" aria-label="Android compatibility">
+          <div>
+            <p class="eyebrow">ALSO ON ANDROID</p>
             <h3>Android 11+ is supported, too.</h3>
             <p>
               Connect with USB debugging and use the same StupidMirror workspace for live mirroring,
               device audio, direct control, and MCP automation.
             </p>
           </div>
-          <div class="android-compat-specs" aria-label="Android capabilities">
+          <div class="chip-grid" aria-label="Android capabilities">
             <span><b>ADB</b> discovery</span>
             <span><b>H.264</b> + audio</span>
             <span><b>UiAutomator2</b> control</span>
             <span><b>Same MCP</b> tools</span>
           </div>
-        </aside>
+        </article>
       </section>
 
-      <section class="wireless-section" id="wireless">
-        <div class="section-shell">
-          <div class="section-heading reveal">
-            <div>
-              <div class="section-index section-index-light">02 / WIRELESS</div>
-              <h2>Start with one cable.<br /><span>Keep going wirelessly.</span></h2>
-            </div>
-            <p>
-              The built-in guide checks the device, your Apple development account, and the screen agent.
-              After one USB setup, disconnect the cable and keep a full-resolution H.264 mirror over your LAN.
-            </p>
+      <!-- Wireless: one cable, then the LAN. -->
+      <section class="section-shell wireless" id="wireless">
+        <div class="section-heading reveal">
+          <div>
+            <p class="section-index">02 / WIRELESS</p>
+            <h2>Start with one cable.<br /><span class="display-soft">Keep going wirelessly.</span></h2>
           </div>
+          <p>
+            The built-in guide checks the device, your Apple development account, and the screen agent.
+            After one USB setup, disconnect the cable and keep a full-resolution H.264 mirror over your LAN.
+          </p>
+        </div>
 
-          <div class="wireless-stage">
-            <figure class="wireless-card wireless-card-main reveal">
-              <div class="card-topline">
-                <span>GUIDED SETUP</span><i></i><span>01—04</span>
-              </div>
-              <button
-                class="screenshot-button"
-                type="button"
-                data-lightbox="assets/wireless-setup.webp"
-                aria-label="Enlarge the wireless mirroring setup guide"
-              >
-                <img
-                  src="assets/wireless-setup.webp"
-                  alt="The four-step StupidMirror wireless mirroring guide"
-                  loading="lazy"
-                  width="1900"
-                  height="1584"
-                />
-              </button>
-              <figcaption>Prepare once over USB</figcaption>
-            </figure>
+        <div class="wireless-grid">
+          <figure class="card shot-card reveal">
+            <div class="shot-top"><span>GUIDED SETUP</span><span>01—04</span></div>
+            <button class="screenshot-button" type="button" data-lightbox="assets/wireless-setup.webp" aria-label="Enlarge the wireless mirroring setup guide">
+              <img src="assets/wireless-setup.webp" alt="The four-step StupidMirror wireless mirroring guide" loading="lazy" width="1900" height="1249" />
+            </button>
+            <figcaption>Prepare once over USB</figcaption>
+          </figure>
+          <figure class="card shot-card reveal">
+            <div class="shot-top"><span>LOCAL SERVER</span><span>READY</span></div>
+            <button class="screenshot-button" type="button" data-lightbox="assets/mcp-settings.webp" aria-label="Enlarge the MCP configuration screen">
+              <img src="assets/mcp-settings.webp" alt="The built-in StupidMirror MCP server configuration" loading="lazy" width="1900" height="1273" />
+            </button>
+            <figcaption>MCP configuration included</figcaption>
+          </figure>
+        </div>
 
-            <div class="wireless-specs reveal">
-              <div class="spec"><strong>LAN</strong><span>Same-network mirror</span></div>
-              <div class="spec"><strong>SRT</strong><span>Complete access units</span></div>
-              <div class="spec"><strong>H.264</strong><span>VideoToolbox codec</span></div>
-              <p>
-                Mirroring and control stay separate. Viewing a screen never installs or starts the control path behind your back.
-              </p>
-            </div>
-
-            <figure class="wireless-card wireless-card-side reveal">
-              <div class="card-topline">
-                <span>LOCAL SERVER</span><i></i><span>READY</span>
-              </div>
-              <button
-                class="screenshot-button"
-                type="button"
-                data-lightbox="assets/mcp-settings.webp"
-                aria-label="Enlarge the MCP configuration screen"
-              >
-                <img
-                  src="assets/mcp-settings.webp"
-                  alt="The built-in StupidMirror MCP server configuration"
-                  loading="lazy"
-                  width="1900"
-                  height="1584"
-                />
-              </button>
-              <figcaption>MCP configuration included</figcaption>
-            </figure>
-          </div>
+        <div class="stat-row reveal">
+          <div class="stat"><strong>LAN</strong><span>Same-network mirror</span></div>
+          <div class="stat"><strong>SRT</strong><span>Complete access units</span></div>
+          <div class="stat"><strong>H.264</strong><span>VideoToolbox codec</span></div>
+          <p class="stat-note">Mirroring and control stay separate. Viewing a screen never installs or starts the control path behind your back.</p>
         </div>
       </section>
 
-      <section class="scenes-section" id="codex">
-        <div class="section-shell">
-          <div class="scenes-heading reveal">
-            <div class="section-index section-index-light">CODEX / 0.3.1</div>
+      <!-- Codex: three steps in one row. -->
+      <section class="section-shell codex" id="codex">
+        <div class="section-heading reveal">
+          <div>
+            <p class="section-index">CODEX</p>
             <h2>Your phone, inside Codex.</h2>
-            <p>Connect once. View, operate, annotate.</p>
+          </div>
+          <div>
+            <p class="lead-strong">Connect once. View, operate, annotate.</p>
             <p>Open MCP Automation settings and click Connect Codex. Select StupidMirror in a new chat to open the embedded phone panel.</p>
           </div>
-          <div class="scene-grid">
-            <article class="scene-card reveal"><span class="scene-number">01</span><h3>Live video in your chat</h3><p>Local WebRTC carries the phone video into Codex. Switch devices, pause, or resume without a separate mirror window.</p></article>
-            <article class="scene-card reveal"><span class="scene-number">02</span><h3>You and your AI can operate</h3><p>Enable manual control to tap and drag. AI observations keep images by default, with compact text and targeted controls.</p></article>
-            <article class="scene-card reveal"><span class="scene-number">03</span><h3>Point it out with annotations</h3><p>Freeze a frame, move and resize numbered regions, then send the marked image and your note with Command-Enter. The composer stays below the picture.</p></article>
-          </div>
-          <p class="codex-guide"><a href="https://github.com/LiuTianjie/StupidMirror/blob/main/docs/codex-plugin.md">Read the Codex setup guide</a></p>
-          <p class="codex-privacy">Video stays local. Screenshots requested by your AI and annotations you send follow your AI client’s data settings. Host support is required for image messages.</p>
+        </div>
+        <div class="step-grid">
+          <article class="card spotlight step reveal"><span class="step-number">01</span><h3>Live video in your chat</h3><p>Local WebRTC carries the phone video into Codex. Switch devices, pause, or resume without a separate mirror window.</p></article>
+          <article class="card spotlight step reveal"><span class="step-number">02</span><h3>You and your AI can operate</h3><p>Enable manual control to tap and drag. AI observations keep images by default, with compact text and targeted controls.</p></article>
+          <article class="card spotlight step reveal"><span class="step-number">03</span><h3>Point it out with annotations</h3><p>Freeze a frame, move and resize numbered regions, then send the marked image and your note with Command-Enter. The composer stays below the picture.</p></article>
+        </div>
+        <div class="codex-foot reveal">
+          <a class="text-link" href="https://github.com/LiuTianjie/StupidMirror/blob/main/docs/codex-plugin.md">Read the Codex setup guide<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+          <p>Video stays local. Screenshots requested by your AI and annotations you send follow your AI client’s data settings. Host support is required for image messages.</p>
         </div>
       </section>
 
-      <section class="automation-section" id="automation">
-        <div class="automation-grid" aria-hidden="true"></div>
+      <!-- Automation: tool marquee, three recognised screens, three claims. -->
+      <section class="automation" id="automation">
+        <div class="aurora aurora-low" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="section-shell">
           <div class="automation-intro reveal">
-            <div class="section-index section-index-cyan">03 / AI HARNESS</div>
-            <h2>AI is not a spectator.<br /><span>It can operate the iPhone.</span></h2>
+            <p class="section-index">03 / AI HARNESS</p>
+            <h2>AI is not a spectator.<br /><span class="brand-gradient">It can operate the iPhone.</span></h2>
             <p>
               StupidMirror includes an MCP server bound to localhost. It embeds no model and asks for no model API key —
               it hands the real device to the Codex or Claude Code setup you already use.
             </p>
           </div>
+        </div>
 
-          <div class="tool-rail reveal" aria-label="Supported automation actions">
-            <span>OBSERVE</span><i></i><span>TAP</span><i></i><span>SWIPE</span><i></i>
-            <span>LONG PRESS</span><i></i><span>TYPE</span><i></i><span>ASSERT</span>
+        <div class="marquee marquee-tools" data-marquee aria-label="MCP tools">
+          <div class="marquee-track">
+            <code>observe_screen</code><code>tap_text</code><code>tap_element</code><code>swipe</code><code>long_press</code>
+            <code>type_text</code><code>replace_text</code><code>assert_screen</code><code>wait_for</code><code>get_ui_tree</code>
+            <code>show_screen</code><code>press_button</code><code>activate_app</code><code>scroll</code><code>screenshot</code>
           </div>
+        </div>
 
+        <div class="section-shell">
           <div class="phone-showcase">
-            <article class="phone-card phone-card-a reveal">
-              <button
-                class="screenshot-button"
-                type="button"
-                data-lightbox="assets/automation-1.webp"
-                aria-label="Enlarge Home Screen element recognition"
-              >
-                <img
-                  src="assets/automation-1.webp"
-                  alt="Numbered clickable regions on the iPhone Home Screen"
-                  loading="lazy"
-                  width="794"
-                  height="1812"
-                />
-              </button>
-            </article>
-            <article class="phone-card phone-card-b reveal">
-              <button
-                class="screenshot-button"
-                type="button"
-                data-lightbox="assets/automation-5.webp"
-                aria-label="Enlarge feed element recognition"
-              >
-                <img
-                  src="assets/automation-5.webp"
-                  alt="Recognized clickable regions in a dense content feed"
-                  loading="lazy"
-                  width="794"
-                  height="1812"
-                />
-              </button>
-            </article>
-            <article class="phone-card phone-card-c reveal">
-              <button
-                class="screenshot-button"
-                type="button"
-                data-lightbox="assets/automation-7.webp"
-                aria-label="Enlarge short-video screen recognition"
-              >
-                <img
-                  src="assets/automation-7.webp"
-                  alt="Numbered buttons and labels on a short-video screen"
-                  loading="lazy"
-                  width="794"
-                  height="1812"
-                />
-              </button>
-            </article>
+            <button class="screenshot-button phone-card reveal" type="button" data-lightbox="assets/automation-1.webp" aria-label="Enlarge Home Screen element recognition">
+              <img src="assets/automation-1.webp" alt="Numbered clickable regions on the iPhone Home Screen" loading="lazy" width="794" height="1812" />
+            </button>
+            <button class="screenshot-button phone-card phone-card-mid reveal" type="button" data-lightbox="assets/automation-5.webp" aria-label="Enlarge feed element recognition">
+              <img src="assets/automation-5.webp" alt="Recognized clickable regions in a dense content feed" loading="lazy" width="794" height="1812" />
+            </button>
+            <button class="screenshot-button phone-card reveal" type="button" data-lightbox="assets/automation-7.webp" aria-label="Enlarge short-video screen recognition">
+              <img src="assets/automation-7.webp" alt="Numbered buttons and labels on a short-video screen" loading="lazy" width="794" height="1812" />
+            </button>
           </div>
 
-          <div class="automation-copy-grid">
-            <article class="reveal">
-              <span>01</span>
-              <h3>Understand, then act</h3>
-              <p>The latest frame, local Vision OCR, and iOS Accessibility converge on the real target.</p>
-            </article>
-            <article class="reveal">
-              <span>02</span>
-              <h3>Every action is visible</h3>
-              <p>Targets, taps, and swipe paths appear only on the Mac, ready for review or takeover.</p>
-            </article>
-            <article class="reveal">
-              <span>03</span>
-              <h3>Built for real interfaces</h3>
-              <p>System Settings, the App Store, dense feeds, and custom canvases all yield semantic targets.</p>
-            </article>
+          <div class="claim-grid">
+            <article class="reveal"><span>01</span><h3>Understand, then act</h3><p>The latest frame, local Vision OCR, and iOS Accessibility converge on the real target.</p></article>
+            <article class="reveal"><span>02</span><h3>Every action is visible</h3><p>Targets, taps, and swipe paths appear only on the Mac, ready for review or takeover.</p></article>
+            <article class="reveal"><span>03</span><h3>Built for real interfaces</h3><p>System Settings, the App Store, dense feeds, and custom canvases all yield semantic targets.</p></article>
           </div>
         </div>
       </section>
 
-      <section class="gallery-section">
-        <div class="section-shell">
-          <div class="gallery-heading reveal">
-            <div>
-              <div class="eyebrow eyebrow-dark">Real screens. Real control.</div>
-              <h2>Not a demo page.<br />Real-world apps.</h2>
-            </div>
-            <p>Drag through the captures. Open any screen to inspect the recognized targets.</p>
+      <section class="gallery">
+        <div class="section-shell section-heading reveal">
+          <div>
+            <p class="section-index">Real screens. Real control.</p>
+            <h2>Not a demo page.<br /><span class="display-soft">Real-world apps.</span></h2>
           </div>
+          <p>Drag through the captures. Open any screen to inspect the recognized targets.</p>
         </div>
-
         <div class="screen-gallery" aria-label="Recognition captures from real apps">
           <figure class="gallery-card reveal">
-            <button class="screenshot-button" type="button" data-lightbox="assets/automation-2.webp">
-              <img src="assets/automation-2.webp" alt="Element recognition on a Meituan screen" loading="lazy" width="794" height="1812" />
-            </button>
+            <button class="screenshot-button" type="button" data-lightbox="assets/automation-2.webp"><img src="assets/automation-2.webp" alt="Element recognition on a Meituan screen" loading="lazy" width="794" height="1812" /></button>
             <figcaption>Local services / dense information</figcaption>
           </figure>
           <figure class="gallery-card reveal">
-            <button class="screenshot-button" type="button" data-lightbox="assets/automation-3.webp">
-              <img src="assets/automation-3.webp" alt="Element recognition in iOS Settings" loading="lazy" width="794" height="1812" />
-            </button>
+            <button class="screenshot-button" type="button" data-lightbox="assets/automation-3.webp"><img src="assets/automation-3.webp" alt="Element recognition in iOS Settings" loading="lazy" width="794" height="1812" /></button>
             <figcaption>System Settings / native controls</figcaption>
           </figure>
           <figure class="gallery-card reveal">
-            <button class="screenshot-button" type="button" data-lightbox="assets/automation-4.webp">
-              <img src="assets/automation-4.webp" alt="Element recognition in the App Store" loading="lazy" width="794" height="1812" />
-            </button>
+            <button class="screenshot-button" type="button" data-lightbox="assets/automation-4.webp"><img src="assets/automation-4.webp" alt="Element recognition in the App Store" loading="lazy" width="794" height="1812" /></button>
             <figcaption>App Store / layered cards</figcaption>
           </figure>
           <figure class="gallery-card reveal">
-            <button class="screenshot-button" type="button" data-lightbox="assets/automation-6.webp">
-              <img src="assets/automation-6.webp" alt="Element recognition in an education app" loading="lazy" width="794" height="1812" />
-            </button>
+            <button class="screenshot-button" type="button" data-lightbox="assets/automation-6.webp"><img src="assets/automation-6.webp" alt="Element recognition in an education app" loading="lazy" width="794" height="1812" /></button>
             <figcaption>Business apps / custom canvas</figcaption>
           </figure>
         </div>
       </section>
 
-      <section class="privacy-section section-shell">
-        <div class="privacy-mark reveal" aria-hidden="true">LOCAL</div>
-        <div class="privacy-content reveal">
-          <div class="section-index">04 / PRIVACY</div>
-          <h2>Recognition stays local.<br />Control stays with you.</h2>
-          <p>
-            OCR runs on demand on your Mac. Action overlays never go back to the iPhone or into the video stream.
-            StupidMirror embeds no model, needs no model API key, and never uploads the screen to a model service on its own.
-          </p>
-          <div class="privacy-pills">
-            <span>LOCALHOST MCP</span>
-            <span>ON-DEMAND OCR</span>
-            <span>VISIBLE ACTIONS</span>
+      <section class="section-shell privacy">
+        <div class="card privacy-card reveal">
+          <div>
+            <p class="section-index">04 / PRIVACY</p>
+            <h2>Recognition stays local.<br /><span class="display-soft">Control stays with you.</span></h2>
+            <p>
+              OCR runs on demand on your Mac. Action overlays never go back to the iPhone or into the video stream.
+              StupidMirror embeds no model, needs no model API key, and never uploads the screen to a model service on its own.
+            </p>
           </div>
+          <ul class="check-list">
+            <li><span class="check" aria-hidden="true"></span>LOCALHOST MCP</li>
+            <li><span class="check" aria-hidden="true"></span>ON-DEMAND OCR</li>
+            <li><span class="check" aria-hidden="true"></span>VISIBLE ACTIONS</li>
+          </ul>
         </div>
       </section>
 
-      <section class="scenes-section" id="scenes">
-        <div class="section-shell">
-          <div class="scenes-heading reveal">
-            <div class="section-index section-index-light">05 / USE CASES</div>
-            <h2>One Mac.<br /><span>Three new ways to work.</span></h2>
+      <section class="section-shell scenes" id="scenes">
+        <div class="section-heading reveal">
+          <div>
+            <p class="section-index">05 / USE CASES</p>
+            <h2>One Mac.<br /><span class="display-soft">Three new ways to work.</span></h2>
           </div>
-          <div class="scene-grid">
-            <article class="scene-card reveal">
-              <span class="scene-number">01</span>
-              <h3>Development &amp; testing</h3>
-              <p>Debug real hardware, reproduce issues, and rerun flows without bouncing between iPhone and Mac.</p>
-              <ul><li>Live device video</li><li>Visible action trails</li><li>Fast WDA reconnects</li></ul>
-            </article>
-            <article class="scene-card scene-card-accent reveal">
-              <span class="scene-number">02</span>
-              <h3>AI automation</h3>
-              <p>Hand a real device to Codex or Claude Code through MCP for observable, verifiable workflows.</p>
-              <ul><li>Semantic targeting</li><li>Local OCR</li><li>Taps and text input</li></ul>
-            </article>
-            <article class="scene-card reveal">
-              <span class="scene-number">03</span>
-              <h3>Demos &amp; multiple devices</h3>
-              <p>Standalone mirrors fit recording, streaming, and demos; an account-bound SM- license unlocks parallel iPhone workflows.</p>
-              <ul><li>Device-ratio windows</li><li>Parallel devices</li><li>English and Chinese UI</li></ul>
-            </article>
-          </div>
+        </div>
+        <div class="step-grid">
+          <article class="card spotlight scene reveal">
+            <span class="step-number">01</span>
+            <h3>Development &amp; testing</h3>
+            <p>Debug real hardware, reproduce issues, and rerun flows without bouncing between iPhone and Mac.</p>
+            <ul><li>Live device video</li><li>Visible action trails</li><li>Fast WDA reconnects</li></ul>
+          </article>
+          <article class="card spotlight scene scene-featured reveal">
+            <span class="step-number">02</span>
+            <h3>AI automation</h3>
+            <p>Hand a real device to Codex or Claude Code through MCP for observable, verifiable workflows.</p>
+            <ul><li>Semantic targeting</li><li>Local OCR</li><li>Taps and text input</li></ul>
+          </article>
+          <article class="card spotlight scene reveal">
+            <span class="step-number">03</span>
+            <h3>Demos &amp; multiple devices</h3>
+            <p>Standalone mirrors fit recording, streaming, and demos; an account-bound SM- license unlocks parallel iPhone workflows.</p>
+            <ul><li>Device-ratio windows</li><li>Parallel devices</li><li>English and Chinese UI</li></ul>
+          </article>
         </div>
       </section>
 
       <section class="final-cta">
-        <div class="cta-grid" aria-hidden="true"></div>
+        <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="cta-content reveal">
-          <img src="assets/app-icon.webp" alt="" width="96" height="96" />
-          <div class="eyebrow">StupidMirror for macOS</div>
-          <h2>Now put a real iPhone<br /><span>into your workflow.</span></h2>
+          <img class="cta-icon" src="assets/app-icon.webp" alt="" width="112" height="112" />
+          <h2>Now put a real iPhone<br /><span class="brand-gradient">into your workflow.</span></h2>
           <p>macOS 15+ · Free for personal and noncommercial use · Commercial license required</p>
-          <div class="hero-actions cta-actions">
-            <a
-              class="button button-primary"
-              href="https://github.com/LiuTianjie/StupidMirror/releases/latest"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Download latest release
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M8 5h7v7" /></svg>
-            </a>
-            <a class="button button-purchase" href="https://wzyp.cn/item/exords" target="_blank" rel="noreferrer">Buy activation code<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M8 5h7v7" /></svg></a>
-            <a
-              class="button button-ghost"
-              href="https://github.com/LiuTianjie/StupidMirror"
-              target="_blank"
-              rel="noreferrer"
-            >View on GitHub</a>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">Download latest release</a>
+            <a class="button button-secondary" href="https://wzyp.cn/item/exords" target="_blank" rel="noreferrer">Buy activation code</a>
+            <a class="button button-quiet" href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">View on GitHub<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 15 15 5M8 5h7v7" /></svg></a>
           </div>
         </div>
       </section>
     </main>
 
     <footer class="site-footer">
-      <div class="footer-inner">
-        <a class="brand" href="#top">StupidMirror</a>
+      <div class="section-shell footer-inner">
+        <a class="brand" href="#top"><img src="assets/app-icon.webp" alt="" width="22" height="22" /><span>StupidMirror</span></a>
         <p>Native iPhone mirroring &amp; automation harness for macOS.</p>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
@@ -571,13 +426,11 @@
 
     <dialog class="lightbox" data-lightbox-dialog aria-label="Screenshot preview">
       <button type="button" class="lightbox-close" data-lightbox-close aria-label="Close preview">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M6 6l12 12M18 6 6 18" />
-        </svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
       </button>
       <img src="" alt="Enlarged product screenshot" data-lightbox-image />
     </dialog>
 
-    <script src="script.js?v=20261010-030"></script>
+    <script src="script.js?v=20261022-040"></script>
   </body>
 </html>

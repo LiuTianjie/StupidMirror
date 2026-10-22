@@ -5,7 +5,23 @@ const lightbox = document.querySelector("[data-lightbox-dialog]");
 const lightboxImage = document.querySelector("[data-lightbox-image]");
 const lightboxClose = document.querySelector("[data-lightbox-close]");
 
+// Marquees loop by scrolling two copies of their items; the copy is made
+// before the text walker below so both halves get translated.
+document.querySelectorAll("[data-marquee] .marquee-track").forEach((track) => {
+  Array.from(track.children).forEach((item) => {
+    const copy = item.cloneNode(true);
+    copy.setAttribute("aria-hidden", "true");
+    track.appendChild(copy);
+  });
+});
+
 const chineseText = new Map([
+  ["Redesigned. Light and dark. Faster iPhone control.", "全新界面，支持浅色与深色，iPhone 控制更快。"],
+  ["Works with", "适配"],
+  ["iPhone over USB", "iPhone · USB"],
+  ["iPhone over Wi-Fi", "iPhone · 无线"],
+  ["iOS Accessibility", "iOS 访问树"],
+  ["Real screens. Real control.", "真实画面，真实控制"],
   ["Your phone, inside Codex.", "把手机，放进 Codex。"],
   ["Connect once. View, operate, annotate.", "连接一次，查看、操作、标注。"],
   ["Open MCP Automation settings and click Connect Codex. Select StupidMirror in a new chat to open the embedded phone panel.", "在 MCP 自动化设置中点击「连接 Codex」，新建聊天并选中 StupidMirror，即可打开内嵌手机面板。"],
@@ -301,4 +317,31 @@ document.addEventListener("keydown", (event) => {
     menu.classList.remove("open");
     document.body.classList.remove("menu-open");
   }
+});
+
+// Sections fade up once as they enter the viewport.
+const revealTargets = document.querySelectorAll(".reveal");
+if ("IntersectionObserver" in window) {
+  const revealObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add("in-view");
+        revealObserver.unobserve(entry.target);
+      });
+    },
+    { rootMargin: "0px 0px -8% 0px", threshold: 0.08 }
+  );
+  revealTargets.forEach((target) => revealObserver.observe(target));
+} else {
+  revealTargets.forEach((target) => target.classList.add("in-view"));
+}
+
+// Spotlight cards: the light follows the pointer.
+document.querySelectorAll(".spotlight").forEach((card) => {
+  card.addEventListener("pointermove", (event) => {
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty("--mx", `${event.clientX - rect.left}px`);
+    card.style.setProperty("--my", `${event.clientY - rect.top}px`);
+  });
 });
