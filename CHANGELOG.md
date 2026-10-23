@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 - 2026-10-23
+
+- Recordings run to the moment `stop_recording` is called. When the screen
+  stayed still at the end (an Android device only sends frames when its
+  screen changes), the last frame was not held, so browsers and other
+  players ended the video early.
+- `install_app` reports a missing file or the wrong package type for the
+  device as `invalid_argument` instead of `control_failed`.
+
 ## 0.5.0 - 2026-10-23
 
 - iOS Simulators: a booted simulator now appears as a device. StupidMirror

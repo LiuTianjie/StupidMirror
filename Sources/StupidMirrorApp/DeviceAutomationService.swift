@@ -1346,8 +1346,14 @@ final class DeviceAutomationService: @unchecked Sendable {
                 }
             }
         } catch let failure as DeviceAppManager.Failure {
-            if case let .timedOut(message) = failure { throw DeviceAutomationError.timedOut(message) }
-            throw DeviceAutomationError.controlFailed(failure.localizedDescription)
+            switch failure {
+            case let .timedOut(message):
+                throw DeviceAutomationError.timedOut(message)
+            case .packageNotFound, .wrongPackageType:
+                throw DeviceAutomationError.invalidArgument(failure.localizedDescription)
+            case .toolUnavailable, .commandFailed:
+                throw DeviceAutomationError.controlFailed(failure.localizedDescription)
+            }
         }
     }
 

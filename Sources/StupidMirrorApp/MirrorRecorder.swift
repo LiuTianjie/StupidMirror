@@ -56,6 +56,8 @@ final class MirrorRecorder: @unchecked Sendable {
     private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
     private var startTime: CMTime?
     private var lastTime: CMTime = .invalid
+    /// The last frame written, already fitted to the recording's size.
+    private var lastFrame: CVPixelBuffer?
     private var size: (width: Int, height: Int) = (0, 0)
     private var frameCount = 0
     private var failure: String?
@@ -104,9 +106,18 @@ final class MirrorRecorder: @unchecked Sendable {
             guard !finished else { return Ending(failure: failure, reason: autoStopReason) }
             finished = true
             guard let writer, let startTime else { return Ending(failure: failure, reason: autoStopReason) }
-            input?.markAsFinished()
             // An automatic stop already ended at the last frame it kept.
             let end = autoStopReason == nil ? stopTime : lastTime
+            // A still screen sends no new frames (Android only sends changes),
+            // and an MP4 track ends at its last sample, not at endSession.
+            // Writing the last frame again at the end holds it on screen.
+            if autoStopReason == nil, failure == nil, let lastFrame, let input, let adaptor,
+               CMTimeGetSeconds(CMTimeSubtract(end, lastTime)) > 0.05,
+               input.isReadyForMoreMediaData,
+               adaptor.append(lastFrame, withPresentationTime: CMTimeSubtract(end, startTime)) {
+                lastTime = end
+            }
+            input?.markAsFinished()
             let length = CMTimeMaximum(CMTimeSubtract(end, startTime), .zero)
             writer.endSession(atSourceTime: length)
             return Ending(writer: writer, failure: failure, reason: autoStopReason, duration: CMTimeGetSeconds(length))
@@ -162,6 +173,7 @@ final class MirrorRecorder: @unchecked Sendable {
         guard let frame = fitted(pixelBuffer, pool: adaptor.pixelBufferPool) else { return }
         if adaptor.append(frame, withPresentationTime: CMTimeSubtract(time, startTime)) {
             lastTime = time
+            lastFrame = frame
             frameCount += 1
         } else {
             failure = writer.error?.localizedDescription ?? "a frame could not be appended"
