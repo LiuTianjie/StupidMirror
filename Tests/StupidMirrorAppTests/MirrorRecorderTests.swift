@@ -30,6 +30,36 @@ final class MirrorRecorderTests: XCTestCase {
         XCTAssertEqual(size, CGSize(width: 120, height: 240))
     }
 
+    func testAStillScreenIsHeldUntilStop() async throws {
+        let store = MirrorFrameStore()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recorder-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let recorder = MirrorRecorder(store: store, outputURL: url)
+        recorder.start()
+        store.submit(try Self.sampleBuffer(width: 120, height: 240))
+        try await Task.sleep(for: .milliseconds(40))
+        store.submit(try Self.sampleBuffer(width: 120, height: 240))
+        // No frames for a while, as from an Android screen that does not change.
+        try await Task.sleep(for: .milliseconds(900))
+        let result = try await recorder.stop()
+
+        // The samples themselves must reach the end. AVFoundation would
+        // stretch a short track to the session's end through an edit list,
+        // but other players (browsers, ffmpeg) stop at the last sample.
+        let media = try await Self.mediaDuration(url)
+        XCTAssertEqual(media, result.durationSeconds, accuracy: 0.15)
+        XCTAssertGreaterThan(media, 0.8)
+    }
+
+    /// Where the last sample sits in the media itself, before any edit list.
+    private static func mediaDuration(_ url: URL) async throws -> Double {
+        let tracks = try await AVURLAsset(url: url).loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let cursor = try XCTUnwrap(track.makeSampleCursorAtLastSampleInDecodeOrder())
+        return CMTimeGetSeconds(cursor.presentationTimeStamp)
+    }
+
     func testStopWithoutFramesReportsIt() async {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("recorder-\(UUID().uuidString).mp4")
