@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.5.0</title>
-      <pubDate>Thu, 22 Oct 2026 18:05:59 +0000</pubDate>
-      <sparkle:version>202610230154</sparkle:version>
-      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
+      <title>StupidMirror 0.5.1</title>
+      <pubDate>Fri, 23 Oct 2026 03:33:21 +0000</pubDate>
+      <sparkle:version>202610231117</sparkle:version>
+      <sparkle:shortVersionString>0.5.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>iOS Simulators: a booted simulator now appears as a device. StupidMirror builds its screen agent for the simulator once (no signing, Xcode required), mirrors it at up to 60 fps and controls it like an iPhone. All of the simulator agent&#x27;s ports listen on this Mac only.</li><li>Android emulators are recognised, listed under their AVD name and marked Simulator instead of USB.</li><li>Simulators and emulators count toward the simultaneous device limit like real devices. They are not mirrored automatically, so a simulator running your own UI tests is left alone until you open it.</li><li>New MCP tools for agents: - <code>list_apps</code>, <code>install_app</code> (.app / .ipa / .apk), <code>uninstall_app</code> and <code>open_url</code> (web links and app deep links) on iPhones, iOS Simulators and Android. They use the platform&#x27;s own tools and need no control session, except <code>open_url</code> on an iPhone. - <code>start_recording</code> / <code>stop_recording</code> save the live mirror as an H.264 <code>.mp4</code> in <code>~/Movies/StupidMirror</code>, up to 10 minutes.</li><li><code>list_devices</code> and the other device results include <code>transport</code> (<code>usb</code>, <code>wireless</code> or <code>simulator</code>).</li><li>Fix control reconnecting by itself a few seconds after an agent called <code>disconnect_control</code>.</li><li>Fix the iPhone screen agent spinning on its Wi-Fi video connection: it read control messages into a buffer smaller than SRT accepts, so it busy-looped and never received key-frame requests, which slowed recovery from lost video packets. Run **Prepare Again** in iPhone Setup once over USB to install the fixed agent.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.5.0/StupidMirror-v0.5.0-macos.zip" type="application/octet-stream" sparkle:edSignature="xEvyTzL9B6p9Ox041dj2B8Jza38vm9ZIjEND86HYONyLwEKIUBHxzvLzP77WZR2iX7X7FU/9GPqSyCgK9DwJBA==" length="163354287" />
+      <description><![CDATA[<ul><li>Recordings run to the moment <code>stop_recording</code> is called. When the screen stayed still at the end (an Android device only sends frames when its screen changes), the last frame was not held, so browsers and other players ended the video early.</li><li><code>install_app</code> reports a missing file or the wrong package type for the device as <code>invalid_argument</code> instead of <code>control_failed</code>.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.5.1/StupidMirror-v0.5.1-macos.zip" type="application/octet-stream" sparkle:edSignature="hjuLo7QVDcqGndJtUJodSU9WQqU+Jhf6zCxcM90+zu0CdY3RuO+3UiOSA8ZviklZvd+q1HYmY/+J2X8lLeuyAA==" length="163354520" />
     </item>
   </channel>
 </rss>
