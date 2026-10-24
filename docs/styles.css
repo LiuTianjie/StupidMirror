@@ -1634,3 +1634,69 @@ section[id] {
   font-size: 15px;
   line-height: 1.65;
 }
+
+.guide-hero {
+  padding-top: 150px;
+}
+
+.guide-hero h1 {
+  max-width: 820px;
+  margin-top: 14px;
+}
+
+.guide-breadcrumb {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 28px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.guide-breadcrumb a {
+  color: inherit;
+}
+
+.guide-lead {
+  max-width: 720px;
+  margin-top: 20px;
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.guide-shot {
+  margin: 48px 0 0;
+}
+
+.guide-shot img {
+  width: 100%;
+  max-width: 880px;
+  height: auto;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+}
+
+.guide-section {
+  padding-top: 96px;
+}
+
+.guide-section h2 {
+  margin-bottom: 20px;
+}
+
+.guide-note {
+  max-width: 760px;
+  margin: 0 0 24px;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.guide-grid {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+@media (max-width: 860px) {
+  .guide-grid {
+    grid-template-columns: 1fr;
+  }
+}

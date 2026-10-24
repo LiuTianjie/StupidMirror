@@ -51,6 +51,7 @@ jobs:
           git diff --exit-code -- plugins/stupidmirror/assets/phone-screen.html
           node --check docs/script.js
           node scripts/build-site-zh.mjs --check
+          node scripts/build-site-guides.mjs --check
           bash -n scripts/build-app.sh scripts/build-and-upload-release.sh scripts/install-codex-plugin.sh scripts/build-preview.sh
       - name: Build
         run: swift build --build-system native

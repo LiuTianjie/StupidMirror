@@ -14,4 +14,18 @@
     <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/" />
   </url>
+  <url>
+    <loc>https://stupidmirror.itool.tech/codex/</loc>
+    <lastmod>2026-10-24</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/codex/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/codex/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/codex/" />
+  </url>
+  <url>
+    <loc>https://stupidmirror.itool.tech/zh/codex/</loc>
+    <lastmod>2026-10-24</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/codex/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/codex/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/codex/" />
+  </url>
 </urlset>
