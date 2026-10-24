@@ -21,6 +21,7 @@ One device can be mirrored and controlled without signing in. An SM- activation 
 ## Docs
 
 - [Codex plugin guide (web)](https://stupidmirror.itool.tech/codex/)
+- [MCP and Claude Code setup (web)](https://stupidmirror.itool.tech/mcp/)
 - [README](https://github.com/LiuTianjie/StupidMirror/blob/main/README.md)
 - [Codex plugin guide](https://github.com/LiuTianjie/StupidMirror/blob/main/docs/codex-plugin.md)
 - [Changelog](https://github.com/LiuTianjie/StupidMirror/blob/main/CHANGELOG.md)

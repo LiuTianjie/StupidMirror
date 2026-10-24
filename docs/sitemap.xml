@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://stupidmirror.itool.tech/</loc>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-dashboard.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-camera.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-setup.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-mcp.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-1.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-5.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-7.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-2.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-3.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-4.webp</image:loc></image:image>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/automation-6.webp</image:loc></image:image>
     <lastmod>2026-10-24</lastmod>
     <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/" />
     <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/" />
@@ -16,6 +27,7 @@
   </url>
   <url>
     <loc>https://stupidmirror.itool.tech/codex/</loc>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-dashboard.webp</image:loc></image:image>
     <lastmod>2026-10-24</lastmod>
     <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/codex/" />
     <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/codex/" />
@@ -23,9 +35,26 @@
   </url>
   <url>
     <loc>https://stupidmirror.itool.tech/zh/codex/</loc>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-dashboard.webp</image:loc></image:image>
     <lastmod>2026-10-24</lastmod>
     <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/codex/" />
     <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/codex/" />
     <xhtml:link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/codex/" />
+  </url>
+  <url>
+    <loc>https://stupidmirror.itool.tech/mcp/</loc>
+    <lastmod>2026-10-24</lastmod>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-mcp.webp</image:loc></image:image>
+    <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/mcp/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/mcp/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/mcp/" />
+  </url>
+  <url>
+    <loc>https://stupidmirror.itool.tech/zh/mcp/</loc>
+    <lastmod>2026-10-24</lastmod>
+    <image:image><image:loc>https://stupidmirror.itool.tech/assets/site-mcp.webp</image:loc></image:image>
+    <xhtml:link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/mcp/" />
+    <xhtml:link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/mcp/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/mcp/" />
   </url>
 </urlset>

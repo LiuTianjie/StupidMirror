@@ -507,6 +507,18 @@
     [
       "A Mac with macOS 15 or newer. Wireless iPhone mirroring and iPhone control also need Developer Mode on the phone and an Apple Development signing identity on the Mac; simulators need Xcode.",
       "一台 macOS 15 或更新版本的 Mac。iPhone 无线镜像和控制还需要在手机上开启开发者模式，并在 Mac 上有 Apple Development 签名身份；使用模拟器需要 Xcode。"
+    ],
+    [
+      "Set up MCP for Claude Code",
+      "查看 Claude Code / MCP 接入指南"
+    ],
+    [
+      "Codex plugin",
+      "Codex 插件"
+    ],
+    [
+      "MCP setup",
+      "MCP 配置"
     ]
   ],
   "attributes": [
@@ -621,6 +633,10 @@
     [
       "Enlarged product screenshot",
       "放大的产品截图"
+    ],
+    [
+      "Guides",
+      "指南"
     ]
   ]
 }

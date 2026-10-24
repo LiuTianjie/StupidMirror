@@ -1,0 +1,13 @@
+{
+  "name": "StupidMirror",
+  "short_name": "StupidMirror",
+  "description": "iPhone and Android mirroring and AI automation for Mac",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#08090a",
+  "theme_color": "#08090a",
+  "icons": [
+    { "src": "/assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

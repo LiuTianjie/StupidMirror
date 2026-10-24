@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Builds the Codex plugin guide pages (docs/codex/ and docs/zh/codex/) from the
-// copy below, which follows docs/codex-plugin.md. Both languages come from one
+// Builds the guide pages (docs/codex/, docs/mcp/ and their docs/zh/ copies) from
+// the copy below, which follows docs/codex-plugin.md and the README. Both languages come from one
 // source so their structure, hreflang and structured data stay in step.
 //
 //   node scripts/build-site-guides.mjs           write the pages
@@ -16,11 +16,12 @@ const guideSource = "https://github.com/LiuTianjie/StupidMirror/blob/main/docs/c
 const redirect =
   '<script>if(location.hostname.endsWith("github.io"))location.replace("https://stupidmirror.itool.tech"+location.pathname.replace(/^\\/StupidMirror/i,"")+location.search+location.hash)</script>';
 
-const pages = {
+const codex = {
   en: {
     lang: "en",
     locale: "en_US",
     path: "codex/",
+    image: { src: "site-dashboard.webp", width: 2200, height: 1400, alt: "The StupidMirror dashboard mirroring an iPhone" },
     up: "../",
     home: "",
     title: "Control an iPhone or Android inside Codex | StupidMirror",
@@ -64,6 +65,7 @@ const pages = {
     lang: "zh-CN",
     locale: "zh_CN",
     path: "zh/codex/",
+    image: { src: "site-dashboard.webp", width: 2200, height: 1400, alt: "StupidMirror 主界面正在镜像一台 iPhone" },
     up: "../../",
     home: "zh/",
     title: "在 Codex 里查看并操作 iPhone / Android｜StupidMirror",
@@ -105,10 +107,111 @@ const pages = {
   },
 };
 
+const mcp = {
+  en: {
+    lang: "en",
+    locale: "en_US",
+    path: "mcp/",
+    up: "../",
+    home: "",
+    image: { src: "site-mcp.webp", width: 1441, height: 1321, alt: "The built-in StupidMirror MCP server settings" },
+    title: "iPhone & Android MCP server for Claude Code | StupidMirror",
+    description:
+      "StupidMirror runs a localhost MCP server on your Mac, so Claude Code, Codex or any MCP client can observe, tap, type and verify on a real iPhone or Android device.",
+    eyebrow: "MCP SERVER",
+    h1: "Give Claude Code a real iPhone or Android.",
+    lead: "StupidMirror exposes connected devices through an authenticated MCP server on this Mac. It embeds no model and needs no model API key: it hands the device to the agent you already use.",
+    homeLabel: "StupidMirror",
+    guideLabel: "MCP setup",
+    download: "Download StupidMirror",
+    connectTitle: "Connect an MCP client",
+    connectIntro: "Codex users can also click Connect Codex for the bundled plugin. For Claude Code and other clients, use the generated configuration.",
+    steps: [
+      ["Turn on the MCP server", "Open Settings → MCP and enable the local MCP server. It listens only on http://127.0.0.1:<port>/mcp."],
+      ["Pick your client", "In Advanced connection settings · Other AI clients, choose Codex or Claude Code in the connection guide."],
+      ["Copy the configuration", "Copy the generated configuration or command into that client. It includes the endpoint, bearer authentication and a 240-second tool timeout for slow first-time control setup."],
+      ["Ask the agent", "Keep StupidMirror open and try: “List my connected devices, start mirroring my iPhone, and highlight the visible clickable elements without tapping them.”"],
+    ],
+    useTitle: "Observe, act, verify",
+    uses: [
+      ["Connect", "list_devices, show_screen and connect_control discover the target and prepare the sessions it needs."],
+      ["Observe", "observe_screen and find_any_element read a live frame with local OCR, and request accessibility only when needed."],
+      ["Act", "tap_text, tap_element, replace_text and swipe target observed content or an explicit gesture."],
+      ["Verify", "wait_for, assert_screen and observe_screen check the resulting state on the device."],
+      ["Guide without touching", "highlight_clickable_elements and highlight_elements draw targets on the Mac mirror without sending input."],
+      ["Apps and recordings", "install_app installs an .app, .ipa or .apk build; open_url opens deep links; start_recording saves the mirror as an .mp4 of up to 10 minutes."],
+    ],
+    privacyTitle: "Local server, your AI client's rules",
+    privacy:
+      "Capture, playback and OCR run on this Mac, and StupidMirror does not upload mirrored content to a model provider on its own. An AI client connected over MCP receives the screenshots and tool results it asks for, and its own data settings apply. Rotating the bearer token invalidates the previous credential.",
+    faqTitle: "Questions from agent authors",
+    faq: [
+      ["Does StupidMirror need a model API key?", "No. It embeds no model. Your MCP client brings the model; StupidMirror provides the device tools."],
+      ["Which clients work?", "Codex through the bundled plugin, Claude Code through the generated command, and other MCP clients through the generated configuration with bearer authentication."],
+      ["Why is the first action slow?", "First-time control setup can take a while, so the generated configuration sets a 240-second tool timeout."],
+      ["How do I target one of several devices?", "Pass device_id. Call list_devices first to see the identifiers."],
+      ["How should an agent edit iOS text fields?", "After focusing a field, use replace_text or clear_text directly, and type_text to append. Accessibility snapshots can disturb a focused field, and replacement verifies the resulting value."],
+      ["Which languages does OCR read?", "Apple Vision OCR defaults to Chinese and English, offers fast and accurate modes, and runs on demand outside the capture path."],
+    ],
+    more: "Tool reference on GitHub",
+    source: "https://github.com/LiuTianjie/StupidMirror#observe--act--verify",
+  },
+  zh: {
+    lang: "zh-CN",
+    locale: "zh_CN",
+    path: "zh/mcp/",
+    up: "../../",
+    home: "zh/",
+    image: { src: "site-mcp.webp", width: 1441, height: 1321, alt: "StupidMirror 内置 MCP Server 设置界面" },
+    title: "让 Claude Code 操作 iPhone / 安卓真机的 MCP｜StupidMirror",
+    description:
+      "StupidMirror 在 Mac 上提供只监听本机的 MCP Server，Claude Code、Codex 等 MCP 客户端可以直接观察、点击、输入并验证真实 iPhone 或安卓手机。",
+    eyebrow: "MCP SERVER",
+    h1: "把真实 iPhone / 安卓交给 Claude Code。",
+    lead: "StupidMirror 通过一个带认证、只监听本机的 MCP Server 提供已连接的设备。它不内置模型，也不需要模型 API Key，只是把真机交给你正在用的 Agent。",
+    homeLabel: "StupidMirror",
+    guideLabel: "MCP 配置",
+    download: "下载 StupidMirror",
+    connectTitle: "接入 MCP 客户端",
+    connectIntro: "Codex 用户也可以直接点「连接 Codex」使用内置插件。Claude Code 和其他客户端使用自动生成的配置。",
+    steps: [
+      ["开启 MCP Server", "打开「设置 → MCP」，开启本机 MCP Server。它只监听 http://127.0.0.1:<port>/mcp。"],
+      ["选择客户端", "在「高级连接设置 · 其他 AI 客户端」的连接向导里，选择 Codex 或 Claude Code。"],
+      ["复制配置", "把生成的配置或命令复制到对应客户端。其中包含地址、Bearer 认证，以及 240 秒的工具超时，留给首次控制连接的较长准备时间。"],
+      ["向 Agent 提问", "保持 StupidMirror 打开，试试：「列出已连接的设备，开始镜像我的 iPhone，并标出可点击元素，先不要点击。」"],
+    ],
+    useTitle: "观察、操作、验证",
+    uses: [
+      ["连接", "list_devices、show_screen、connect_control 负责找到目标设备并准备所需的会话。"],
+      ["观察", "observe_screen、find_any_element 读取实时画面并做本地 OCR，只在需要时才获取无障碍信息。"],
+      ["操作", "tap_text、tap_element、replace_text、swipe 针对已观察到的内容或明确的手势执行操作。"],
+      ["验证", "wait_for、assert_screen、observe_screen 在真机上检查操作结果。"],
+      ["只标注不点击", "highlight_clickable_elements、highlight_elements 在 Mac 镜像上画出目标，不向手机发送任何操作。"],
+      ["应用与录屏", "install_app 安装 .app、.ipa 或 .apk；open_url 打开深链；start_recording 把镜像录成最长 10 分钟的 .mp4。"],
+    ],
+    privacyTitle: "本机服务，数据规则由 AI 客户端决定",
+    privacy:
+      "采集、播放和 OCR 都在这台 Mac 上完成，StupidMirror 不会自行把镜像内容上传给模型服务商。通过 MCP 接入的 AI 客户端会收到它请求的截图和工具结果，之后如何处理取决于该客户端的数据设置。轮换 Bearer 令牌会让旧凭据失效。",
+    faqTitle: "Agent 开发者常见问题",
+    faq: [
+      ["需要模型 API Key 吗？", "不需要。StupidMirror 不内置模型，模型由你的 MCP 客户端提供，StupidMirror 只提供设备工具。"],
+      ["支持哪些客户端？", "Codex 通过内置插件接入，Claude Code 通过生成的命令接入，其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。"],
+      ["为什么第一次操作比较慢？", "首次建立控制连接需要一些时间，所以生成的配置把工具超时设为 240 秒。"],
+      ["连了多台设备怎么指定？", "传入 device_id。先调用 list_devices 查看设备标识。"],
+      ["Agent 怎么修改 iOS 输入框？", "聚焦输入框后，直接用 replace_text 或 clear_text，追加内容用 type_text。获取无障碍快照可能打断已聚焦的输入框，替换操作会校验最终的值。"],
+      ["OCR 支持哪些语言？", "Apple Vision OCR 默认识别中文和英文，提供快速与精确两种模式，按需运行，不占用采集链路。"],
+    ],
+    more: "在 GitHub 查看工具说明",
+    source: "https://github.com/LiuTianjie/StupidMirror/blob/main/README.zh-CN.md",
+  },
+};
+
+const guides = [codex, mcp];
+
 const esc = (value) =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-function render(key) {
+function render(pages, key) {
   const p = pages[key];
   const url = base + p.path;
   const homeURL = base + p.home;
@@ -178,6 +281,8 @@ function render(key) {
     <meta name="twitter:image" content="${base}assets/og-image.jpg" />
     <link rel="icon" type="image/png" sizes="128x128" href="${p.up}assets/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="${p.up}assets/apple-touch-icon.png" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="manifest" href="/site.webmanifest" />
     <link rel="stylesheet" href="${p.up}styles.css?v=20261024-guide" />
     <script type="application/ld+json">
       ${json}
@@ -199,7 +304,7 @@ function render(key) {
         <p class="section-index">${esc(p.eyebrow)}</p>
         <h1>${esc(p.h1)}</h1>
         <p class="guide-lead">${esc(p.lead)}</p>
-        <figure class="guide-shot"><img src="${p.up}assets/site-mcp.webp" alt="${esc(p.guideLabel)}" width="1441" height="1321" loading="lazy" decoding="async" /></figure>
+        <figure class="guide-shot"><img src="${p.up}assets/${p.image.src}" alt="${esc(p.image.alt)}" width="${p.image.width}" height="${p.image.height}" loading="lazy" decoding="async" /></figure>
       </section>
       <section class="section-shell guide-section">
         <h2>${esc(p.connectTitle)}</h2>
@@ -223,12 +328,13 @@ ${p.uses.map(card).join("\n")}
         <div class="faq-list">
 ${faq}
         </div>
-        <p class="guide-note"><a class="text-link" href="${guideSource}">${esc(p.more)}</a></p>
+        <p class="guide-note"><a class="text-link" href="${p.source ?? guideSource}">${esc(p.more)}</a></p>
       </section>
     </main>
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="${p.up}${p.home}"><img src="${p.up}assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
+        <nav class="guide-footer-nav" aria-label="${key === "zh" ? "指南" : "Guides"}">${guides.map((g) => `<a href="${p.up}${g[key].path}">${esc(g[key].guideLabel)}</a>`).join("")}</nav>
         <span>© 2026 StupidMirror</span>
       </div>
     </footer>
@@ -238,9 +344,9 @@ ${faq}
 }
 
 let stale = false;
-for (const key of Object.keys(pages)) {
+for (const pages of guides) for (const key of Object.keys(pages)) {
   const out = join(root, "docs", pages[key].path, "index.html");
-  const html = render(key);
+  const html = render(pages, key);
   if (process.argv.includes("--check")) {
     let current = "";
     try {

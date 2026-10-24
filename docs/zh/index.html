@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <script>if(location.hostname.endsWith("github.io"))location.replace("https://stupidmirror.itool.tech"+location.pathname.replace(/^\/StupidMirror/i,"")+location.search+location.hash)</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>StupidMirror｜Mac 上的 iPhone 镜像与 AI 自动化工具</title>
+    <title>StupidMirror｜Mac 上的 iPhone / 安卓投屏与 AI 自动化</title>
     <meta
       name="description"
-      content="在 Mac 上通过 USB 或 Wi-Fi 镜像并控制真实 iPhone 与 Android。本地 OCR、只监听本机的 MCP Server 与 Codex 插件，让 AI Agent 直接操作真机。"
+      content="在 Mac 上通过 USB 或 Wi-Fi 投屏并控制真实 iPhone 与安卓手机。本地 OCR、只监听本机的 MCP Server 与 Codex 插件，让 Claude Code、Codex 等 AI Agent 直接操作真机。"
     />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#08090a" />
@@ -69,8 +69,8 @@
             "@type": "WebPage",
             "@id": "https://stupidmirror.itool.tech/zh/#webpage",
             "url": "https://stupidmirror.itool.tech/zh/",
-            "name": "StupidMirror｜Mac 上的 iPhone 镜像与 AI 自动化工具",
-            "description": "在 Mac 上通过 USB 或 Wi-Fi 镜像并控制真实 iPhone 与 Android。本地 OCR、只监听本机的 MCP Server 与 Codex 插件，让 AI Agent 直接操作真机。",
+            "name": "StupidMirror｜Mac 上的 iPhone / 安卓投屏与 AI 自动化",
+            "description": "在 Mac 上通过 USB 或 Wi-Fi 投屏并控制真实 iPhone 与安卓手机。本地 OCR、只监听本机的 MCP Server 与 Codex 插件，让 Claude Code、Codex 等 AI Agent 直接操作真机。",
             "inLanguage": "zh-CN",
             "isPartOf": {
               "@id": "https://stupidmirror.itool.tech/#website"
@@ -202,12 +202,15 @@
     </script>
     <link rel="icon" type="image/png" sizes="128x128" href="../assets/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="manifest" href="/site.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <link rel="preload" as="image" href="../assets/site-dashboard.webp" fetchpriority="high" />
     <link rel="stylesheet" href="../styles.css?v=20261022-041" />
   </head>
   <body>
@@ -447,6 +450,7 @@
             <p>
               StupidMirror 内置只监听本机的 MCP Server。不内置模型，不要求额外填写模型 API Key，把真机能力直接交给你已在使用的 Codex 或 Claude Code。
             </p>
+            <a class="text-link" href="mcp/">查看 Claude Code / MCP 接入指南<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
           </div>
         </div>
 
@@ -611,6 +615,7 @@
       <div class="section-shell footer-inner">
         <a class="brand" href="#top"><img src="../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
         <p>原生 macOS iPhone 镜像与自动化工具。</p>
+        <nav class="guide-footer-nav" aria-label="指南"><a href="codex/">Codex 插件</a><a href="mcp/">MCP 配置</a></nav>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
     </footer>

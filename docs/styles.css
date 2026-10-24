@@ -1700,3 +1700,17 @@ section[id] {
     grid-template-columns: 1fr;
   }
 }
+
+.guide-footer-nav {
+  display: flex;
+  gap: 18px;
+  font-size: 14px;
+}
+
+.guide-footer-nav a {
+  color: var(--muted);
+}
+
+.guide-footer-nav a:hover {
+  color: var(--text);
+}

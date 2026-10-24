@@ -17,9 +17,9 @@ const base = "https://stupidmirror.itool.tech/";
 const zhURL = `${base}zh/`;
 
 const meta = {
-  title: "StupidMirror｜Mac 上的 iPhone 镜像与 AI 自动化工具",
+  title: "StupidMirror｜Mac 上的 iPhone / 安卓投屏与 AI 自动化",
   description:
-    "在 Mac 上通过 USB 或 Wi-Fi 镜像并控制真实 iPhone 与 Android。本地 OCR、只监听本机的 MCP Server 与 Codex 插件，让 AI Agent 直接操作真机。",
+    "在 Mac 上通过 USB 或 Wi-Fi 投屏并控制真实 iPhone 与安卓手机。本地 OCR、只监听本机的 MCP Server 与 Codex 插件，让 Claude Code、Codex 等 AI Agent 直接操作真机。",
   ogTitle: "StupidMirror｜让 iPhone 镜像可操作、可自动化",
   ogDescription: "把真实 iPhone 接入 Mac，也接入 Codex 与 Claude Code。",
   imageAlt: "StupidMirror macOS 主界面正在镜像一台已连接的 iPhone",
