@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="https://github.com/LiuTianjie/StupidMirror/releases/latest">Download</a> ·
-  <a href="https://liutianjie.github.io/StupidMirror/">Website</a> ·
+  <a href="https://stupidmirror.itool.tech/">Website</a> ·
   <a href="#built-for-codex">Codex integration</a> ·
   <a href="#connect-an-ai-agent">MCP setup</a> ·
   <a href="CHANGELOG.md">Changelog</a> ·

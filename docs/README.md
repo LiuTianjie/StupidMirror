@@ -22,10 +22,14 @@ python3 -m http.server 4173 --directory docs
 - Branch：`main`
 - Folder：`/docs`
 
-默认访问地址为 <https://liutianjie.github.io/StupidMirror/>。
+默认访问地址为 <https://stupidmirror.itool.tech/>。
 
-页面默认使用英文，可通过顶部语言入口切换完整中文文案；不依赖后端或打包流程。`mvp-architecture.md` 和 `research.md` 是原有项目文档，不影响站点入口。
+英文页是 `index.html`，中文页是静态生成的 `zh/index.html`（旧的 `?lang=zh` 链接会跳转过去）。改动英文页或中文文案（`scripts/site-zh.json`）后运行 `node scripts/build-site-zh.mjs`，CI 用 `--check` 校验两页是否同步。不要手改 `zh/index.html`。
+
+官网部署在 `https://stupidmirror.itool.tech/`：本地 `~/seos/stupidmirror/sync.sh` 从本目录复制站点（不含 `updates/`），`~/seos/deploy.sh stupidmirror` 用 Luma 部署到 cn 的 manager 节点。GitHub Pages 仍然发布本目录，保留 Sparkle 更新源 `updates/appcast.xml`；页面在 `github.io` 上打开时会跳转到新域名。SEO 相关文件：`sitemap.xml`、`robots.txt`、`llms.txt`、`404.html`（`noindex`）、`assets/og-image.jpg`（1200×630 分享图）。首页「常见问题」同时写入 FAQPage 结构化数据，两处要保持一致。改版后同步更新 `sitemap.xml` 的 `lastmod` 和 JSON-LD 中的 `softwareVersion`。
+
+`mvp-architecture.md`、`research.md`、`codex-plugin.md` 是项目文档，不列入 sitemap。
 
 StupidMirror 采用 PolyForm Noncommercial 1.0.0：个人及其他非商业用途可免费使用，商业用途需要项目所有者另行书面授权。
 
-官网的下载按钮统一指向最新公开 Release，避免指向旧版本或未发布的草稿。Codex 使用说明维护在 `codex-plugin.md`，新文案同步维护 `index.html` 与 `script.js` 的中文映射。现有手机截图是原生镜像示例，不代表 Codex 面板截图。
+官网的下载按钮统一指向最新公开 Release，避免指向旧版本或未发布的草稿。Codex 使用说明维护在 `codex-plugin.md`，新文案同步维护 `index.html` 与 `scripts/site-zh.json` 的中文映射。现有手机截图是原生镜像示例，不代表 Codex 面板截图。

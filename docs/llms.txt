@@ -1,0 +1,25 @@
+# StupidMirror
+
+> StupidMirror is a native macOS app (macOS 15+) that mirrors and controls real iPhone and Android devices, plus booted iOS Simulators and Android emulators, and exposes them to AI agents through a local MCP server and a bundled Codex plugin.
+
+- Website: https://stupidmirror.itool.tech/ (Chinese: https://stupidmirror.itool.tech/zh/)
+- Download: https://github.com/LiuTianjie/StupidMirror/releases/latest
+- Source: https://github.com/LiuTianjie/StupidMirror (PolyForm Noncommercial; commercial use needs separate authorization)
+
+## What it does
+
+- iPhone over USB (AVFoundation capture) or Wi-Fi (H.264 through a CoreDevice tunnel, after a one-time USB setup).
+- Android 11+ over ADB, video and audio from scrcpy; control through Appium and UiAutomator2.
+- iPhone control through WebDriverAgent; taps, swipes, text input, device buttons, app launch and termination.
+- Local Apple Vision OCR, optional accessibility trees, semantic targeting, waits and assertions for agents.
+- Codex plugin shows the live phone screen inside the chat over encrypted local WebRTC; Claude Code and other MCP clients connect to the localhost MCP server. No model API key is needed.
+
+## Pricing
+
+One device can be mirrored and controlled without signing in. An SM- activation code unlocks several devices at once.
+
+## Docs
+
+- [README](https://github.com/LiuTianjie/StupidMirror/blob/main/README.md)
+- [Codex plugin guide](https://github.com/LiuTianjie/StupidMirror/blob/main/docs/codex-plugin.md)
+- [Changelog](https://github.com/LiuTianjie/StupidMirror/blob/main/CHANGELOG.md)

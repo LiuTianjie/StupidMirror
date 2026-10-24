@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="https://github.com/LiuTianjie/StupidMirror/releases/latest">下载</a> ·
-  <a href="https://liutianjie.github.io/StupidMirror/">官网</a> ·
+  <a href="https://stupidmirror.itool.tech/">官网</a> ·
   <a href="#支持-codex">Codex 支持</a> ·
   <a href="#连接-ai-agent">MCP 接入</a> ·
   <a href="CHANGELOG.md">更新日志</a> ·

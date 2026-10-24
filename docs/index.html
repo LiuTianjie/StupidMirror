@@ -2,25 +2,189 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>if(location.hostname.endsWith("github.io"))location.replace("https://stupidmirror.itool.tech"+location.pathname.replace(/^\/StupidMirror/i,"")+location.search+location.hash)</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StupidMirror | iPhone Mirroring &amp; AI Automation for Mac</title>
     <meta
       name="description"
-      content="StupidMirror is a native macOS iPhone mirroring and automation harness with USB and wireless video, local OCR, MCP control, and optional Android 11+ support."
+      content="Mirror and control a real iPhone or Android on your Mac over USB or Wi-Fi. Local OCR, a localhost MCP server and a Codex plugin let AI agents operate it."
     />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#08090a" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="canonical" href="https://stupidmirror.itool.tech/" />
+    <link rel="alternate" hreflang="en" href="https://stupidmirror.itool.tech/" />
+    <link rel="alternate" hreflang="zh-CN" href="https://stupidmirror.itool.tech/zh/" />
+    <link rel="alternate" hreflang="x-default" href="https://stupidmirror.itool.tech/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="StupidMirror" />
+    <meta property="og:url" content="https://stupidmirror.itool.tech/" />
     <meta property="og:title" content="StupidMirror | Make a real iPhone observable and operable" />
-    <meta
-      property="og:description"
-      content="Bring a real iPhone to your Mac — and into Codex or Claude Code."
-    />
-    <meta property="og:image" content="assets/dashboard.webp" />
+    <meta property="og:description" content="Bring a real iPhone to your Mac — and into Codex or Claude Code." />
+    <meta property="og:image" content="https://stupidmirror.itool.tech/assets/og-image.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="The StupidMirror dashboard on macOS mirroring a connected iPhone" />
     <meta property="og:locale" content="en_US" />
     <meta property="og:locale:alternate" content="zh_CN" />
-    <title>StupidMirror | Native iPhone mirroring and automation for macOS</title>
-    <link rel="canonical" href="https://liutianjie.github.io/StupidMirror/" />
-    <link rel="alternate" hreflang="en" href="https://liutianjie.github.io/StupidMirror/" />
-    <link rel="alternate" hreflang="zh-CN" href="https://liutianjie.github.io/StupidMirror/?lang=zh" />
-    <link rel="alternate" hreflang="x-default" href="https://liutianjie.github.io/StupidMirror/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="StupidMirror | Make a real iPhone observable and operable" />
+    <meta name="twitter:description" content="Bring a real iPhone to your Mac — and into Codex or Claude Code." />
+    <meta name="twitter:image" content="https://stupidmirror.itool.tech/assets/og-image.jpg" />
+    <meta name="twitter:image:alt" content="The StupidMirror dashboard on macOS mirroring a connected iPhone" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://stupidmirror.itool.tech/#organization",
+            "name": "StupidMirror",
+            "url": "https://stupidmirror.itool.tech/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://stupidmirror.itool.tech/assets/apple-touch-icon.png",
+              "width": 180,
+              "height": 180
+            },
+            "sameAs": [
+              "https://github.com/LiuTianjie/StupidMirror"
+            ]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://stupidmirror.itool.tech/#website",
+            "url": "https://stupidmirror.itool.tech/",
+            "name": "StupidMirror",
+            "inLanguage": [
+              "en",
+              "zh-CN"
+            ],
+            "publisher": {
+              "@id": "https://stupidmirror.itool.tech/#organization"
+            }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://stupidmirror.itool.tech/#webpage",
+            "url": "https://stupidmirror.itool.tech/",
+            "name": "StupidMirror | iPhone Mirroring & AI Automation for Mac",
+            "description": "Mirror and control a real iPhone or Android on your Mac over USB or Wi-Fi. Local OCR, a localhost MCP server and a Codex plugin let AI agents operate it.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://stupidmirror.itool.tech/#website"
+            },
+            "about": {
+              "@id": "https://stupidmirror.itool.tech/#software"
+            },
+            "primaryImageOfPage": "https://stupidmirror.itool.tech/assets/og-image.jpg"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://stupidmirror.itool.tech/#software",
+            "name": "StupidMirror",
+            "description": "Native macOS app that mirrors and controls real iPhone and Android devices over USB or Wi-Fi, with local Vision OCR, a localhost MCP server and a Codex plugin for AI agents.",
+            "url": "https://stupidmirror.itool.tech/",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "Device mirroring and automation",
+            "operatingSystem": "macOS 15 or later",
+            "softwareVersion": "0.5.1",
+            "downloadUrl": "https://github.com/LiuTianjie/StupidMirror/releases/latest",
+            "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
+            "screenshot": [
+              "https://stupidmirror.itool.tech/assets/site-dashboard.webp",
+              "https://stupidmirror.itool.tech/assets/site-camera.webp"
+            ],
+            "featureList": [
+              "iPhone mirroring over USB or Wi-Fi",
+              "Android 11+ mirroring and control over ADB",
+              "iOS Simulators and Android emulators",
+              "Local Apple Vision OCR and accessibility targeting",
+              "Localhost MCP server for Codex and Claude Code",
+              "Codex plugin with the live phone screen in chat"
+            ],
+            "license": "https://polyformproject.org/licenses/noncommercial/1.0.0",
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD",
+              "description": "Free for personal and noncommercial use with one device at a time. Simultaneous devices need an SM- activation code; commercial use needs a separate written license.",
+              "url": "https://github.com/LiuTianjie/StupidMirror/releases/latest"
+            },
+            "publisher": {
+              "@id": "https://stupidmirror.itool.tech/#organization"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://stupidmirror.itool.tech/#faq",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://stupidmirror.itool.tech/#website"
+            },
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Does StupidMirror work without a cable?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Run Set Up This iPhone once over USB, then keep the iPhone and the Mac on the same network and mirror it over Wi-Fi. Wireless audio is not available."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Why does it ask for Camera permission?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "macOS exposes a USB-connected iPhone screen as a camera-style capture source. StupidMirror reads that source; it does not use the Mac webcam."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does it support Android?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Android 11 or newer over ADB with USB debugging enabled. Video and device audio come from scrcpy, and control uses Appium with UiAutomator2."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which AI agents can use it?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Codex through the bundled plugin, which shows the live phone screen inside the chat, and Claude Code or other MCP clients through the local MCP server. StupidMirror needs no model API key."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does the screen or my data go through a cloud service?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. The Codex panel streams over encrypted local WebRTC without a cloud relay, the MCP server listens on this Mac only, and text recognition runs locally with Apple Vision."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is StupidMirror free?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "One device can be mirrored and controlled without signing in. An SM- activation code unlocks several devices at once. The source is available under PolyForm Noncommercial, and commercial use needs separate authorization."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What do I need to run it?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "A Mac with macOS 15 or newer. Wireless iPhone mirroring and iPhone control also need Developer Mode on the phone and an Apple Development signing identity on the Mac; simulators need Xcode."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
     <script
       defer
       src="https://vibecafe.ai/telemetry/v1.js"
@@ -35,12 +199,11 @@
     ></script>
     <script>
       document.documentElement.classList.add("js");
-      if (new URLSearchParams(window.location.search).get("lang") === "zh") {
-        document.documentElement.classList.add("locale-pending");
-        window.setTimeout(() => document.documentElement.classList.remove("locale-pending"), 1200);
-      }
+      // Old links used ?lang=zh; the Chinese page is now its own crawlable URL.
+      if (new URLSearchParams(window.location.search).get("lang") === "zh") window.location.replace("zh/" + window.location.hash);
     </script>
-    <link rel="icon" href="assets/favicon.png" />
+    <link rel="icon" type="image/png" sizes="128x128" href="assets/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -77,7 +240,7 @@
           <a href="#automation">AI harness</a>
           <a href="#scenes">Use cases</a>
           <a class="nav-mobile-link" href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">GitHub</a>
-          <a href="?lang=zh" data-lang-switch>中文</a>
+          <a href="zh/" hreflang="zh-CN" lang="zh-CN">中文</a>
         </div>
 
         <div class="nav-actions">
@@ -126,7 +289,7 @@
         <div class="hero-stage reveal">
           <div class="beam-frame">
             <button class="screenshot-button" type="button" data-lightbox="assets/site-dashboard.webp" aria-label="Enlarge the StupidMirror dashboard">
-              <img src="assets/site-dashboard.webp" alt="The StupidMirror dashboard mirroring an iPhone" width="2200" height="1400" />
+              <img src="assets/site-dashboard.webp" alt="The StupidMirror dashboard mirroring an iPhone" width="2200" height="1400" fetchpriority="high" />
             </button>
           </div>
         </div>
@@ -399,10 +562,49 @@
         </div>
       </section>
 
+      <section class="section-shell faq" id="faq">
+        <div class="section-heading reveal">
+          <div>
+            <p class="section-index">06 / FAQ</p>
+            <h2>Common questions.</h2>
+          </div>
+        </div>
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary><h3>Does StupidMirror work without a cable?</h3></summary>
+            <p>Yes. Run Set Up This iPhone once over USB, then keep the iPhone and the Mac on the same network and mirror it over Wi-Fi. Wireless audio is not available.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Why does it ask for Camera permission?</h3></summary>
+            <p>macOS exposes a USB-connected iPhone screen as a camera-style capture source. StupidMirror reads that source; it does not use the Mac webcam.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Does it support Android?</h3></summary>
+            <p>Yes. Android 11 or newer over ADB with USB debugging enabled. Video and device audio come from scrcpy, and control uses Appium with UiAutomator2.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Which AI agents can use it?</h3></summary>
+            <p>Codex through the bundled plugin, which shows the live phone screen inside the chat, and Claude Code or other MCP clients through the local MCP server. StupidMirror needs no model API key.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Does the screen or my data go through a cloud service?</h3></summary>
+            <p>No. The Codex panel streams over encrypted local WebRTC without a cloud relay, the MCP server listens on this Mac only, and text recognition runs locally with Apple Vision.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Is StupidMirror free?</h3></summary>
+            <p>One device can be mirrored and controlled without signing in. An SM- activation code unlocks several devices at once. The source is available under PolyForm Noncommercial, and commercial use needs separate authorization.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>What do I need to run it?</h3></summary>
+            <p>A Mac with macOS 15 or newer. Wireless iPhone mirroring and iPhone control also need Developer Mode on the phone and an Apple Development signing identity on the Mac; simulators need Xcode.</p>
+          </details>
+        </div>
+      </section>
+
       <section class="final-cta">
         <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
         <div class="cta-content reveal">
-          <img class="cta-icon" src="assets/app-icon.webp" alt="" width="112" height="112" />
+          <img class="cta-icon" src="assets/app-icon.webp" alt="" width="112" height="112" loading="lazy" />
           <h2>Now put a real iPhone<br /><span class="brand-gradient">into your workflow.</span></h2>
           <p>macOS 15+ · Free for personal and noncommercial use · Commercial license required</p>
           <div class="hero-actions">
@@ -416,7 +618,7 @@
 
     <footer class="site-footer">
       <div class="section-shell footer-inner">
-        <a class="brand" href="#top"><img src="assets/app-icon.webp" alt="" width="22" height="22" /><span>StupidMirror</span></a>
+        <a class="brand" href="#top"><img src="assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
         <p>Native iPhone mirroring &amp; automation harness for macOS.</p>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
@@ -426,9 +628,9 @@
       <button type="button" class="lightbox-close" data-lightbox-close aria-label="Close preview">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
       </button>
-      <img src="" alt="Enlarged product screenshot" data-lightbox-image />
+      <img alt="Enlarged product screenshot" data-lightbox-image />
     </dialog>
 
-    <script src="script.js?v=20261022-040"></script>
+    <script defer src="script.js?v=20261024-001"></script>
   </body>
 </html>
