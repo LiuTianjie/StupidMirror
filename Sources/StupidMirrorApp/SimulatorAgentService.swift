@@ -161,12 +161,17 @@ actor SimulatorAgentService {
     private struct Agent {
         let process: Process
         let endpoint: SimulatorAgentEndpoint
+        /// The screen height this runner was launched to capture (nil = main screen).
+        let screenHeight: Int?
     }
 
     private var agents: [String: Agent] = [:]
     private var starting: [String: Task<SimulatorAgentEndpoint, Error>] = [:]
     /// Runners launched but not yet answering, so a stop can still end them.
     private var launching: [String: Process] = [:]
+    /// The screen each running runner was launched to capture (nominal pixel
+    /// height). A foldable can switch screens; a change restarts its runner.
+    private var screenHeights: [String: Int] = [:]
     /// Bumped by every stop; a start that sees it change gives up.
     private var stopGenerations: [String: Int] = [:]
     /// Everyone waiting on a start hears its progress, not just the first.
@@ -175,10 +180,25 @@ actor SimulatorAgentService {
 
     /// Starts the runner for a simulator, or returns the running one.
     /// `progress` receives short status lines for the mirror's startup view.
+    /// `screenHeight` selects which screen a foldable captures (nominal pixel
+    /// height of the target screen); nil or 0 keeps the device's main screen,
+    /// which is every standard device's only screen. Changing it restarts the
+    /// runner so the new screen takes effect.
     func ensureRunning(
         udid: String,
+        screenHeight: Int? = nil,
         progress: @escaping @Sendable (String) async -> Void = { _ in }
     ) async throws -> SimulatorAgentEndpoint {
+        // nil / 0 means "no preference": the control connector asks without a
+        // height and must not undo the screen the mirror chose. Only an explicit
+        // height that differs from the running runner's restarts it.
+        if let screenHeight, screenHeight > 0 {
+            if let agent = agents[udid], agent.screenHeight != screenHeight {
+                logger.info("Simulator agent for \(udid, privacy: .public) switching screen; restarting it")
+                stop(udid: udid)
+            }
+            screenHeights[udid] = screenHeight
+        }
         if let agent = agents[udid] {
             if await Self.isAlive(agent) {
                 return agent.endpoint
@@ -276,6 +296,7 @@ actor SimulatorAgentService {
     }
 
     private func start(udid: String, generation: Int) async throws -> SimulatorAgentEndpoint {
+        let launchedHeight = screenHeights[udid]
         let xctestrun = try await builtRunner { [weak self] detail in
             await self?.report(udid, detail)
         }
@@ -306,7 +327,7 @@ actor SimulatorAgentService {
             "-resultBundlePath", results.path
         ]
         process.environment = ProcessInfo.processInfo.environment.merging(
-            Self.launchEnvironment(controlPort: controlPort, mjpegPort: mjpegPort)
+            Self.launchEnvironment(controlPort: controlPort, mjpegPort: mjpegPort, screenHeight: launchedHeight)
         ) { _, new in new }
         let log = Self.logURL(udid: udid)
         FileManager.default.createFile(atPath: log.path, contents: nil)
@@ -347,7 +368,7 @@ actor SimulatorAgentService {
                     Self.terminate(process)
                     throw error
                 }
-                agents[udid] = Agent(process: process, endpoint: endpoint)
+                agents[udid] = Agent(process: process, endpoint: endpoint, screenHeight: launchedHeight)
                 logger.info("Simulator agent ready for \(udid, privacy: .public) on \(controlPort)/\(mjpegPort)")
                 return endpoint
             }
@@ -357,10 +378,14 @@ actor SimulatorAgentService {
         throw SimulatorAgentError.timedOut
     }
 
-    nonisolated static func launchEnvironment(controlPort: Int, mjpegPort: Int) -> [String: String] {
+    nonisolated static func launchEnvironment(
+        controlPort: Int,
+        mjpegPort: Int,
+        screenHeight: Int? = nil
+    ) -> [String: String] {
         // xcodebuild hands TEST_RUNNER_-prefixed variables to the runner
         // without the prefix.
-        [
+        var environment = [
             "TEST_RUNNER_USE_IP": "127.0.0.1",
             "TEST_RUNNER_USE_PORT": "\(controlPort)",
             "TEST_RUNNER_MJPEG_SERVER_PORT": "\(mjpegPort)",
@@ -370,6 +395,13 @@ actor SimulatorAgentService {
             // simulator; port 0 leaves its SRT listener off.
             "TEST_RUNNER_STUPIDMIRROR_H264_PORT": "0"
         ]
+        // A foldable lights only the screen matching its physical posture, and
+        // the dark one captures as black. Absent an explicit choice the runner
+        // streams whichever screen has content, so the mirror follows the
+        // device as it is folded or opened. A height pins one specific screen.
+        environment["TEST_RUNNER_STUPIDMIRROR_SCREEN_SELECT"] =
+            (screenHeight ?? 0) > 0 ? "\(screenHeight!)" : "lit"
+        return environment
     }
 
     // MARK: Build

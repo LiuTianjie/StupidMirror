@@ -5,6 +5,7 @@
 @import CoreImage;
 @import CoreMedia;
 @import CoreVideo;
+@import ImageIO;
 @import VideoToolbox;
 #import <libsrt/srt.h>
 #import <netinet/in.h>
@@ -24,6 +25,133 @@ volatile int SMStupidMirrorSRTStartupState = 0;
 char SMStupidMirrorSRTStartupError[512] = {0};
 
 @class FBStupidMirrorH264Server;
+
+// Resolves which screen the stream captures.
+//
+// A standard device has one screen, so the default is the main screen's
+// display ID. A foldable such as iPhone Duo has two (an outer cover screen and
+// a larger inner screen) but lights only the one matching its current physical
+// posture; the dark one captures as solid black. XCUIScreen.mainScreen is the
+// cover screen regardless of posture, so streaming it blindly shows black
+// whenever the device is open.
+//
+// STUPIDMIRROR_SCREEN_SELECT picks the policy:
+//   unset / "lit"  - probe the displays and stream the one with content, so
+//                    the mirror follows the device as it is folded or opened.
+//   "main"         - always XCUIScreen.mainScreen (the old behaviour).
+//   a pixel height - stream the display of that nominal height.
+//
+// displayIDs are neither contiguous nor stable across devices, so candidates
+// are probed and chosen by what they actually contain.
+// Scores how much lit content a capture has: the number of sampled pixels
+// clearly above black. A screen whose backlight is off is uniformly black and
+// scores ~0; compression noise on a dark screen scores very low, while any
+// real UI scores high. Returns -1 when the image cannot be read.
+static NSInteger FBStupidMirrorImageLitScore(NSData *data, NSInteger *widthOut, NSInteger *heightOut)
+{
+  if (data.length == 0) {
+    return -1;
+  }
+  CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+  if (source == NULL) {
+    return -1;
+  }
+  CGImageRef image = CGImageSourceCreateImageAtIndex(source, 0, NULL);
+  CFRelease(source);
+  if (image == NULL) {
+    return -1;
+  }
+  size_t width = CGImageGetWidth(image);
+  size_t height = CGImageGetHeight(image);
+  if (widthOut != NULL) { *widthOut = (NSInteger)width; }
+  if (heightOut != NULL) { *heightOut = (NSInteger)height; }
+  if (width == 0 || height == 0) {
+    CGImageRelease(image);
+    return -1;
+  }
+
+  const size_t side = 32;
+  uint8_t pixels[side * side * 4];
+  memset(pixels, 0, sizeof(pixels));
+  CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+  CGContextRef context = CGBitmapContextCreate(pixels, side, side, 8, side * 4, space,
+                                               kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little);
+  CGColorSpaceRelease(space);
+  if (context == NULL) {
+    CGImageRelease(image);
+    return -1;
+  }
+  CGContextDrawImage(context, CGRectMake(0, 0, side, side), image);
+  CGContextRelease(context);
+  CGImageRelease(image);
+
+  // kCGImageAlphaNoneSkipFirst | byteOrder32Little lays each pixel out as
+  // B, G, R, X in memory, so the colour channels are bytes 0-2. Reading byte 3
+  // would score the ignored padding byte, which is always 0xFF.
+  NSInteger score = 0;
+  for (size_t i = 0; i < side * side; i++) {
+    const uint8_t *p = pixels + i * 4;
+    // 24/255 clears compression noise on an unlit panel while still counting
+    // dim wallpaper: a Duo cover screen with its backlight off measures 0 on
+    // every sample, its lit inner screen several hundred.
+    if (p[0] > 24 || p[1] > 24 || p[2] > 24) {
+      score++;
+    }
+  }
+  return score;
+}
+
+static long long FBStupidMirrorResolveScreenID(void)
+{
+  long long mainScreenID = [XCUIScreen.mainScreen displayID];
+  NSString *select = NSProcessInfo.processInfo.environment[@"STUPIDMIRROR_SCREEN_SELECT"];
+  if ([select isEqualToString:@"main"]) {
+    return mainScreenID;
+  }
+  NSInteger targetHeight = select.integerValue; // 0 for "lit", nil or non-numeric
+
+  // The main screen is tried first so the common single-screen case costs one
+  // capture.
+  NSMutableArray<NSNumber *> *candidates = [NSMutableArray arrayWithObject:@(mainScreenID)];
+  for (long long screenID = 0; screenID <= 8; screenID++) {
+    if (screenID != mainScreenID) {
+      [candidates addObject:@(screenID)];
+    }
+  }
+
+  long long bestScreenID = -1;
+  NSInteger bestScore = 0;
+  for (NSNumber *candidate in candidates) {
+    NSError *error = nil;
+    NSData *data = [FBScreenshot takeInOriginalResolutionWithScreenID:candidate.longLongValue
+                                                  compressionQuality:1.0
+                                                                 uti:(id)UTTypePNG
+                                                             timeout:2.0
+                                                               error:&error];
+    NSInteger width = 0;
+    NSInteger height = 0;
+    NSInteger score = FBStupidMirrorImageLitScore(data, &width, &height);
+    if (width == 0 || height == 0) {
+      continue;
+    }
+    if (targetHeight > 0) {
+      // Match either orientation (the screen can be captured rotated), with a
+      // small tolerance: CoreSimulator's capture can be a pixel off the
+      // nominal size (the Duo inner screen reports 2852 for a nominal 2853).
+      if (labs(height - targetHeight) <= 2 || labs(width - targetHeight) <= 2) {
+        return candidate.longLongValue;
+      }
+      continue;
+    }
+    // Every screen is probed: a foldable's dark panel still returns an image,
+    // so the brightest one is the screen the device is actually showing.
+    if (score > bestScore) {
+      bestScore = score;
+      bestScreenID = candidate.longLongValue;
+    }
+  }
+  return bestScreenID >= 0 ? bestScreenID : mainScreenID;
+}
 
 static void SMH264CompressionOutputCallback(
   void *outputCallbackRefCon,
@@ -79,7 +207,7 @@ static void SMH264CompressionOutputCallback(
       dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0)
     );
     _ciContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer: @NO}];
-    _mainScreenID = [XCUIScreen.mainScreen displayID];
+    _mainScreenID = FBStupidMirrorResolveScreenID();
     _encodedWidth = 0;
     _encodedHeight = 0;
     _isRunning = YES;

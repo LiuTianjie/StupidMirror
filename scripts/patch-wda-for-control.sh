@@ -206,7 +206,9 @@ patch_h264_stream() {
       next
     }
     /_mainScreenID = \[XCUIScreen.mainScreen displayID\];/ {
-      print
+      # Route the MJPEG server through the shared screen resolver (defined in
+      # FBStupidMirrorH264Server.inc) so a foldable can stream a chosen screen.
+      print "    _mainScreenID = FBStupidMirrorResolveScreenID();"
       print "    NSString *h264PortValue = NSProcessInfo.processInfo.environment[@\"STUPIDMIRROR_H264_PORT\"];"
       print "    NSInteger h264Port = h264PortValue.length > 0 ? h264PortValue.integerValue : 9200;"
       print "    if (h264Port > 0 && h264Port <= UINT16_MAX) {"
