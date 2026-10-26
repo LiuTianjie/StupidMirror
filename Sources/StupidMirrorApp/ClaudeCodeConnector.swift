@@ -42,6 +42,30 @@ enum ClaudeCodeMCPRegistration {
 
     static let marketplaceRemoveArguments = ["plugin", "marketplace", "remove", marketplaceName]
     static let installArguments = ["plugin", "install", pluginID, "--scope", "user"]
+    static let updateArguments = ["plugin", "update", pluginID, "--scope", "user"]
+
+    /// Where Claude Code records installed plugins and the version each one runs.
+    static func installedPluginsFile(home: String, environment: [String: String]) -> String {
+        let root = environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : $0 } ?? "\(home)/.claude"
+        return (root as NSString).appendingPathComponent("plugins/installed_plugins.json")
+    }
+
+    /// The version Claude Code runs for the user-scope install, if any.
+    static func installedPluginVersion(installedPlugins data: Data?) -> String? {
+        let records = (object(data)?["plugins"] as? [String: Any])?[pluginID] as? [[String: Any]]
+        return records?.first { $0["scope"] as? String == "user" }?["version"] as? String
+    }
+
+    static func bundledPluginVersion(manifest data: Data?) -> String? {
+        object(data)?["version"] as? String
+    }
+
+    /// Claude Code runs its cached copy until the recorded version matches the
+    /// bundle, so an app update that changes the plugin needs `plugin update`.
+    static func needsPluginUpdate(installed: String?, bundled: String?) -> Bool {
+        guard let installed, let bundled else { return false }
+        return installed != bundled
+    }
 
     /// Claude Code keeps user-scope servers in `.claude.json` and enabled
     /// plugins in `settings.json`; `CLAUDE_CONFIG_DIR` moves both.
@@ -198,6 +222,24 @@ final class ClaudeCodeConnector: ObservableObject {
             try run(cli, ClaudeCodeMCPRegistration.marketplaceAddArguments(appPath: appPath))
         }
         try run(cli, ClaudeCodeMCPRegistration.installArguments)
+        // A reinstall keeps an older cached copy; bring it to the bundled version.
+        try run(cli, ClaudeCodeMCPRegistration.updateArguments)
+    }
+
+    /// After an app update, refreshes a plugin the user already installed when
+    /// the bundled copy has a new version. Does nothing for anyone else.
+    nonisolated static func refreshInstalledPluginIfStale() {
+        let appPath = Bundle.main.bundleURL.path
+        let environment = ProcessInfo.processInfo.environment
+        let installed = ClaudeCodeMCPRegistration.installedPluginVersion(installedPlugins: FileManager.default.contents(
+            atPath: ClaudeCodeMCPRegistration.installedPluginsFile(home: NSHomeDirectory(), environment: environment)
+        ))
+        let manifest = "\(ClaudeCodeMCPRegistration.marketplaceRoot(appPath: appPath))/plugins/stupidmirror-claude/.claude-plugin/plugin.json"
+        let bundled = ClaudeCodeMCPRegistration.bundledPluginVersion(manifest: FileManager.default.contents(atPath: manifest))
+        guard ClaudeCodeMCPRegistration.needsPluginUpdate(installed: installed, bundled: bundled),
+              let cli = findCLI() else { return }
+        try? run(cli, ClaudeCodeMCPRegistration.marketplaceAddArguments(appPath: appPath))
+        try? run(cli, ClaudeCodeMCPRegistration.updateArguments)
     }
 
     /// The newest working CLI: a stale native install can sit ahead of a

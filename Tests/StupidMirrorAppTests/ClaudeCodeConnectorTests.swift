@@ -81,6 +81,29 @@ final class ClaudeCodeConnectorTests: XCTestCase {
         XCTAssertNil(ClaudeCodeMCPRegistration.version(fromOutput: ""))
     }
 
+    func testRefreshesTheCachedPluginOnlyWhenTheBundledVersionChanged() {
+        let installed = Data(#"{"version":2,"plugins":{"stupidmirror@stupidmirror":[{"scope":"user","version":"0.1.0","installPath":"/x"}]}}"#.utf8)
+        XCTAssertEqual(ClaudeCodeMCPRegistration.installedPluginVersion(installedPlugins: installed), "0.1.0")
+        XCTAssertNil(ClaudeCodeMCPRegistration.installedPluginVersion(installedPlugins: Data(#"{"plugins":{}}"#.utf8)))
+        XCTAssertNil(ClaudeCodeMCPRegistration.installedPluginVersion(installedPlugins: nil))
+        XCTAssertEqual(ClaudeCodeMCPRegistration.bundledPluginVersion(manifest: Data(#"{"name":"stupidmirror","version":"0.1.1"}"#.utf8)), "0.1.1")
+
+        XCTAssertTrue(ClaudeCodeMCPRegistration.needsPluginUpdate(installed: "0.1.0", bundled: "0.1.1"))
+        XCTAssertFalse(ClaudeCodeMCPRegistration.needsPluginUpdate(installed: "0.1.1", bundled: "0.1.1"))
+        XCTAssertFalse(ClaudeCodeMCPRegistration.needsPluginUpdate(installed: nil, bundled: "0.1.1"), "Never installs for someone who did not connect")
+        XCTAssertEqual(ClaudeCodeMCPRegistration.updateArguments, ["plugin", "update", "stupidmirror@stupidmirror", "--scope", "user"])
+        XCTAssertEqual(
+            ClaudeCodeMCPRegistration.installedPluginsFile(home: "/Users/me", environment: [:]),
+            "/Users/me/.claude/plugins/installed_plugins.json"
+        )
+    }
+
+    func testBundledManifestVersionIsReadable() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let data = try Data(contentsOf: root.appendingPathComponent("plugins/stupidmirror-claude/.claude-plugin/plugin.json"))
+        XCTAssertNotNil(ClaudeCodeMCPRegistration.bundledPluginVersion(manifest: data))
+    }
+
     func testCopyExistsInBothLanguages() {
         for key in ["mcp.clients.title", "mcp.clients.intro", "mcp.clients.step2", "mcp.clients.copyPrompt",
                     "mcp.codex.tagline", "mcp.codex.cardIntro", "mcp.claude.tagline", "mcp.claude.intro",

@@ -10,6 +10,14 @@
   background capture without opening a Mac window, so `observe_screen` has a
   frame. Screen errors now name `show_screen` alongside `start_mirror`, and the
   tool's description no longer reads as Codex-only.
+- `observe_screen` right after `show_screen` waits up to a few seconds for the
+  first frame instead of failing while capture starts.
+- Fast OCR no longer garbles Chinese. Apple Vision's fast mode reads Latin
+  scripts only, so a request that includes Chinese or another script is read
+  in accurate mode.
+- Keep the installed Claude Code plugin current: connecting again updates
+  Claude Code's cached copy, and after an app update StupidMirror refreshes
+  the plugin by itself when it was already installed.
 
 ## 0.6.1 - 2026-10-26
 

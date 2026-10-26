@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Generated from CHANGELOG.md; sha256 572c447fd13b35b2a8098750218a166a74f6a8ee14dec19175b96b312ff7f4fc. Do not edit this page directly. -->
+<!-- Generated from CHANGELOG.md; sha256 435d66c25992cfbc8cda2344d8d1ffc2be97f007c8de334d689cc7e5bcd7b11a. Do not edit this page directly. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -53,7 +53,7 @@
             <div><h2 id="title-0.6.2"><a href="#v0.6.2">v0.6.2</a></h2><span class="release-badge">Latest</span></div>
             <time datetime="2026-10-27">2026-10-27</time>
           </header>
-          <div class="release-body" lang="en"><ul><li><p>Fix <code>list_devices</code>, <code>refresh_devices</code> and <code>list_apps</code> in Claude Code, which rejected their results because the device or app list was returned as a bare array. Structured results now wrap the list as <code>devices</code> or <code>apps</code>; the text result is unchanged.</p></li><li><p>Tell Claude Code to call <code>show_screen</code> before reading the screen. It starts background capture without opening a Mac window, so <code>observe_screen</code> has a frame. Screen errors now name <code>show_screen</code> alongside <code>start_mirror</code>, and the tool's description no longer reads as Codex-only.</p></li></ul></div>
+          <div class="release-body" lang="en"><ul><li><p>Fix <code>list_devices</code>, <code>refresh_devices</code> and <code>list_apps</code> in Claude Code, which rejected their results because the device or app list was returned as a bare array. Structured results now wrap the list as <code>devices</code> or <code>apps</code>; the text result is unchanged.</p></li><li><p>Tell Claude Code to call <code>show_screen</code> before reading the screen. It starts background capture without opening a Mac window, so <code>observe_screen</code> has a frame. Screen errors now name <code>show_screen</code> alongside <code>start_mirror</code>, and the tool's description no longer reads as Codex-only.</p></li><li><p><code>observe_screen</code> right after <code>show_screen</code> waits up to a few seconds for the first frame instead of failing while capture starts.</p></li><li><p>Fast OCR no longer garbles Chinese. Apple Vision's fast mode reads Latin scripts only, so a request that includes Chinese or another script is read in accurate mode.</p></li><li><p>Keep the installed Claude Code plugin current: connecting again updates Claude Code's cached copy, and after an app update StupidMirror refreshes the plugin by itself when it was already installed.</p></li></ul></div>
         </article>
         <article class="release-entry" id="v0.6.1" aria-labelledby="title-0.6.1">
           <header class="release-heading">

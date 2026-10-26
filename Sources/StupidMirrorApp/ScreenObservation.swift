@@ -404,7 +404,13 @@ actor VisionScreenTextRecognizer {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(snapshot.sampleBuffer) else { return [] }
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = mode == .accurate ? .accurate : .fast
-        request.usesLanguageCorrection = mode == .accurate
+        // Fast recognition reads Latin scripts only: asked for Chinese it returns
+        // garbled text at low confidence, so such a request is read accurately.
+        if mode == .fast, let fastLanguages = try? request.supportedRecognitionLanguages(),
+           languages.contains(where: { !fastLanguages.contains($0) }) {
+            request.recognitionLevel = .accurate
+        }
+        request.usesLanguageCorrection = request.recognitionLevel == .accurate
         request.recognitionLanguages = languages
         request.minimumTextHeight = 0.006
 
