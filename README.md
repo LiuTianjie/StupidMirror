@@ -153,7 +153,7 @@ In **Settings → MCP Automation**, click **Connect Claude Code**, beside the Co
 
 > Use StupidMirror to list my devices and read the current screen without tapping anything.
 
-The MCP entry runs the app's signed helper over stdio, so no token is written to Claude Code's configuration and port or token changes need no reconnection. An older `stupidmirror` HTTP entry for this app's endpoint is replaced; an unrelated entry with that name is kept. The plugin is read in place from the installed app, so app updates refresh it. Claude Code shows no embedded panel: ask it to open the native mirror window when you want to watch the phone. Only local sessions can reach the app.
+The MCP entry runs the app's signed helper over stdio, so no token is written to Claude Code's configuration and port or token changes need no reconnection. An older `stupidmirror` HTTP entry for this app's endpoint is replaced; an unrelated entry with that name is kept. The plugin is read in place from the installed app, and StupidMirror refreshes Claude Code's copy after an app update. Claude Code shows no embedded panel; to watch or operate the phone, ask for the live viewer: Claude calls `open_viewer` and gives you a local link, which in the Claude desktop app's Code tab opens in the Browser pane with the same live video, device picker, refresh and manual control as the Codex panel. The link works once and expires after 10 minutes unused. Only local sessions can reach the app.
 
 ### Manual MCP setup / other clients
 

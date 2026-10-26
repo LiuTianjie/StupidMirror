@@ -133,7 +133,7 @@ const mcp = {
     steps: [
       ["Turn on the MCP server", "Open Settings → MCP and enable the local MCP server. It listens only on http://127.0.0.1:<port>/mcp."],
       ["Pick your client", "Click Connect Claude Code (or Connect Codex) for one-click setup. For another MCP client, open Advanced connection settings · Other AI clients."],
-      ["Start a new session", "Open a new Claude Code session in the terminal or the Claude desktop app's Code tab. Manual clients instead copy the generated configuration, which includes the endpoint, bearer authentication and a 240-second tool timeout."],
+      ["Start a new session", "Open a new Claude Code session in the terminal or the Claude desktop app's Code tab. Ask for the live viewer to watch the phone: open_viewer returns a local link that opens in the desktop Browser pane. Manual clients instead copy the generated configuration, which includes the endpoint, bearer authentication and a 240-second tool timeout."],
       ["Ask the agent", "Keep StupidMirror open and try: “List my connected devices, start mirroring my iPhone, and highlight the visible clickable elements without tapping them.”"],
     ],
     useTitle: "Observe, act, verify",
@@ -181,7 +181,7 @@ const mcp = {
     steps: [
       ["开启 MCP Server", "打开「设置 → MCP」，开启本机 MCP Server。它只监听 http://127.0.0.1:<port>/mcp。"],
       ["选择客户端", "点击「接入 Claude Code」（或「接入 Codex」）一键接入。其他 MCP 客户端请展开「高级连接设置 · 其他 AI 客户端」。"],
-      ["新开会话", "在终端或 Claude 桌面版的 Code 标签里新开一个 Claude Code 会话。手动接入的客户端则复制生成的配置，其中包含地址、Bearer 认证和 240 秒的工具超时。"],
+      ["新开会话", "在终端或 Claude 桌面版的 Code 标签里新开一个 Claude Code 会话。想看手机画面时让它打开实时画面：open_viewer 会返回一个本机链接，可在桌面版的浏览器面板中打开。手动接入的客户端则复制生成的配置，其中包含地址、Bearer 认证和 240 秒的工具超时。"],
       ["向 Agent 提问", "保持 StupidMirror 打开，试试：「列出已连接的设备，开始镜像我的 iPhone，并标出可点击元素，先不要点击。」"],
     ],
     useTitle: "观察、操作、验证",

@@ -1,7 +1,18 @@
 # Changelog
 
-## 0.6.2 - 2026-10-27
+## 0.7.0 - 2026-10-27
 
+- Watch and operate the phone from Claude Code. The new `open_viewer` tool
+  starts capture and returns a link to a live viewer page on this Mac; in the
+  Claude desktop app's Code tab it opens in the Browser pane. The page reuses
+  the Codex panel: live local WebRTC video with a PNG fallback, device
+  picker, refresh and manual control. Annotation is hidden there because no
+  chat receives it.
+- The viewer link carries a single-use ticket that expires after 10 minutes,
+  in the URL fragment so it is never sent in a request or Referer. The page
+  trades it for a tab session that can call only the four panel tools; the
+  MCP bearer token never reaches the page. Host and Origin are checked, and
+  rotating the token or stopping the server ends every open viewer.
 - Fix `list_devices`, `refresh_devices` and `list_apps` in Claude Code, which
   rejected their results because the device or app list was returned as a
   bare array. Structured results now wrap the list as `devices` or `apps`;
