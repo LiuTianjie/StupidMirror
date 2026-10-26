@@ -3,11 +3,15 @@ import SwiftUI
 @main
 struct StupidMirrorApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var store: DeviceGalleryStore
+    // @State, not @StateObject: the scene must not observe the store. With
+    // @StateObject every store change re-evaluated this body, which re-set
+    // the menu bar label and redrew the status item on every display. The
+    // views below observe the store themselves.
+    @State private var store: DeviceGalleryStore
 
     init() {
         let store = DeviceGalleryStore()
-        _store = StateObject(wrappedValue: store)
+        _store = State(initialValue: store)
         AppDelegate.store = store
     }
 
@@ -22,34 +26,42 @@ struct StupidMirrorApp: App {
         .menuBarExtraStyle(.menu)
         .commands {
             CommandGroup(after: .appInfo) {
-                CheckForUpdatesButton()
+                AppMenuCommands()
                     .environmentObject(store)
-
-                Button(store.t("menu.refreshDevices")) {
-                    store.refresh()
-                }
-                .keyboardShortcut("r", modifiers: [.command])
-
-                Button(store.t("menu.stopAll")) {
-                    store.stopAll()
-                }
-                .keyboardShortcut(".", modifiers: [.command])
-
-                Button(store.t("license.menu")) {
-                    store.presentActivation()
-                }
-
-                Button(store.t("toolbar.diagnostics")) {
-                    store.toggleDiagnostics()
-                }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
-
-                Button(store.t("toolbar.settings")) {
-                    store.toggleSettings()
-                }
-                .keyboardShortcut(",", modifiers: [.command])
             }
         }
+    }
+}
+
+struct AppMenuCommands: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+
+    var body: some View {
+        CheckForUpdatesButton()
+
+        Button(store.t("menu.refreshDevices")) {
+            store.refresh()
+        }
+        .keyboardShortcut("r", modifiers: [.command])
+
+        Button(store.t("menu.stopAll")) {
+            store.stopAll()
+        }
+        .keyboardShortcut(".", modifiers: [.command])
+
+        Button(store.t("license.menu")) {
+            store.presentActivation()
+        }
+
+        Button(store.t("toolbar.diagnostics")) {
+            store.toggleDiagnostics()
+        }
+        .keyboardShortcut("d", modifiers: [.command, .shift])
+
+        Button(store.t("toolbar.settings")) {
+            store.toggleSettings()
+        }
+        .keyboardShortcut(",", modifiers: [.command])
     }
 }
 
