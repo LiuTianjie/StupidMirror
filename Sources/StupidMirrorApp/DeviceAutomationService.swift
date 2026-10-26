@@ -515,6 +515,24 @@ final class DeviceAutomationService: @unchecked Sendable {
         )
     }
 
+    /// The latest frame, or, while capture is starting (`show_screen` returns
+    /// before the first frame arrives), the first one within a few seconds.
+    private func firstFrame(of session: DeviceSession, includePNG: Bool) async -> MirrorFrameSnapshot? {
+        let store = session.mirrorSession.latestFrameStore
+        let deadline = ContinuousClock.now + .seconds(8)
+        while true {
+            if let frame = await Task.detached(priority: .utility, operation: {
+                store.snapshot(includePNG: includePNG)
+            }).value {
+                return frame
+            }
+            let state = session.mirrorSession.state
+            guard state == .starting || state == .running, ContinuousClock.now < deadline,
+                  (try? await Task.sleep(for: .milliseconds(250))) != nil
+            else { return nil }
+        }
+    }
+
     func observeScreen(
         deviceID: String?,
         includeImage: Bool,
@@ -528,9 +546,7 @@ final class DeviceAutomationService: @unchecked Sendable {
             ? try Self.normalizedOCRLanguages(ocrLanguages)
             : []
         let frameTask = includeImage || includeOCR
-            ? Task.detached(priority: .utility) {
-                session.mirrorSession.latestFrameStore.snapshot(includePNG: includeImage)
-            }
+            ? Task { await self.firstFrame(of: session, includePNG: includeImage) }
             : nil
 
         var accessibilityElements: [ScreenElement] = []
@@ -581,8 +597,10 @@ final class DeviceAutomationService: @unchecked Sendable {
                 } catch {
                     ocrError = error.localizedDescription
                 }
+            } else if session.mirrorSession.state == .starting {
+                ocrError = "Capture is still starting. Call observe_screen again in a few seconds."
             } else {
-                ocrError = "No live mirror frame is available. Call start_mirror first."
+                ocrError = "No live mirror frame is available. Call show_screen to capture in the background, or start_mirror to open the Mac mirror window."
             }
         }
         let elements = ScreenElementFusion.merge(
@@ -1345,7 +1363,7 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("This device is already recording. Call stop_recording first.")
         }
         guard session.mirrorSession.state == .running else {
-            throw DeviceAutomationError.mirrorFailed("The mirror is not live. Call start_mirror first.")
+            throw DeviceAutomationError.mirrorFailed("The mirror is not live. Call show_screen to capture in the background, or start_mirror to open the Mac mirror window.")
         }
         let url = Self.recordingURL(
             deviceName: session.device.name,

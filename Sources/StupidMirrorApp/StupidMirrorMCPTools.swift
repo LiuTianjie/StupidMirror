@@ -8,7 +8,7 @@ enum StupidMirrorMCPToolCatalog {
         tool("get_device_status", "Get detailed state for one mobile device. supports_native_gestures indicates support for host-native scroll, pinch and rotation events, not arbitrary-center multi-finger gesture synthesis.", deviceProperties, readOnly: true),
         tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, control-agent, and device diagnostics.", readOnly: true),
         tool(
-            "show_screen", "Open or reuse the live phone screen inside Codex. Captures in the background without opening a Mac mirror window. With multiple devices, pass device_id or choose one in the screen panel. Pause/resume controls preview only.",
+            "show_screen", "Start capturing the live phone screen in the background, without opening a Mac mirror window, so observe_screen has frames. Hosts that render MCP Apps, such as Codex, also open or reuse the live screen panel. With multiple devices, pass device_id or choose one in the screen panel. Pause/resume controls preview only.",
             deviceProperties.merging(["action": enumeration("Preview action.", values: ["open", "pause", "resume"], defaultValue: "open")]) { _, new in new },
             title: StupidMirrorScreenResource.displayName,
             idempotent: true,
@@ -16,6 +16,10 @@ enum StupidMirrorMCPToolCatalog {
                 "ui": .object(["resourceUri": .string(StupidMirrorScreenResource.uri)]),
                 "openai/ui": .object(["entrypoints": .array([.object(["type": "thread"])])])
             ])
+        ),
+        tool(
+            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane origin; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
+            deviceProperties
         ),
         tool(
             "screen_frame", "App-only cached preview frame. Never captures through WDA, queries accessibility or acquires the device action lock.",
@@ -458,6 +462,8 @@ enum StupidMirrorMCPToolCatalog {
 @MainActor
 final class StupidMirrorMCPToolRouter: @unchecked Sendable {
     private let automation: DeviceAutomationService
+    /// Mints viewer links. Weak: the gateway's tool caller retains this router.
+    weak var viewer: MCPViewerGateway?
 
     init(automation: DeviceAutomationService) {
         self.automation = automation
@@ -468,9 +474,9 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
         do {
             switch name {
             case "list_devices":
-                return try success(automation.listDevices())
+                return try success(automation.listDevices(), as: "devices")
             case "refresh_devices":
-                return try success(try await automation.refreshDevices())
+                return try success(try await automation.refreshDevices(), as: "devices")
             case "get_device_status":
                 return try success(try automation.deviceStatus(deviceID: optionalString("device_id", args)))
             case "get_diagnostics":
@@ -484,6 +490,30 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     content: [.text(preview.message ?? "The embedded phone preview is ready.")],
                     structuredContent: Optional.some(try Value(preview)), isError: false,
                     _meta: Metadata(additionalFields: ["openai/widgetSessionId": "stupidmirror-screen"])
+                )
+            case "open_viewer":
+                guard let viewer else { throw DeviceAutomationError.controlFailed("The viewer is unavailable while the MCP server is stopped.") }
+                let preview = try await automation.showScreen(deviceID: optionalString("device_id", args), action: "open")
+                let link = try viewer.makeLink(deviceID: preview.device?.id)
+                var structured: [String: Value] = [
+                    "url": .string(link.url.absoluteString),
+                    "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt)),
+                    "browser_pane": .object([
+                        "launch_name": .string(MCPViewerGateway.launchName),
+                        "origin": .string(viewer.origin)
+                    ])
+                ]
+                if let device = preview.device {
+                    structured["device_id"] = .string(device.id)
+                    structured["device_name"] = .string(device.model)
+                }
+                if let message = preview.message { structured["message"] = .string(message) }
+                return CallTool.Result(
+                    content: [.text("""
+                    Live phone viewer: \(link.url.absoluteString)
+                    In the Claude desktop app, open it in the Browser pane yourself: give .claude/launch.json a configuration named "\(MCPViewerGateway.launchName)" with url "\(viewer.origin)" and no command, call preview_start with that name, then navigate the pane to the viewer link. Elsewhere, show the link to the user. It opens one viewer and expires in 10 minutes if unused.
+                    """)],
+                    structuredContent: .object(structured), isError: false
                 )
             case "screen_frame":
                 let afterSequence = args["after_seq"]?.intValue ?? 0
@@ -729,7 +759,7 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     deviceID: optionalString("device_id", args),
                     includeSystem: optionalBool("include_system", args) ?? false
                 )
-                return try success(apps)
+                return try success(apps, as: "apps")
             case "install_app":
                 try await automation.installApp(
                     deviceID: optionalString("device_id", args),
@@ -765,15 +795,22 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
         }
     }
 
-    private func success<T: Codable>(_ value: T) throws -> CallTool.Result {
-        let structured = try Value(value)
+    private func success<T: Codable>(_ value: T, as key: String = "items") throws -> CallTool.Result {
         let data = try JSONEncoder.stupidMirrorMCP.encode(value)
         let text = String(decoding: data, as: UTF8.self)
         return CallTool.Result(
             content: [.text(text)],
-            structuredContent: Optional.some(structured),
+            structuredContent: Optional.some(Self.structuredContent(try Value(value), key: key)),
             isError: false
         )
+    }
+
+    /// MCP requires `structuredContent` to be an object; Claude Code rejects a
+    /// bare array, so a list is wrapped under `key`. The text block keeps the
+    /// list as it was.
+    nonisolated static func structuredContent(_ value: Value, key: String) -> Value {
+        if case .array = value { return .object([key: value]) }
+        return value
     }
 
     private func actionSuccess(_ action: String) -> CallTool.Result {

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.7.0 - 2026-10-27
+
+- Watch and operate the phone from Claude Code. The new `open_viewer` tool
+  starts capture and returns a link to a live viewer page on this Mac. In the
+  Claude desktop app's Code tab, Claude opens it in the Browser pane itself,
+  adding a `stupidmirror-viewer` entry (origin only) to the project's
+  `.claude/launch.json`; elsewhere it shows the link. The page reuses
+  the Codex panel: live local WebRTC video with a PNG fallback, device
+  picker, refresh and manual control. Annotation is hidden there because no
+  chat receives it.
+- The viewer link carries a single-use ticket that expires after 10 minutes,
+  in the URL fragment so it is never sent in a request or Referer. The page
+  trades it for a tab session that can call only the four panel tools; the
+  MCP bearer token never reaches the page. Host and Origin are checked, and
+  rotating the token or stopping the server ends every open viewer.
+- Fix `list_devices`, `refresh_devices` and `list_apps` in Claude Code, which
+  rejected their results because the device or app list was returned as a
+  bare array. Structured results now wrap the list as `devices` or `apps`;
+  the text result is unchanged.
+- Tell Claude Code to call `show_screen` before reading the screen. It starts
+  background capture without opening a Mac window, so `observe_screen` has a
+  frame. Screen errors now name `show_screen` alongside `start_mirror`, and the
+  tool's description no longer reads as Codex-only.
+- `observe_screen` right after `show_screen` waits up to a few seconds for the
+  first frame instead of failing while capture starts.
+- Fast OCR no longer garbles Chinese. Apple Vision's fast mode reads Latin
+  scripts only, so a request that includes Chinese or another script is read
+  in accurate mode.
+- Keep the installed Claude Code plugin current: connecting again updates
+  Claude Code's cached copy, and after an app update StupidMirror refreshes
+  the plugin by itself when it was already installed.
+
 ## 0.6.1 - 2026-10-26
 
 - Add one-click **Connect Claude Code** in **Settings → MCP Automation**,

@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installSignalHandlers()
         DockPresence.install()
         AppUpdater.shared.start()
+        Task.detached(priority: .background) { ClaudeCodeConnector.refreshInstalledPluginIfStale() }
         guard !CommandLine.arguments.contains("--mcp-background") else { return }
         // Started at login: stay in the menu bar until the user opens it.
         guard !LaunchAtLoginController.launchedAsLoginItem() else { return }

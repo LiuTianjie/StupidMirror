@@ -2,6 +2,8 @@
 
 This is the UI resource returned by `show_screen`, hosted by Codex MCP Apps. It is not a separately deployed website. The local browser harness is only for development validation.
 
+Hosts that cannot render MCP Apps (Claude Code) get the same page from the app at `http://127.0.0.1:<port>/viewer`. `open_viewer` returns a link with a single-use ticket in the URL fragment; the page trades it for a session kept in that tab's `sessionStorage` and calls only `show_screen`, `screen_frame`, `screen_action` and `screen_signal` through `/viewer/api/call` (`src/standalone.ts`, `MCPViewerGateway.swift`). The MCP bearer token is never exposed to the page. Annotation is hidden there because no chat receives it.
+
 - Live video: the app's existing capture buffer → VideoToolbox H264 → bundled Pion WebRTC helper → `<video>`. Signaling uses app-only `screen_signal`; ICE advertises only loopback, with no STUN/TURN service.
 - AI observation and fallback: original-resolution PNG through `screen_frame` / `observe_screen`. Do not reduce the resolution of the user-facing preview to model-image limits.
 - Manual interaction: explicitly enable **操作**, then normalized tap/swipe commands use the existing device control service. Gestures are not queued behind first-time control setup.
