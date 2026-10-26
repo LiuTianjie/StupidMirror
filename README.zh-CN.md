@@ -153,7 +153,7 @@ HID 无法连接时，自动使用 WDA 兼容路径。兼容模式会记录鼠�
 
 > 用 StupidMirror 列出我的设备，读取当前屏幕，先不要点击。
 
-MCP 配置通过 stdio 运行应用自带的签名辅助程序，Claude Code 配置里不会写入 Token，端口或 Token 变化后也无需重新接入。指向本应用端点的旧 `stupidmirror` HTTP 配置会被替换；同名但无关的配置会保留。插件直接从已安装的应用中读取，应用更新后 StupidMirror 会自动刷新 Claude Code 中的插件副本。Claude Code 没有内嵌画面面板；想看或操作手机时，让它打开实时画面：Claude 会调用 `open_viewer` 给出一个本机链接，在 Claude 桌面版的 Code 标签里会在浏览器面板中打开，实时画面、切换设备、刷新和手动控制都与 Codex 面板一致。链接只能使用一次，10 分钟内未打开即失效。只有本地会话能连到应用。
+MCP 配置通过 stdio 运行应用自带的签名辅助程序，Claude Code 配置里不会写入 Token，端口或 Token 变化后也无需重新接入。指向本应用端点的旧 `stupidmirror` HTTP 配置会被替换；同名但无关的配置会保留。插件直接从已安装的应用中读取，应用更新后 StupidMirror 会自动刷新 Claude Code 中的插件副本。Claude Code 没有内嵌画面面板；想看或操作手机时，让它打开实时画面：Claude 会调用 `open_viewer`，在 Claude 桌面版的 Code 标签里直接在浏览器面板中打开本机实时画面（会在项目的 `.claude/launch.json` 中加一条只含地址的 `stupidmirror-viewer` 配置）；在终端里则给出链接。实时画面、切换设备、刷新和手动控制都与 Codex 面板一致。链接只能使用一次，10 分钟内未打开即失效。只有本地会话能连到应用。
 
 ### 手动 MCP 接入 / 其他客户端
 

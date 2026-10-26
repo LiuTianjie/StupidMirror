@@ -3,8 +3,10 @@
 ## 0.7.0 - 2026-10-27
 
 - Watch and operate the phone from Claude Code. The new `open_viewer` tool
-  starts capture and returns a link to a live viewer page on this Mac; in the
-  Claude desktop app's Code tab it opens in the Browser pane. The page reuses
+  starts capture and returns a link to a live viewer page on this Mac. In the
+  Claude desktop app's Code tab, Claude opens it in the Browser pane itself,
+  adding a `stupidmirror-viewer` entry (origin only) to the project's
+  `.claude/launch.json`; elsewhere it shows the link. The page reuses
   the Codex panel: live local WebRTC video with a PNG fallback, device
   picker, refresh and manual control. Annotation is hidden there because no
   chat receives it.

@@ -18,7 +18,7 @@ enum StupidMirrorMCPToolCatalog {
             ])
         ),
         tool(
-            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code, when the user wants to watch or operate the phone. Show the url to the user as a clickable link; in the Claude desktop app they can open it in the Browser pane. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
+            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane origin; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
             deviceProperties
         ),
         tool(
@@ -497,7 +497,11 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 let link = try viewer.makeLink(deviceID: preview.device?.id)
                 var structured: [String: Value] = [
                     "url": .string(link.url.absoluteString),
-                    "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt))
+                    "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt)),
+                    "browser_pane": .object([
+                        "launch_name": .string(MCPViewerGateway.launchName),
+                        "origin": .string(viewer.origin)
+                    ])
                 ]
                 if let device = preview.device {
                     structured["device_id"] = .string(device.id)
@@ -505,7 +509,10 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 }
                 if let message = preview.message { structured["message"] = .string(message) }
                 return CallTool.Result(
-                    content: [.text("Live phone viewer: \(link.url.absoluteString)\nShow this link to the user. It opens one viewer and expires in 10 minutes if unused.")],
+                    content: [.text("""
+                    Live phone viewer: \(link.url.absoluteString)
+                    In the Claude desktop app, open it in the Browser pane yourself: give .claude/launch.json a configuration named "\(MCPViewerGateway.launchName)" with url "\(viewer.origin)" and no command, call preview_start with that name, then navigate the pane to the viewer link. Elsewhere, show the link to the user. It opens one viewer and expires in 10 minutes if unused.
+                    """)],
                     structuredContent: .object(structured), isError: false
                 )
             case "screen_frame":

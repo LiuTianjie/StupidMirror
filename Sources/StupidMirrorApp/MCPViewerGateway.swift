@@ -89,7 +89,7 @@ final class MCPViewerGateway: @unchecked Sendable {
         }
         switch (method.uppercased(), path) {
         case ("GET", "/"):
-            return MCPViewerResponse(statusCode: 302, headers: ["Location": Self.path, "Cache-Control": "no-store"], body: Data())
+            return Self.landing
         case ("GET", Self.path):
             return page()
         case ("POST", Self.path + "/api/session"):
@@ -104,6 +104,31 @@ final class MCPViewerGateway: @unchecked Sendable {
     }
 
     private var allowedHosts: Set<String> { ["127.0.0.1:\(port)", "localhost:\(port)"] }
+
+    /// The origin a host's browser opens first (Claude's Browser pane takes an
+    /// origin only), before it is sent to a viewer link. A page of its own, not
+    /// a redirect: going on to `/viewer#ticket=…` from `/viewer` would only
+    /// change the fragment and never load the page that reads the ticket.
+    static var landing: MCPViewerResponse {
+        let html = """
+        <!doctype html><html lang="en"><head><meta charset="utf-8"><title>StupidMirror</title>
+        <meta name="viewport" content="width=device-width,initial-scale=1"></head>
+        <body style="margin:0;height:100vh;display:grid;place-items:center;font:14px -apple-system,system-ui,sans-serif;color:#666;background:#f5f5f4">
+        <p>Waiting for a StupidMirror viewer link…</p></body></html>
+        """
+        return MCPViewerResponse(statusCode: 200, headers: [
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+        ], body: Data(html.utf8))
+    }
+
+    /// What a host needs to open the viewer in its own browser pane: a
+    /// configuration name and the origin it starts from.
+    var origin: String { "http://127.0.0.1:\(port)" }
+    static let launchName = "stupidmirror-viewer"
 
     private func rejectCrossOrigin(_ headers: [String: String]) -> MCPViewerResponse? {
         // Browsers always send Origin on fetch POST. Requiring our own origin

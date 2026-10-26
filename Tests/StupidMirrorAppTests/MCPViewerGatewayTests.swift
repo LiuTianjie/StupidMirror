@@ -77,8 +77,11 @@ final class MCPViewerGatewayTests: XCTestCase {
         XCTAssertEqual(response.headers["Cache-Control"], "no-store")
 
         let root = await makeGateway().handle(method: "GET", path: "/", headers: ["Host": "localhost:17373"], body: nil)
-        XCTAssertEqual(root.statusCode, 302)
-        XCTAssertEqual(root.headers["Location"], "/viewer")
+        // A page of its own, so moving on to /viewer#ticket=… is a full load.
+        XCTAssertEqual(root.statusCode, 200)
+        XCTAssertNil(root.headers["Location"])
+        XCTAssertTrue(root.headers["Content-Security-Policy"]?.hasPrefix("default-src 'none'") == true)
+        XCTAssertFalse(String(decoding: root.body, as: UTF8.self).contains("<script"))
     }
 
     func testForeignHostIsRejectedBeforeAnyRoute() async {
