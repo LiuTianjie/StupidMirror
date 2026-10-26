@@ -88,7 +88,7 @@
                 "name": "Which clients work?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Codex through the bundled plugin, Claude Code through the generated command, and other MCP clients through the generated configuration with bearer authentication."
+                  "text": "Codex and Claude Code through one-click setup that installs their plugin and MCP tools, and other MCP clients through the generated configuration with bearer authentication."
                 }
               },
               {
@@ -150,11 +150,11 @@
       </section>
       <section class="section-shell guide-section">
         <h2>Connect an MCP client</h2>
-        <p class="guide-note">Codex users can also click Connect Codex for the bundled plugin. For Claude Code and other clients, use the generated configuration.</p>
+        <p class="guide-note">In Settings → MCP Automation, Connect Codex and Connect Claude Code each install their plugin and MCP tools in one click; parts already in place are skipped. Other MCP clients use the generated configuration.</p>
         <div class="step-grid guide-grid">
           <article class="card step"><span class="step-number">01</span><h3>Turn on the MCP server</h3><p>Open Settings → MCP and enable the local MCP server. It listens only on http://127.0.0.1:&lt;port&gt;/mcp.</p></article>
-          <article class="card step"><span class="step-number">02</span><h3>Pick your client</h3><p>In Advanced connection settings · Other AI clients, choose Codex or Claude Code in the connection guide.</p></article>
-          <article class="card step"><span class="step-number">03</span><h3>Copy the configuration</h3><p>Copy the generated configuration or command into that client. It includes the endpoint, bearer authentication and a 240-second tool timeout for slow first-time control setup.</p></article>
+          <article class="card step"><span class="step-number">02</span><h3>Pick your client</h3><p>Click Connect Claude Code (or Connect Codex) for one-click setup. For another MCP client, open Advanced connection settings · Other AI clients.</p></article>
+          <article class="card step"><span class="step-number">03</span><h3>Start a new session</h3><p>Open a new Claude Code session in the terminal or the Claude desktop app's Code tab. Manual clients instead copy the generated configuration, which includes the endpoint, bearer authentication and a 240-second tool timeout.</p></article>
           <article class="card step"><span class="step-number">04</span><h3>Ask the agent</h3><p>Keep StupidMirror open and try: “List my connected devices, start mirroring my iPhone, and highlight the visible clickable elements without tapping them.”</p></article>
         </div>
       </section>
@@ -182,7 +182,7 @@
           </details>
           <details class="faq-item">
             <summary><h3>Which clients work?</h3></summary>
-            <p>Codex through the bundled plugin, Claude Code through the generated command, and other MCP clients through the generated configuration with bearer authentication.</p>
+            <p>Codex and Claude Code through one-click setup that installs their plugin and MCP tools, and other MCP clients through the generated configuration with bearer authentication.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Why is the first action slow?</h3></summary>

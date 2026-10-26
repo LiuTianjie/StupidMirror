@@ -1,0 +1,11 @@
+{
+  "name": "stupidmirror",
+  "owner": { "name": "StupidMirror" },
+  "plugins": [
+    {
+      "name": "stupidmirror",
+      "source": "./plugins/stupidmirror-claude",
+      "description": "Observe and control real iPhone and Android devices through the StupidMirror Mac app."
+    }
+  ]
+}

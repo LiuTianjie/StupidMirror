@@ -94,6 +94,12 @@ cp .agents/plugins/marketplace.json "${plugin_resources}/.agents/plugins/marketp
 mkdir -p "${plugin_resources}/plugins/stupidmirror"
 /usr/bin/rsync -a --exclude=node_modules --exclude=.DS_Store plugins/stupidmirror/ "${plugin_resources}/plugins/stupidmirror/"
 cp scripts/install-codex-plugin.sh "${plugin_resources}/scripts/install-codex-plugin.sh"
+# Claude Code reads a folder marketplace's plugins in place, so this copy is
+# what an installed Claude Code plugin runs; app updates refresh it.
+claude_plugin_resources="${contents_path}/Resources/ClaudePlugin"
+mkdir -p "${claude_plugin_resources}/.claude-plugin" "${claude_plugin_resources}/plugins/stupidmirror-claude"
+cp .claude-plugin/marketplace.json "${claude_plugin_resources}/.claude-plugin/marketplace.json"
+/usr/bin/rsync -a --exclude=.DS_Store plugins/stupidmirror-claude/ "${claude_plugin_resources}/plugins/stupidmirror-claude/"
 if [ -f "$icon_path" ]; then
   mkdir -p "${contents_path}/Resources"
   cp "$icon_path" "${contents_path}/Resources/AppIcon.icns"

@@ -88,7 +88,7 @@
                 "name": "支持哪些客户端？",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Codex 通过内置插件接入，Claude Code 通过生成的命令接入，其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。"
+                  "text": "Codex 和 Claude Code 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。"
                 }
               },
               {
@@ -150,11 +150,11 @@
       </section>
       <section class="section-shell guide-section">
         <h2>接入 MCP 客户端</h2>
-        <p class="guide-note">Codex 用户也可以直接点「连接 Codex」使用内置插件。Claude Code 和其他客户端使用自动生成的配置。</p>
+        <p class="guide-note">在「设置 → MCP 自动化」中，「接入 Codex」和「接入 Claude Code」都会一键安装插件和 MCP 工具，已装好的部分会跳过。其他 MCP 客户端使用自动生成的配置。</p>
         <div class="step-grid guide-grid">
           <article class="card step"><span class="step-number">01</span><h3>开启 MCP Server</h3><p>打开「设置 → MCP」，开启本机 MCP Server。它只监听 http://127.0.0.1:&lt;port&gt;/mcp。</p></article>
-          <article class="card step"><span class="step-number">02</span><h3>选择客户端</h3><p>在「高级连接设置 · 其他 AI 客户端」的连接向导里，选择 Codex 或 Claude Code。</p></article>
-          <article class="card step"><span class="step-number">03</span><h3>复制配置</h3><p>把生成的配置或命令复制到对应客户端。其中包含地址、Bearer 认证，以及 240 秒的工具超时，留给首次控制连接的较长准备时间。</p></article>
+          <article class="card step"><span class="step-number">02</span><h3>选择客户端</h3><p>点击「接入 Claude Code」（或「接入 Codex」）一键接入。其他 MCP 客户端请展开「高级连接设置 · 其他 AI 客户端」。</p></article>
+          <article class="card step"><span class="step-number">03</span><h3>新开会话</h3><p>在终端或 Claude 桌面版的 Code 标签里新开一个 Claude Code 会话。手动接入的客户端则复制生成的配置，其中包含地址、Bearer 认证和 240 秒的工具超时。</p></article>
           <article class="card step"><span class="step-number">04</span><h3>向 Agent 提问</h3><p>保持 StupidMirror 打开，试试：「列出已连接的设备，开始镜像我的 iPhone，并标出可点击元素，先不要点击。」</p></article>
         </div>
       </section>
@@ -182,7 +182,7 @@
           </details>
           <details class="faq-item">
             <summary><h3>支持哪些客户端？</h3></summary>
-            <p>Codex 通过内置插件接入，Claude Code 通过生成的命令接入，其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。</p>
+            <p>Codex 和 Claude Code 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。</p>
           </details>
           <details class="faq-item">
             <summary><h3>为什么第一次操作比较慢？</h3></summary>

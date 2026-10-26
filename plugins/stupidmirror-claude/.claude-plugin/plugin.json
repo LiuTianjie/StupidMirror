@@ -1,0 +1,9 @@
+{
+  "name": "stupidmirror",
+  "version": "0.1.0",
+  "description": "Observe and control real iPhone and Android devices through the StupidMirror Mac app.",
+  "author": { "name": "StupidMirror" },
+  "homepage": "https://stupidmirror.itool.tech/",
+  "repository": "https://github.com/LiuTianjie/StupidMirror",
+  "license": "PolyForm-Noncommercial-1.0.0"
+}
