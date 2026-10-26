@@ -23,11 +23,21 @@ SOFTWARE.
 */
 import { App } from '@modelcontextprotocol/ext-apps';
 import { createVideo } from './video';
+import type { TouchPhase } from './touch';
 import { createAnnotations, type Point as NormalizedPoint } from './annotations';
+import { validMesh, type ScreenMesh } from './mesh';
+import { createDuoPreview, validDuoPose, type DuoPose, type DuoAsset } from './duo';
 
 type Size = { width: number; height: number };
 type Point = { x: number; y: number };
 type Frame = Size & { seq: number; data: string; mimeType: string };
+type Posture = 'closed' | 'partially_open' | 'open';
+type Shell = Size & {
+  id: string;
+  screen_x: number; screen_y: number; screen_width: number; screen_height: number;
+  artwork?: string; mask?: string;
+  mesh?: ScreenMesh; duo?: DuoPose; model?: DuoAsset; posture_icons?: Partial<Record<Posture | 'rotate',string>>;
+};
 type Gesture = {
   id: number;
   kind: 'tap' | 'drag';
@@ -48,8 +58,9 @@ type Preview = {
   paused: boolean;
   pause_reason?: 'device_locked' | 'authentication' | 'unknown' | null;
   events: Gesture[];
-  device?: { id?: string; model?: string; platform?: string } | null;
-  devices?: { device_id: string; name: string; platform?: string; connection_state: string }[];
+  device?: { id?: string; model?: string; platform?: string; form_factor?: string; active_screen?: string; posture?: Posture; hinge_angle?: number; can_set_posture?: boolean; changing_posture?: boolean } | null;
+  shell?: Shell | null;
+  devices?: { device_id: string; name: string; platform?: string; connection_state: string; supports_continuous_touch?: boolean; supports_native_gestures?: boolean; touch_generation?: number }[];
   message?: string;
 };
 type LiveState = 'connecting' | 'live' | 'paused' | 'offline';
@@ -59,6 +70,9 @@ type CursorEffect = { node: HTMLElement; animation?: Animation; timer?: ReturnTy
 
 const root = document.getElementById('app')!;
 const device = document.getElementById('device')!;
+const shellArtwork = document.getElementById('shell-artwork')! as HTMLImageElement;
+const meshCanvas = document.getElementById('mesh-screen')! as HTMLCanvasElement;
+const duoPreview = createDuoPreview(meshCanvas);
 const screen = document.getElementById('screen')!;
 const image = document.getElementById('image')! as HTMLImageElement;
 const video = document.getElementById('video')! as HTMLVideoElement;
@@ -66,7 +80,13 @@ const controlButton = document.getElementById('control-button')! as HTMLButtonEl
 const annotateButton = document.getElementById('annotate-button')! as HTMLButtonElement;
 const controlLabel = document.getElementById('control-label')!;
 let controlMode = false;
-let pointer: { id:number; start:NormalizedPoint; x:number; y:number; started:number; deviceId?:string; width?:number; height?:number } | undefined;
+let supportsContinuousTouch = false;
+let supportsNativeGestures = false;
+let touchGeneration: number | undefined;
+let nextGesture = 0;
+let pointer: { id:number; target:HTMLElement; start:NormalizedPoint; x:number; y:number; started:number; deviceId?:string; width?:number; height?:number; shellId?:string; geometry:string; generation?:number; gestureID:string; seq:number; continuous:boolean; last:NormalizedPoint; moved:boolean } | undefined;
+let wheelGesture: { point:NormalizedPoint; geometry:string; generation:number; gestureID:string; seq:number } | undefined;
+let wheelIdle: ReturnType<typeof setTimeout> | undefined;
 const emptyState = document.getElementById('empty-state')!;
 const emptyText = document.getElementById('empty-state-text')!;
 const emptyHint = document.getElementById('empty-hint')!;
@@ -91,8 +111,20 @@ const tools: Record<ToolName, HTMLButtonElement> = {
   screenshot: document.getElementById('tool-screenshot') as HTMLButtonElement,
   pause: document.getElementById('tool-pause') as HTMLButtonElement,
 };
+const postureDivider = document.getElementById('posture-divider')!;
+const rotateButton = document.getElementById('tool-rotate')! as HTMLButtonElement;
+const postureButtons: Record<Posture, HTMLButtonElement> = {
+  closed: document.getElementById('tool-posture-closed') as HTMLButtonElement,
+  partially_open: document.getElementById('tool-posture-partially-open') as HTMLButtonElement,
+  open: document.getElementById('tool-posture-open') as HTMLButtonElement,
+};
+let currentPosture: Posture | undefined;
+let canSetPosture = false;
+let changingPosture = false;
+let shell: Shell | undefined;
+const shellCache = new Map<string, Shell>();
 const app = new App(
-  { name: 'StupidMirror', version: '0.2.4' },
+  { name: 'StupidMirror', version: '0.2.7' },
   { availableDisplayModes: ['fullscreen'] },
   { autoResize: false },
 );
@@ -148,9 +180,10 @@ const validPoint = (value: unknown): value is Point => {
 const liveVideo = createVideo(app, video, {
   ready: size => {
     if (annotations.active || previewPaused || disposed) return;
-    if (!dimensions || dimensions.width !== size.width || dimensions.height !== size.height) { dimensions = size; fitFrame(); }
+    if (!dimensions || dimensions.width !== size.width || dimensions.height !== size.height) { cancelForGeometryChange(); dimensions = size; fitFrame(); }
     image.hidden = true; video.hidden = false; device.hidden = screen.hidden = false; emptyState.hidden = true;
     root.dataset.transport = 'webrtc'; setLive('live'); syncTools();
+    duoPreview.draw(video);
   },
   stopped: (reason, retrying) => {
     root.dataset.transport = 'webrtc-error';
@@ -161,16 +194,17 @@ const liveVideo = createVideo(app, video, {
       schedule(1000);
     }
   },
+  touchStopped: reason => { const wasControlling = controlMode || !!pointer; pointerCancel(); controlMode = false; syncTools(); if (wasControlling) notify(reason, true); },
   fps: value => { root.dataset.videoFps = String(value); if (dimensions) liveText.title = `${dimensions.width} × ${dimensions.height} · ${value} fps`; },
 });
 const annotations = createAnnotations(app, {
-  freeze: source => { frameGeneration++; controlMode = false; image.src = source; image.hidden = false; video.hidden = true; root.dataset.annotation = 'true'; },
+  freeze: source => { pointerCancel(); frameGeneration++; controlMode = false; image.src = source; image.hidden = false; video.hidden = true; root.dataset.annotation = 'true'; },
   resume: () => {
     root.dataset.annotation = 'false';
     if (liveVideo.active) { image.hidden = true; video.hidden = false; }
     else { frameSeq = 0; schedule(0); }
   },
-  changed: () => syncTools(), notify,
+  changed: () => { syncTools(); fitFrame(); }, notify,
 });
 
 function syncTools() {
@@ -191,6 +225,7 @@ function syncTools() {
   root.dataset.control = String(controlMode);
   if (annotations.active) liveText.textContent = '画面已冻结';
   else if (root.dataset.live === 'live') liveText.textContent = LIVE_TEXT.live;
+  syncPosturePicker();
 }
 
 function showEmpty(state: EmptyState) {
@@ -201,7 +236,7 @@ function showEmpty(state: EmptyState) {
 }
 
 function showConnectionError(reason: string, retrying = false) {
-  if (!image.src && !liveVideo.active) { emptyState.hidden = false; device.hidden = screen.hidden = true; }
+  if (!image.src && !liveVideo.active) { emptyState.hidden = false; device.hidden = screen.hidden = !shell; }
   if (previewPaused) {
     showEmpty(emptyState.dataset.state === 'locked' ? 'locked' : 'authentication');
     emptyHint.textContent = reason; retryButton.hidden = false; return;
@@ -216,7 +251,7 @@ function setLive(state: LiveState) {
   if (!image.src) showEmpty(state === 'paused' ? 'paused' : state === 'offline' ? 'offline' : 'connecting');
   if (root.dataset.live === state) return;
   root.dataset.live = state;
-  if (state !== 'live') controlMode = false;
+  if (state !== 'live') { pointerCancel(); controlMode = false; }
   liveText.textContent = LIVE_TEXT[state];
   liveText.title = '';
   syncTools();
@@ -247,21 +282,22 @@ function hideCursor() {
 }
 
 function clearFrame(resetOperating = true) {
-  const hadDimensions = !!dimensions;
-  liveVideo.close(); controlMode = false; pointer = undefined;
+  pointerCancel();
+  duoPreview.clear();
+  liveVideo.close(); controlMode = false;
   frameGeneration++;
   hideCursor();
   image.removeAttribute('src');
   image.hidden = true;
   emptyState.hidden = false;
-  device.hidden = screen.hidden = true;
+  device.hidden = screen.hidden = !shell;
   dimensions = undefined;
   lastGoodFrame = undefined;
   frameSeq = 0;
   root.dataset.frameSeq = '0';
   root.dataset.busy = 'false';
   if (resetOperating) root.dataset.operating = 'false';
-  if (!disposed && hadDimensions) fitFrame();
+  if (!disposed) fitFrame();
 }
 
 function retainFrame() {
@@ -272,21 +308,104 @@ function retainFrame() {
 const visible = () => !disposed && !suspended && !document.hidden;
 
 function fitFrame() {
-  const size = dimensions ?? viewport;
+  if ((pointer && pointer.geometry !== gestureGeometry()) || (wheelGesture && wheelGesture.geometry !== gestureGeometry())) cancelForGeometryChange();
+  if (shell?.duo && !annotations.active) {
+    const width = stage.clientWidth, height = stage.clientHeight;
+    const ready = duoPreview.configure(shell.duo, shell.model, width, height);
+    // Until the model arrives, keep the status visible rather than briefly
+    // presenting this known foldable as a bare rectangular screenshot.
+    device.hidden = !ready;
+    screen.style.visibility = 'hidden';
+    shellArtwork.hidden = true;
+    if (ready) {
+      // Keep one canvas mounted while the camera follows the hinge. A new
+      // framebuffer must not replace or resize the model during a transition.
+      device.style.width = width + 'px';
+      device.style.height = height + 'px';
+      device.dataset.duo = 'true';
+      device.dataset.mesh = 'true';
+      device.dataset.shellId = shell.id;
+      duoPreview.draw(liveVideo.active ? video : image);
+    }
+    return;
+  }
+  const size = dimensions ?? viewport ?? (shell ? {width: shell.screen_width, height: shell.screen_height} : undefined);
   if (!size) return;
+  // Hardware identity does not disappear while its video is starting or
+  // rotating. object-fit: contain preserves the full frame inside its shell.
+  const fittedShell = shell && !shell.duo && !(annotations.active && shell.mesh) ? shell : undefined;
+  const body = fittedShell ?? size;
   const width = stage.clientWidth;
   const height = stage.clientHeight;
-  const scale = Math.min(width / size.width, height / size.height);
-  const displayWidth = Math.max(0, size.width * scale);
-  const displayHeight = Math.max(0, size.height * scale);
+  const scale = Math.min(width / body.width, height / body.height);
+  const displayWidth = Math.max(0, body.width * scale);
+  const displayHeight = Math.max(0, body.height * scale);
   device.style.width = `${displayWidth}px`;
   device.style.height = `${displayHeight}px`;
-  // Match StupidMirror's continuous phone-screen clip. No added chassis,
-  // side buttons or camera cutouts: these belong to the captured device.
-  const cornerRatio = platform === 'ios' ? .14 : platform === 'android' ? .06 : .035;
-  device.style.setProperty('--screen-radius', `${Math.min(displayWidth, displayHeight) * cornerRatio}px`);
+  duoPreview.configure();
+  screen.style.visibility = '';
+  device.dataset.duo = 'false';
+  screen.style.left = `${(fittedShell?.screen_x ?? 0) * scale}px`;
+  screen.style.top = `${(fittedShell?.screen_y ?? 0) * scale}px`;
+  screen.style.width = `${(fittedShell?.screen_width ?? size.width) * scale}px`;
+  screen.style.height = `${(fittedShell?.screen_height ?? size.height) * scale}px`;
+  shellArtwork.hidden = !fittedShell?.artwork;
+  const mask = fittedShell?.mask ? `url("data:image/png;base64,${fittedShell.mask}")` : 'none';
+  screen.style.maskImage = mask;
+  screen.style.setProperty('-webkit-mask-image', mask);
   device.dataset.orientation = size.width > size.height ? 'landscape' : 'portrait';
+  device.dataset.shellId = fittedShell?.id ?? '';
+  device.dataset.mesh = 'false';
+  duoPreview.draw(liveVideo.active && !annotations.active ? video : image);
   if (annotations.active) annotations.render();
+}
+
+function consumeShell(value: Shell | null | undefined) {
+  if (!value || !validSize(value) || typeof value.id !== 'string'
+      || !validSize({ width: value.screen_width, height: value.screen_height })
+      || !Number.isFinite(value.screen_x) || !Number.isFinite(value.screen_y)
+      || value.screen_x < 0 || value.screen_y < 0
+      || value.screen_x + value.screen_width > value.width + 1
+      || value.screen_y + value.screen_height > value.height + 1) return;
+  if (value.mesh && !validMesh(value.mesh)) return;
+  if (value.duo && !validDuoPose(value.duo)) return;
+  const previousID = shell?.id;
+  if ((pointer || wheelGesture) && previousID !== value.id) cancelForGeometryChange();
+  shell = { ...shellCache.get(value.id), ...value };
+  if (shell.artwork || shell.posture_icons || shell.model) {
+    shellCache.set(shell.id, shell);
+    if (shellCache.size > 12) shellCache.delete(shellCache.keys().next().value!);
+  }
+  if (shell.artwork && !shell.duo) {
+    const source = `data:image/png;base64,${shell.artwork}`;
+    if (shellArtwork.src !== source) {
+      shellArtwork.src = source;
+      if (previousID && previousID !== shell.id && !reducedMotion.matches) {
+        shellArtwork.animate([{opacity:0.35},{opacity:1}], {duration:240,easing:'ease-in-out'});
+      }
+    }
+  } else {
+    shellArtwork.removeAttribute('src');
+  }
+  for (const posture of Object.keys(postureButtons) as Posture[]) {
+    const icon = shell.posture_icons?.[posture];
+    postureButtons[posture].dataset.realIcon = String(!!icon);
+    if (icon) postureButtons[posture].style.setProperty('--posture-icon', `url("data:image/png;base64,${icon}")`);
+  }
+  const rotateIcon = shell.posture_icons?.rotate;
+  rotateButton.dataset.realIcon = String(!!rotateIcon);
+  if (rotateIcon) rotateButton.style.setProperty('--posture-icon', `url("data:image/png;base64,${rotateIcon}")`);
+  device.hidden = screen.hidden = false;
+  fitFrame();
+}
+
+function resetDeviceAppearance() {
+  shell = undefined; currentPosture = undefined; canSetPosture = false; changingPosture = false;
+  device.hidden = screen.hidden = true;
+  shellArtwork.removeAttribute('src'); shellArtwork.hidden = true;
+  duoPreview.clear(); screen.style.visibility = '';
+  screen.style.maskImage = 'none'; screen.style.setProperty('-webkit-mask-image', 'none');
+  syncPosturePicker();
 }
 
 function setDeviceMenu(open: boolean, focus = false) {
@@ -412,7 +531,18 @@ function consume(value: unknown) {
   }
   if (preview.device?.id && preview.device.id !== selectedDeviceId) {
     clearFrame(); liveVideo.retry(); selectedDeviceId = preview.device.id;
+    viewport = undefined; platform = undefined; resetDeviceAppearance();
     syncDeviceSelection();
+  }
+  if (Array.isArray(preview.devices)) {
+    const selected = preview.devices.find(item => item.device_id === selectedDeviceId);
+    const generation = selected?.touch_generation;
+    const supported = selected?.supports_continuous_touch === true;
+    const nativeGestures = selected?.supports_native_gestures === true;
+    if ((pointer || wheelGesture) && (generation !== touchGeneration || supported !== supportsContinuousTouch || nativeGestures !== supportsNativeGestures)) cancelForGeometryChange();
+    supportsContinuousTouch = supported;
+    supportsNativeGestures = nativeGestures;
+    touchGeneration = Number.isSafeInteger(generation) ? generation : undefined;
   }
   if (preview.device?.platform && preview.device.platform !== platform) {
     platform = preview.device.platform;
@@ -431,7 +561,16 @@ function consume(value: unknown) {
     retainFrame();
   }
   if (typeof preview.device?.model === 'string' && preview.device.model) model.textContent = preview.device.model;
+  if (preview.device) {
+    if ((pointer || wheelGesture) && preview.device.changing_posture === true) cancelForGeometryChange();
+    currentPosture = preview.device.posture ?? undefined;
+    canSetPosture = preview.device.can_set_posture === true;
+    changingPosture = preview.device.changing_posture === true;
+    syncPosturePicker();
+  }
+  consumeShell(preview.shell);
   if (validSize(preview.viewport) && (viewport?.width !== preview.viewport.width || viewport?.height !== preview.viewport.height)) {
+    cancelForGeometryChange();
     viewport = preview.viewport;
     if (!dimensions) fitFrame();
   }
@@ -512,14 +651,15 @@ async function poll() {
     const generation = frameGeneration;
     const result = await app.callServerTool({
       name: 'screen_frame',
-      arguments: { after_seq: frameSeq, ...(liveVideo.available ? { include_frame: false } : {}), ...(selectedDeviceId ? { device_id: selectedDeviceId } : {}) },
+      arguments: { after_seq: frameSeq, ...(shell && (shell.artwork || shell.posture_icons) ? { shell_id: shell.id } : {}), model_id: duoPreview.modelID ?? '', ...(liveVideo.available ? { include_frame: false } : {}), ...(selectedDeviceId ? { device_id: selectedDeviceId } : {}) },
     }, { timeout: REQUEST_TIMEOUT, signal: controller.signal });
     if (!visible() || generation !== frameGeneration) return;
     if (result.isError) throw new Error((result.structuredContent as {error?:{message?:string}})?.error?.message ?? '预览服务不可用');
     consume(result.structuredContent);
     failures = 0;
     const preview = result.structuredContent as Partial<Preview> | undefined;
-    nextDelay = liveVideo.active || liveVideo.pending || annotations.active ? VIDEO_STATE_INTERVAL : preview?.paused || preview?.frame_available === false
+    const stateInterval = canSetPosture && !annotations.active ? FRAME_INTERVAL : VIDEO_STATE_INTERVAL;
+    nextDelay = liveVideo.active || liveVideo.pending || annotations.active ? stateInterval : preview?.paused || preview?.frame_available === false
       ? 1000 : Math.max(0, FRAME_INTERVAL - (performance.now() - started));
   } catch (error) {
     if (controller.signal.aborted) return;
@@ -545,6 +685,7 @@ async function poll() {
 
 async function act(name: ToolName) {
   if (acting || disposed || tools[name].disabled) return;
+  pointerCancel();
   if (name === 'refresh') {
     pollRequest?.abort();
     failures = 0; pollBlocked = true;
@@ -596,6 +737,7 @@ async function selectDevice(id: string) {
   if (!id || acting) return;
   pollRequest?.abort(); failures = 0; pollBlocked = false; liveVideo.retry();
   selectedDeviceId = id; viewport = undefined; streamId = undefined; platform = undefined;
+  resetDeviceAppearance();
   syncDeviceSelection();
   clearFrame(); setLive('connecting');
   acting = true; picker.disabled = true; syncTools();
@@ -613,9 +755,57 @@ const toolHandlers = (Object.keys(tools) as ToolName[]).map(name => {
   return [name, handler] as const;
 });
 
+function syncPosturePicker() {
+  postureDivider.hidden = !canSetPosture;
+  rotateButton.hidden = !canSetPosture;
+  rotateButton.disabled = acting || changingPosture || annotations.active || previewPaused || !canSetPosture || !selectedDeviceId;
+  for (const [posture, button] of Object.entries(postureButtons)) {
+    button.hidden = !canSetPosture;
+    button.setAttribute('aria-pressed', String(currentPosture === posture));
+    button.disabled = acting || changingPosture || annotations.active || previewPaused
+      || !canSetPosture || !selectedDeviceId;
+  }
+}
+
+async function setPosture(target: Posture | 'rotate') {
+  if (disposed || (target === 'rotate' ? rotateButton : postureButtons[target]).disabled) return;
+  pointerCancel();
+  acting = true;
+  if (target !== 'rotate') duoPreview.beginPosture({closed:0,partially_open:130,open:180}[target]);
+  syncTools();
+  try {
+    if (!ready) await connect();
+    const result = await app.callServerTool({
+      name: 'screen_action',
+      arguments: { action: target, device_id: selectedDeviceId },
+    }, { timeout: ACTION_TIMEOUT });
+    const data = result.structuredContent as (Partial<Preview> & { error?: { message?: string } }) | undefined;
+    if (result.isError || data?.error) {
+      notify(data?.error?.message ?? '调整姿态失败，请重试', true);
+    } else {
+      consume(data);
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+      schedule(0);
+    }
+  } catch {
+    notify('调整姿态失败，请重试', true);
+  } finally {
+    duoPreview.finishPosture();
+    acting = false;
+    syncTools();
+  }
+}
+for (const posture of Object.keys(postureButtons) as Posture[]) {
+  postureButtons[posture].addEventListener('click', () => { void setPosture(posture); });
+}
+const rotateDevice = () => { void setPosture('rotate'); };
+rotateButton.addEventListener('click', rotateDevice);
+
 function visibilityChanged() {
   root.dataset.pageVisible = String(visible());
   if (!visible()) {
+    pointerCancel();
     liveVideo.close();
     if (timer) clearTimeout(timer);
     timer = undefined;
@@ -629,11 +819,12 @@ function visibilityChanged() {
 
 async function toggleControl() {
   if (controlButton.disabled) return;
-  if (controlMode) { controlMode = false; syncTools(); return; }
+  if (controlMode) { pointerCancel(); controlMode = false; syncTools(); return; }
   acting = true; controlLabel.textContent = '连接中'; syncTools();
   try {
     const result = await app.callServerTool({ name:'screen_action', arguments:{ action:'connect', device_id:selectedDeviceId } }, {timeout:ACTION_TIMEOUT});
     if (result.isError) throw new Error((result.structuredContent as {error?:{message?:string}})?.error?.message ?? '控制连接未完成');
+    consume(result.structuredContent);
     controlMode = true; notify('可直接点按或拖动手机画面');
   } catch (error) { notify(error instanceof Error ? error.message : '控制连接未完成', true); }
   finally { acting = false; controlLabel.textContent = '操作'; syncTools(); }
@@ -645,42 +836,115 @@ function toggleAnnotations() {
   try { annotations.begin(liveVideo.active ? video : image, dimensions); }
   catch { notify('当前没有可标注的画面，请等待连接', true); }
 }
-function normalizedPoint(event: PointerEvent): NormalizedPoint {
+function normalizedPoint(event: Pick<MouseEvent, 'clientX' | 'clientY'>, clamped = false): NormalizedPoint | undefined {
+  if (duoPreview.active) {
+    const rect = device.getBoundingClientRect();
+    return duoPreview.point({x:(event.clientX-rect.left)/rect.width,y:(event.clientY-rect.top)/rect.height}, clamped);
+  }
   const rect = screen.getBoundingClientRect();
   return { x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)), y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height)) };
 }
+function gestureGeometry() {
+  return [selectedDeviceId, touchGeneration, dimensions?.width, dimensions?.height,
+    viewport?.width, viewport?.height, shell?.id, currentPosture, stage.clientWidth, stage.clientHeight].join(':');
+}
+function sendPointer(phase: TouchPhase, point: NormalizedPoint, captured = pointer): boolean {
+  if (!captured?.continuous) return false;
+  return liveVideo.sendTouch({ type:'touch', phase, gesture_id:captured.gestureID, seq:captured.seq++,
+    x:point.x, y:point.y, geometry_id:String(captured.generation) });
+}
 function pointerDown(event: PointerEvent) {
-  if ((!annotations.active && root.dataset.live !== 'live') || event.button !== 0 || acting || previewPaused || pointer || (!controlMode && !annotations.active)) return;
-  event.preventDefault(); const point = normalizedPoint(event);
-  pointer = {id:event.pointerId,start:point,x:event.clientX,y:event.clientY,started:performance.now(),deviceId:selectedDeviceId,width:dimensions?.width,height:dimensions?.height};
-  screen.setPointerCapture(event.pointerId);
+  if ((!annotations.active && root.dataset.live !== 'live') || event.button !== 0 || acting || duoPreview.transitioning || previewPaused || pointer || (!controlMode && !annotations.active)) return;
+  const point = normalizedPoint(event); if (!point) return;
+  finishWheel(false);
+  event.preventDefault();
+  const target = duoPreview.active ? meshCanvas : screen;
+  const continuous = !annotations.active && supportsContinuousTouch && touchGeneration !== undefined && liveVideo.touchReady;
+  pointer = {id:event.pointerId,target,start:point,last:point,moved:false,x:event.clientX,y:event.clientY,started:performance.now(),deviceId:selectedDeviceId,width:dimensions?.width,height:dimensions?.height,shellId:shell?.id,
+    geometry:gestureGeometry(),generation:touchGeneration,gestureID:`${Date.now().toString(36)}-${++nextGesture}`,seq:0,continuous};
+  target.setPointerCapture(event.pointerId);
   if (annotations.active) annotations.pointerDown(point);
+  else if (continuous && !sendPointer('down', point)) pointerCancel();
 }
 function pointerMove(event: PointerEvent) {
-  if (!annotations.active || (pointer && pointer.id !== event.pointerId)) return;
-  const point = normalizedPoint(event);
-  if (pointer) annotations.pointerMove(point);
-  else annotations.pointerHover(point);
+  if (pointer && pointer.id !== event.pointerId) return;
+  if (!pointer && !annotations.active) return;
+  if (pointer && pointer.geometry !== gestureGeometry()) { cancelForGeometryChange(); return; }
+  const point = normalizedPoint(event, !!pointer); if (!point) return;
+  if (annotations.active) {
+    if (pointer) annotations.pointerMove(point); else annotations.pointerHover(point);
+    return;
+  }
+  if (!pointer) return;
+  pointer.last = point;
+  pointer.moved ||= Math.hypot(event.clientX-pointer.x,event.clientY-pointer.y) >= 6;
+  if (pointer.continuous && !sendPointer('move', point)) pointerCancel();
+}
+function cancelForGeometryChange() {
+  if (!pointer && !wheelGesture) return;
+  pointerCancel();
+  notify('画面已变化，已取消当前手势，请重新操作', true);
 }
 function pointerCancel() {
-  const id = pointer?.id; pointer = undefined;
-  if (id !== undefined && screen.hasPointerCapture(id)) screen.releasePointerCapture(id);
+  finishWheel(true);
+  const captured = pointer; pointer = undefined;
+  if (captured?.continuous) sendPointer('cancel', captured.last, captured);
+  if (captured?.target.hasPointerCapture(captured.id)) captured.target.releasePointerCapture(captured.id);
   annotations.pointerCancel();
+}
+
+function finishWheel(cancelled: boolean) {
+  clearTimeout(wheelIdle); wheelIdle = undefined;
+  const captured = wheelGesture; wheelGesture = undefined;
+  if (!captured) return;
+  // A browser wheel has no BEGIN/END phase. This ends only shared local input
+  // ownership; the server emits no synthetic finger or system gesture report.
+  liveVideo.sendTouch({type:'touch',phase:cancelled?'cancel':'up',gesture_id:captured.gestureID,seq:captured.seq++,
+    x:captured.point.x,y:captured.point.y,geometry_id:String(captured.generation),scroll:{delta_x:0,delta_y:0}});
+}
+
+function wheel(event: WheelEvent) {
+  // DOM does not expose AppKit's phase, momentum or accelerated CG children.
+  // Pixel deltas are forwarded individually; do not guess line/page metrics
+  // or reinterpret the browser's Ctrl-wheel zoom as a native pinch.
+  if (event.ctrlKey || event.deltaMode !== 0 || !controlMode || annotations.active || acting || pointer
+      || duoPreview.transitioning || previewPaused || root.dataset.live !== 'live'
+      || !supportsNativeGestures || touchGeneration === undefined || !liveVideo.touchReady) return;
+  if (![event.deltaX,event.deltaY].every(value=>Number.isFinite(value) && Math.abs(value)<=1_000_000)
+      || (event.deltaX === 0 && event.deltaY === 0)) return;
+  if (wheelGesture && wheelGesture.geometry !== gestureGeometry()) { cancelForGeometryChange(); return; }
+  const point = normalizedPoint(event); if (!point) return;
+  event.preventDefault();
+  const starting = !wheelGesture;
+  wheelGesture ??= {point,geometry:gestureGeometry(),generation:touchGeneration,
+    gestureID:`${Date.now().toString(36)}-${++nextGesture}`,seq:0};
+  const captured = wheelGesture;
+  // DOM deltas describe positive content scrolling right/down; the system
+  // wheel report uses the opposite source-axis direction.
+  const accepted = liveVideo.sendTouch({type:'touch',phase:starting?'down':'move',gesture_id:captured.gestureID,seq:captured.seq++,
+    x:captured.point.x,y:captured.point.y,geometry_id:String(captured.generation),
+    scroll:{delta_x:-event.deltaX,delta_y:-event.deltaY}});
+  if (!accepted) { finishWheel(true); return; }
+  clearTimeout(wheelIdle);
+  wheelIdle = setTimeout(()=>finishWheel(false),150);
 }
 function lostPointerCapture(event: PointerEvent) { if (pointer?.id === event.pointerId) pointerCancel(); }
 function pointerUp(event: PointerEvent) {
   if (!pointer || pointer.id !== event.pointerId) return;
+  if (pointer.geometry !== gestureGeometry()) { cancelForGeometryChange(); return; }
+  if (!annotations.active && (!controlMode || acting)) { pointerCancel(); return; }
   const start = pointer; pointer = undefined;
-  if (screen.hasPointerCapture(event.pointerId)) screen.releasePointerCapture(event.pointerId);
-  const end = normalizedPoint(event);
+  if (start.target.hasPointerCapture(event.pointerId)) start.target.releasePointerCapture(event.pointerId);
+  const end = normalizedPoint(event, true) ?? start.last;
   if (annotations.active) { annotations.pointerUp(end); return; }
-  if (!controlMode || acting) return;
-  if (start.deviceId !== selectedDeviceId || start.width !== dimensions?.width || start.height !== dimensions?.height) {
-    notify('画面已变化，请重新操作', true); return;
-  }
-  const isTap = Math.hypot(event.clientX-start.x,event.clientY-start.y) < 6;
-  const arguments_ = {action:isTap?'tap':'swipe',device_id:selectedDeviceId,x:start.start.x,y:start.start.y,
-    ...(isTap?{}:{end_x:end.x,end_y:end.y,duration_ms:Math.round(Math.max(120,Math.min(1500,performance.now()-start.started)))})};
+  if (start.continuous) { sendPointer('up', end, start); return; }
+  // Compatibility is chosen before down. Never replay a partially sent stream.
+  const held = performance.now()-start.started;
+  const stationary = !start.moved && Math.hypot(event.clientX-start.x,event.clientY-start.y) < 6;
+  const action = stationary ? (held >= 500 ? 'long_press' : 'tap') : 'swipe';
+  const arguments_ = {action,device_id:start.deviceId,x:start.start.x,y:start.start.y,
+    ...(action==='tap'?{}:{duration_ms:Math.round(Math.max(120,Math.min(5000,held)))}),
+    ...(action==='swipe'?{end_x:end.x,end_y:end.y}:{})};
   acting = true; syncTools();
   void app.callServerTool({name:'screen_action',arguments:arguments_},{timeout:15000}).then(result => {
     if (result.isError) notify((result.structuredContent as {error?:{message?:string}})?.error?.message ?? '操作未完成，请先查看当前画面',true);
@@ -688,12 +952,16 @@ function pointerUp(event: PointerEvent) {
 }
 const pointerHandlers = [['pointerdown',pointerDown],['pointermove',pointerMove],['pointerup',pointerUp],['pointercancel',pointerCancel],['lostpointercapture',lostPointerCapture]] as const;
 for (const [name,handler] of pointerHandlers) screen.addEventListener(name,handler);
+for (const [name,handler] of pointerHandlers) meshCanvas.addEventListener(name,handler);
+screen.addEventListener('wheel',wheel,{passive:false});
+meshCanvas.addEventListener('wheel',wheel,{passive:false});
 controlButton.addEventListener('click',toggleControl); annotateButton.addEventListener('click',toggleAnnotations);
 
 const resizeObserver = new ResizeObserver(fitFrame);
 resizeObserver.observe(stage);
 image.onload = () => {
   if (dimensions && image.src) lastGoodFrame = { source: image.src, size: dimensions };
+  duoPreview.draw(image);
 };
 image.onerror = () => {
   if (disposed || root.dataset.live === 'paused' || !image.src) return;
@@ -714,6 +982,7 @@ function documentVisibilityChanged() {
   visibilityChanged();
 }
 document.addEventListener('visibilitychange', documentVisibilityChanged);
+window.addEventListener('blur', pointerCancel);
 
 function pageHide() {
   // WebViews may suspend a document without putting it in the browser cache.
@@ -737,10 +1006,15 @@ function dispose() {
   for (const [name, handler] of toolHandlers) tools[name].removeEventListener('click', handler);
   clearFrame();
   resizeObserver.disconnect();
-  liveVideo.close(); annotations.dispose();
+  pointerCancel(); liveVideo.close(); annotations.dispose();
   controlButton.removeEventListener('click', toggleControl);
   annotateButton.removeEventListener('click', toggleAnnotations);
   for (const [name, handler] of pointerHandlers) screen.removeEventListener(name, handler);
+  for (const [name, handler] of pointerHandlers) meshCanvas.removeEventListener(name, handler);
+  screen.removeEventListener('wheel',wheel);
+  meshCanvas.removeEventListener('wheel',wheel);
+  duoPreview.dispose();
+  rotateButton.removeEventListener('click', rotateDevice);
   pollRequest?.abort();
   retryButton.removeEventListener('click', retryPreview);
   picker.removeEventListener('click', pickerClick);
@@ -748,6 +1022,7 @@ function dispose() {
   deviceMenu.removeEventListener('keydown', menuKeydown);
   document.removeEventListener('pointerdown', outsidePointer);
   document.removeEventListener('visibilitychange', documentVisibilityChanged);
+  window.removeEventListener('blur', pointerCancel);
   window.removeEventListener('pagehide', pageHide);
   window.removeEventListener('pageshow', pageShow);
   window.removeEventListener('focus', focusChanged);

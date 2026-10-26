@@ -118,8 +118,7 @@ extension DeviceSession {
     }
 }
 
-// Detail panel: who the device is, two status lines (mirror, control), the
-// screen in a well, and the device's actions in one row under it.
+// Keep identity and connection state compact so the live screen gets the space.
 struct DeviceDetailView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var mirrorSession: MirrorCaptureSession
@@ -137,35 +136,7 @@ struct DeviceDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PanelHeader(
-                icon: session.platform.systemImage,
-                title: session.device.name,
-                subtitle: headerSubtitle
-            ) {
-                QuietChip(title: session.transportLabel(store))
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-
-            VStack(alignment: .leading, spacing: 10) {
-                CheckLine(
-                    glyph: mirrorGlyph,
-                    lead: store.t("diagnostic.mirror"),
-                    object: mirrorStatusLabel,
-                    detail: mirrorDetail,
-                    detailColor: mirrorDetailColor
-                )
-                CheckLine(
-                    glyph: controlGlyph,
-                    lead: store.t("diagnostic.control"),
-                    object: controlStatusLabel,
-                    detail: controlDetail,
-                    detailColor: controlDetailColor
-                )
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 16)
-            .padding(.bottom, 14)
+            compactHeader
 
             preview
                 .padding(Theme.Spacing.lg)
@@ -178,6 +149,62 @@ struct DeviceDetailView: View {
                 .padding(.vertical, 12)
         }
         .panelSurface()
+    }
+
+    private var compactHeader: some View {
+        HStack(spacing: 12) {
+            Image(systemName: session.platform.systemImage)
+                .font(.system(size: 18))
+                .foregroundStyle(Theme.Ink.secondary)
+                .frame(width: 32, height: 36)
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(session.device.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                    Text(session.transportLabel(store))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .fixedSize()
+                }
+                .help(headerSubtitle)
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        StatusGlyph(kind: mirrorGlyph, size: 12)
+                        Text("\(store.t("diagnostic.mirror")) \(mirrorStatusLabel)")
+                    }
+                    .help([mirrorStatusLabel, mirrorDetail].compactMap { $0 }.joined(separator: " · "))
+                    HStack(spacing: 4) {
+                        StatusGlyph(kind: controlGlyph, size: 12)
+                        Text("\(store.t("diagnostic.control")) \(controlStatusLabel)")
+                        if isConnected && store.canUseControl && controlSession.supportsContinuousTouch {
+                            Text("HID")
+                                .font(Theme.mono(9, weight: .semibold))
+                                .foregroundStyle(Theme.Palette.control)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Theme.tint(Theme.Palette.control), in: Capsule())
+                                .fixedSize()
+                                .help(store.t("dashboard.control.hidHelp"))
+                                .accessibilityLabel(store.t("dashboard.control.hidHelp"))
+                        }
+                    }
+                    .help([controlStatusLabel, controlDetail].compactMap { $0 }.joined(separator: " · "))
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.Ink.secondary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if session.isIOSSimulator && session.device.formFactor == .foldable {
+                ViewThatFits(in: .horizontal) {
+                    DevicePosturePicker(session: session).fixedSize()
+                    DevicePosturePicker(session: session, showsLabels: false).fixedSize()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 
     /// "iPhone18,4 · iOS 27.0 · 00008150", one separator throughout.
@@ -310,57 +337,40 @@ struct DeviceDetailView: View {
     // MARK: Preview
 
     private var preview: some View {
-        GeometryReader { proxy in
-            let aspect = store.displayAspectRatio(for: session)
-            let size = fittedSize(in: proxy.size, aspect: aspect)
-            let radius = min(size.width, size.height) * 0.12
-
+        let aspect = store.displayAspectRatio(for: session)
+        let bezel = MirrorBezelCatalog.bezel(for: session, aspectRatio: aspect)
+        let hasLivePreview = !session.needsCameraPermission && mirrorSession.state == .running
+        return DeviceBezelView(bezel: bezel, gestureHandlers: hasLivePreview && isConnected
+                              && store.canUseControl && controlSession.isReady
+                              && !mirrorSession.isChangingPosture ? store.gestureHandlers(for: session) : nil,
+                              screenImage: mirrorSession.latestWirelessFrame ?? store.thumbnails[session.id],
+                              mirrorSession: mirrorSession) {
             ZStack {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .fill(Color.black)
-                    .frame(width: size.width, height: size.height)
-
+                Color.black
                 Group {
-                    if !session.needsCameraPermission,
-                       let wirelessFrame = mirrorSession.latestWirelessFrame {
-                        Image(nsImage: wirelessFrame)
-                            .resizable()
-                            .scaledToFill()
+                    if hasLivePreview {
+                        MirrorPreviewView(mirrorSession: mirrorSession, forwardsAudio: false)
+                    } else if !session.needsCameraPermission, let frame = mirrorSession.latestWirelessFrame {
+                        Image(nsImage: frame).resizable().scaledToFit()
                     } else if let thumbnail = store.thumbnails[session.id] {
-                        Image(nsImage: thumbnail)
-                            .resizable()
-                            .scaledToFill()
+                        Image(nsImage: thumbnail).resizable().scaledToFit()
                     } else {
                         placeholder
                     }
                 }
-                .frame(width: size.width, height: size.height)
-                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .overlay(controlGestureLayer(aspectRatio: aspect))
-                .overlay {
-                    AutomationActionOverlayView(actions: mirrorSession.automationActions)
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(Theme.Surface.controlStroke, lineWidth: 1)
-                        .allowsHitTesting(false)
-                }
-
+                .overlay { AutomationActionOverlayView(actions: mirrorSession.automationActions) }
                 if controlSession.isConnecting {
-                    Color.black.opacity(0.5)
-                        .frame(width: size.width, height: size.height)
-                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                        .allowsHitTesting(false)
-
-                    ControlConnectionLoadingView(controlSession: controlSession) {
-                        store.stopControl(for: session)
-                    }
-                    .padding(Theme.Spacing.md)
-                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    Color.black.opacity(0.5).allowsHitTesting(false)
                 }
             }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-            .animation(.easeOut(duration: 0.18), value: controlSession.isConnecting)
+        }
+        .overlay {
+            if controlSession.isConnecting {
+                ControlConnectionLoadingView(controlSession: controlSession) {
+                    store.stopControl(for: session)
+                }
+                .padding(Theme.Spacing.md)
+            }
         }
     }
 
@@ -399,7 +409,7 @@ struct DeviceDetailView: View {
                         }
                         .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     }
-                } else if session.isIOSWireless && mirrorSession.state == .stopped {
+                } else if session.usesIOSAgentVideo && mirrorSession.state == .stopped {
                     StatusGlyph(kind: .idle, size: 30)
                     Text(store.t("detail.wirelessStopped"))
                         .font(.system(size: 12))
@@ -437,14 +447,6 @@ struct DeviceDetailView: View {
         return CGSize(width: w, height: w / ratio)
     }
 
-    private func controlGestureLayer(aspectRatio: Double) -> some View {
-        ControlGestureOverlay(
-            isEnabled: store.canUseControl && controlSession.isReady,
-            aspectRatio: aspectRatio,
-            handlers: store.gestureHandlers(for: session)
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 
 struct ControlConnectionLoadingView: View {
@@ -467,14 +469,8 @@ struct ControlConnectionLoadingView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.Overlay.secondaryText)
                     }
-                    Spacer(minLength: 8)
-                    Text(String(
-                        format: store.t("control.loading.elapsed"),
-                        elapsed / 60,
-                        elapsed % 60
-                    ))
-                    .font(Theme.mono(12, weight: .medium))
-                    .foregroundStyle(Theme.Palette.pending)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Text(store.t(expectationKey))
@@ -482,14 +478,19 @@ struct ControlConnectionLoadingView: View {
                     .foregroundStyle(Theme.Overlay.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .center, spacing: 10) {
-                    Text(store.t(keepAwakeKey))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.Overlay.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 4)
+                Text(store.t(keepAwakeKey))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.Overlay.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Text(String(format: store.t("control.loading.elapsed"), elapsed / 60, elapsed % 60))
+                        .font(Theme.mono(12, weight: .medium))
+                        .foregroundStyle(Theme.Palette.pending)
+                    Spacer(minLength: 8)
                     Button(store.t("common.cancel"), action: cancel)
                         .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                        .fixedSize()
                 }
             }
             .padding(16)

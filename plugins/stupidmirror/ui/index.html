@@ -21,6 +21,8 @@
     </header>
     <div id="stage">
       <div id="device" data-orientation="portrait" hidden>
+        <img id="shell-artwork" alt="" aria-hidden="true" draggable="false" hidden>
+        <canvas id="mesh-screen" aria-label="折叠屏实时画面" hidden></canvas>
         <div id="screen" hidden>
           <video id="video" aria-label="手机实时视频" autoplay muted playsinline hidden></video>
           <img id="image" alt="手机实时屏幕" draggable="false" hidden>
@@ -66,6 +68,19 @@
       <button id="tool-home" type="button" aria-label="回到主屏幕" title="回到主屏幕">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4.5 10.75 6.3-5.3a1.85 1.85 0 0 1 2.4 0l6.3 5.3"/><path d="M6.5 9.15V18A1.5 1.5 0 0 0 8 19.5h8a1.5 1.5 0 0 0 1.5-1.5V9.15"/><path d="M10 19.5v-5.75h4v5.75"/></svg>
       <span>主屏幕</span></button>
+      <span class="toolbar-divider" id="posture-divider" aria-hidden="true" hidden></span>
+      <button id="tool-rotate" type="button" aria-label="向右旋转设备" title="向右旋转设备" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/><path d="M3 10V6a3 3 0 0 1 3-3h2M6 1l2 2-2 2m15 9v4a3 3 0 0 1-3 3h-2m2-2-2 2 2 2"/></svg>
+      <span>旋转</span></button>
+      <button id="tool-posture-closed" type="button" aria-label="闭合" aria-pressed="false" title="闭合设备（0°）" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="3.5" width="10" height="17" rx="2.2"/></svg>
+      <span>闭合</span></button>
+      <button id="tool-posture-partially-open" type="button" aria-label="半展开" aria-pressed="false" title="半展开设备（130°）" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 6-8-3v15l8 3 8-3V3l-8 3v15"/></svg>
+      <span>半展开</span></button>
+      <button id="tool-posture-open" type="button" aria-label="展开" aria-pressed="false" title="完全展开设备（180°）" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="2.2"/></svg>
+      <span>展开</span></button>
       <button id="tool-screenshot" type="button" aria-label="截图到剪贴板" title="截图到剪贴板">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 6.5 1.2-1.75h4.6l1.2 1.75H18a1.75 1.75 0 0 1 1.75 1.75v9.5A1.75 1.75 0 0 1 18 19.5H6a1.75 1.75 0 0 1-1.75-1.75v-9.5A1.75 1.75 0 0 1 6 6.5Z"/><circle cx="12" cy="12.75" r="3.25"/></svg>
       <span>截图</span></button>

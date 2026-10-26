@@ -17,6 +17,8 @@ public actor MCPBridge {
     private let connectionProvider: ConnectionProvider
     private let transportFactory: TransportFactory
     private var pending: (id: UUID, record: MCPConnectionRecord, task: Task<Connection, Error>)?
+    private weak var downstreamServer: Server?
+    private var announcedConnectionID: UUID?
 
     public init(
         connectionProvider: @escaping ConnectionProvider,
@@ -52,7 +54,10 @@ public actor MCPBridge {
         let server = Server(
             name: info.name, version: info.version, title: info.title,
             instructions: connection.initialization.instructions,
-            capabilities: .init(resources: connection.initialization.capabilities.resources, tools: .init(listChanged: false))
+            capabilities: .init(
+                resources: connection.initialization.capabilities.resources == nil ? nil : .init(subscribe: false, listChanged: true),
+                tools: .init(listChanged: true)
+            )
         )
         if connection.initialization.capabilities.resources != nil {
             await server.withMethodHandler(ListResources.self) { [self] parameters in
@@ -77,6 +82,8 @@ public actor MCPBridge {
                 )
             }
         }
+        downstreamServer = server
+        announcedConnectionID = connection.id
         return server
     }
 
@@ -114,6 +121,20 @@ public actor MCPBridge {
 
     private func forward<M: MCP.Method>(_ request: Request<M>) async throws -> M.Result {
         let connection = try await connected()
+        if announcedConnectionID != connection.id, let downstreamServer {
+            // Installing a new app changes its connection record and widget
+            // resource URI. Ask Codex to refresh the catalog as well as the
+            // transport, so a newly opened panel cannot keep the old page.
+            announcedConnectionID = connection.id
+            try? await downstreamServer.notify(Message<ToolListChangedNotification>(
+                method: ToolListChangedNotification.name, params: Empty()
+            ))
+            if connection.initialization.capabilities.resources != nil {
+                try? await downstreamServer.notify(Message<ResourceListChangedNotification>(
+                    method: ResourceListChangedNotification.name, params: Empty()
+                ))
+            }
+        }
         do {
             // Use send() to retain structuredContent and result metadata, which
             // the SDK's convenience callTool() tuple does not include.

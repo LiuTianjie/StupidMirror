@@ -36,15 +36,17 @@ const codex = {
     connectTitle: "Connect in four steps",
     connectIntro: "No repository clone, Python or Node.js install, or token copying is needed for the installed app.",
     steps: [
-      ["Install and connect the phone", "Move StupidMirror to Applications and open it. Connect and unlock the phone. USB video needs trust and Camera permission; Android needs authorized ADB."],
-      ["Run iPhone setup once", "For iPhone control or wireless video, complete Set Up This iPhone over USB."],
+      ["Install and connect the phone", "Move StupidMirror to Applications and open it. Connect, unlock and trust the phone; Android needs authorized ADB."],
+      ["Run iPhone setup once", "Both USB and Wi-Fi iPhone video need the signed screen agent prepared through Set Up This iPhone over USB. Video needs no Camera permission. System touch on iOS 27+ needs Xcode, trust and Developer Mode."],
       ["Click Connect Codex", "In Settings → MCP Automation, click Connect Codex. The app enables local MCP and installs its bundled plugin through the Codex desktop app's CLI."],
       ["Ask Codex", "Open a new Codex chat, select StupidMirror and ask: “Show my phone inside Codex without tapping anything.” The panel opens through show_screen."],
     ],
     useTitle: "View, operate, annotate",
     uses: [
       ["View", "Choose a device; pause and resume, refresh, return Home or copy a screenshot. Video plays in the chat without a separate mirror window."],
-      ["Operate", "Explicitly enable control, then click to tap or drag to swipe. Nothing is sent to the phone until you turn it on."],
+      ["Operate", "Enable Operate to send single-finger presses, holds and drags through the same backend as the native mirror. Hold the left mouse button for a long press; right-click does not send one. Compatibility control remains available."],
+      ["Trackpad input", "Native mirror scrolling, pinch and rotation stream through the system gesture service when available, with phases and scroll momentum. The browser panel can only forward fallback scroll increments from DOM wheel events. On iOS, programmatic pinch or rotate requests keep their specified center through WDA."],
+      ["USB audio", "Choose Phone to keep sound on the iPhone, or Mac to play it here. Mac audio needs Camera and Microphone permissions for the USB audio source; video itself needs neither."],
       ["Annotate", "Freeze the frame and draw up to eight numbered boxes, then send the marked image and your note with Command-Enter. Drawing never taps the phone."],
       ["Let the agent act", "The agent works in an observe → act → observe loop with local OCR, element IDs and targeted taps, and checks the result on the device."],
     ],
@@ -55,8 +57,8 @@ const codex = {
     faq: [
       ["Codex shows no StupidMirror tools", "Reconnect the plugin and select it in a new Codex chat. After updating the app, click Connect Codex (Update or reinstall plugin) again."],
       ["Initialization fails with -32603", "Older builds reject experimental client capabilities. Update to StupidMirror 0.3.1 or later and reconnect the plugin; restarting Codex does not fix it."],
-      ["No device or no video", "Unlock the phone, check the cable and trust prompt or ADB authorization, and refresh. USB iPhone video needs Camera permission; wireless video needs the iPhone setup guide."],
-      ["Taps do nothing", "Wait for control setup, check Developer Mode and the signed runner on the iPhone, then enable Operate again. Viewing and control are ready independently."],
+      ["No device or no video", "Unlock the phone, check the cable and trust prompt or ADB authorization, and refresh. Both USB and Wi-Fi iPhone video need the signed screen agent prepared by the setup guide; video needs no Camera permission."],
+      ["Taps do nothing", "Wait for control setup. Check Xcode, trust and Developer Mode for system touch, or the signed runner for compatibility control, then enable Operate again. Viewing and control are ready independently."],
       ["Annotations cannot be sent", "The host has to support image messages. If the panel reports an unavailable composer, open the chat, ask Codex to call show_screen again and continue in the new panel. Your draft is kept."],
     ],
     more: "Full guide on GitHub",
@@ -80,15 +82,17 @@ const codex = {
     connectTitle: "四步连接",
     connectIntro: "使用已安装的应用时，不需要克隆仓库、安装 Python / Node.js 或复制令牌。",
     steps: [
-      ["安装应用并连接手机", "将 StupidMirror 放入「应用程序」并打开，连接并解锁手机。USB 画面需要信任这台 Mac 并授予摄像头权限；Android 需要授权 ADB。"],
-      ["完成一次 iPhone 设置", "首次控制 iPhone 或使用无线画面前，先用 USB 完成「设置这台 iPhone」。"],
+      ["安装应用并连接手机", "将 StupidMirror 放入「应用程序」并打开，连接、解锁手机并信任这台 Mac；Android 需要授权 ADB。"],
+      ["完成一次 iPhone 设置", "USB 和 Wi-Fi 的 iPhone 画面都需要先通过 USB「设置这台 iPhone」准备签名的屏幕组件，视频不需要摄像头权限。iOS 27 及以上版本的系统触控需要 Xcode、信任配对和开发者模式。"],
       ["点击「连接 Codex」", "在「设置 → MCP 自动化」点击「连接 Codex」。应用会开启本机 MCP，并通过 Codex 桌面应用的 CLI 安装内置插件。"],
       ["向 Codex 提问", "新建 Codex 聊天，选中 StupidMirror，发送：「在 Codex 里显示我的手机，先不要点击。」面板会通过 show_screen 打开。"],
     ],
     useTitle: "查看、操作、标注",
     uses: [
       ["查看", "选择设备，暂停或继续、刷新、回到主屏幕、复制截图。画面直接显示在聊天里，不会另开镜像窗口。"],
-      ["操作", "手动开启「操作」后，单击即点击、拖动即滑动。开启之前不会向手机发送任何操作。"],
+      ["操作", "开启「操作」后，单指按下、长按与拖动会使用原生镜像的同一触控后端。长按需按住鼠标左键，右键不再映射为长按；兼容控制仍然保留。"],
+      ["触控板输入", "系统手势服务可用时，原生镜像的滚动、缩放和旋转会逐事件发送，并保留手势相位与滚动惯性。浏览器面板只能从 DOM 滚轮事件发送降级滚动增量；iOS 上程序化指定中心点的缩放与旋转仍通过 WDA 保留目标位置。"],
+      ["USB 声音", "选择「手机」让声音留在 iPhone 上，或选择「Mac」在电脑播放。Mac 声音需要摄像头和麦克风权限来访问 USB 音频源，视频本身不需要这两项权限。"],
       ["标注", "冻结当前画面，最多画八个编号框，用 ⌘＋回车把标注截图和说明一起发送。画框不会误触手机。"],
       ["让 Agent 动手", "Agent 按「观察 → 操作 → 观察」的循环工作，用本地 OCR、元素 ID 和定点点击完成任务，并在真机上确认结果。"],
     ],
@@ -99,8 +103,8 @@ const codex = {
     faq: [
       ["Codex 里没有 StupidMirror 的工具", "重新连接插件，并在新的 Codex 聊天中选中它。更新应用后，需要再点一次「连接 Codex」（更新或重新安装插件）。"],
       ["初始化报错 -32603", "旧版本不兼容实验性的客户端能力。升级到 StupidMirror 0.3.1 或更新版本后重新连接插件；重启 Codex 解决不了这个问题。"],
-      ["找不到设备或没有画面", "解锁手机，检查数据线和信任提示或 ADB 授权，然后刷新。USB 连接的 iPhone 需要摄像头权限；无线画面需要先完成 iPhone 设置向导。"],
-      ["点击没有反应", "等待控制连接完成，确认 iPhone 已开启开发者模式并安装了签名的运行组件，然后重新开启「操作」。查看和控制是分别就绪的。"],
+      ["找不到设备或没有画面", "解锁手机，检查数据线和信任提示或 ADB 授权，然后刷新。USB 和 Wi-Fi 的 iPhone 画面都需要通过设置向导准备签名的屏幕组件；视频不需要摄像头权限。"],
+      ["点击没有反应", "等待控制连接完成。系统触控需检查 Xcode、信任配对和开发者模式；兼容控制需检查签名的运行组件，然后重新开启「操作」。查看和控制是分别就绪的。"],
       ["标注发不出去", "宿主需要支持图片消息。如果面板提示输入框不可用，打开对应聊天，让 Codex 再调用一次 show_screen，在新面板中继续。草稿会保留。"],
     ],
     more: "在 GitHub 查看完整指南",
@@ -283,7 +287,7 @@ function render(pages, key) {
     <link rel="apple-touch-icon" sizes="180x180" href="${p.up}assets/apple-touch-icon.png" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="${p.up}styles.css?v=20261024-guide" />
+    <link rel="stylesheet" href="${p.up}styles.css?v=20261026-changelog" />
     <script type="application/ld+json">
       ${json}
     </script>
@@ -293,6 +297,7 @@ function render(pages, key) {
       <nav class="nav-shell" aria-label="${key === "zh" ? "主导航" : "Primary navigation"}">
         <a class="brand" href="${p.up}${p.home}"><img src="${p.up}assets/app-icon.webp" alt="" width="28" height="28" /><span>StupidMirror</span></a>
         <div class="nav-actions">
+          <a class="nav-link" href="${p.up}${p.home}changelog/">${key === "zh" ? "更新日志" : "Changelog"}</a>
           <a class="nav-link" href="${p.up}${key === "zh" ? pages.en.path : pages.zh.path}" hreflang="${key === "zh" ? "en" : "zh-CN"}" lang="${key === "zh" ? "en" : "zh-CN"}">${key === "zh" ? "English" : "中文"}</a>
           <a class="button button-primary button-small" href="${download}" target="_blank" rel="noreferrer">${esc(p.download)}</a>
         </div>
@@ -334,7 +339,7 @@ ${faq}
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="${p.up}${p.home}"><img src="${p.up}assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
-        <nav class="guide-footer-nav" aria-label="${key === "zh" ? "指南" : "Guides"}">${guides.map((g) => `<a href="${p.up}${g[key].path}">${esc(g[key].guideLabel)}</a>`).join("")}</nav>
+        <nav class="guide-footer-nav" aria-label="${key === "zh" ? "指南" : "Guides"}">${guides.map((g) => `<a href="${p.up}${g[key].path}">${esc(g[key].guideLabel)}</a>`).join("")}<a href="${p.up}${p.home}changelog/">${key === "zh" ? "更新日志" : "Changelog"}</a></nav>
         <span>© 2026 StupidMirror</span>
       </div>
     </footer>

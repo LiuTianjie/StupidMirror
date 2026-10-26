@@ -194,10 +194,7 @@ final class SimulatorMJPEGStream: @unchecked Sendable {
     }
 
     private func decode(_ jpeg: Data) -> CMSampleBuffer? {
-        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, [
-                  kCGImageSourceShouldCacheImmediately: true
-              ] as CFDictionary) else { return nil }
+        guard let image = Self.orientedImage(jpeg) else { return nil }
         let width = image.width
         let height = image.height
         guard width > 0, height > 0, let pixelBuffer = makePixelBuffer(width: width, height: height) else { return nil }
@@ -237,6 +234,29 @@ final class SimulatorMJPEGStream: @unchecked Sendable {
         return sampleBuffer
     }
 
+    /// XCTest can return portrait JPEG pixels with an EXIF rotation for a
+    /// landscape display. Apply it before publishing dimensions or encoding
+    /// WebRTC, so every preview and its input coordinates use upright pixels.
+    static func orientedImage(_ jpeg: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(jpeg as CFData, nil) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let orientation = (properties?[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        if orientation == 1 {
+            return CGImageSourceCreateImageAtIndex(source, 0, [
+                kCGImageSourceShouldCacheImmediately: true
+            ] as CFDictionary)
+        }
+        let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+        let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+        guard max(width, height) > 0 else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
+    }
+
     private func makePixelBuffer(width: Int, height: Int) -> CVPixelBuffer? {
         if pool == nil || poolSize.width != width || poolSize.height != height {
             var newPool: CVPixelBufferPool?
@@ -244,6 +264,7 @@ final class SimulatorMJPEGStream: @unchecked Sendable {
                 kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferWidthKey: width,
                 kCVPixelBufferHeightKey: height,
+                kCVPixelBufferMetalCompatibilityKey: true,
                 kCVPixelBufferIOSurfacePropertiesKey: [:]
             ] as CFDictionary, &newPool)
             pool = newPool

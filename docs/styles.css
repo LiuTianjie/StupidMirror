@@ -1703,6 +1703,8 @@ section[id] {
 
 .guide-footer-nav {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 18px;
   font-size: 14px;
 }
@@ -1713,4 +1715,51 @@ section[id] {
 
 .guide-footer-nav a:hover {
   color: var(--text);
+}
+
+/* Release history uses the same shell and typography as the setup guides. */
+.changelog-nav-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 6px;
+}
+.changelog-hero { padding-bottom: 64px; }
+.changelog-hero h1 { font-size: clamp(40px, 6vw, 72px); line-height: 1.1; letter-spacing: -0.04em; }
+.changelog-meta { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 28px; font-size: 14px; }
+.changelog-meta a:hover { text-decoration: underline; }
+.changelog-meta span, .changelog-note { color: var(--muted); }
+.changelog-note { max-width: 720px; margin-top: 18px; font-size: 14px; }
+.changelog-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 64px; padding-bottom: 96px; }
+.changelog-index { align-self: start; position: sticky; top: 100px; }
+.changelog-index h2 { font-size: 14px; line-height: 1.5; letter-spacing: 0; margin-bottom: 14px; }
+.changelog-index nav > div { display: flex; flex-wrap: wrap; gap: 4px; max-height: calc(100dvh - 180px); overflow: auto; }
+.changelog-index a { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 4px 8px; border-radius: 6px; }
+.changelog-index a:hover { color: var(--text); background: var(--card); }
+.release-entry { scroll-margin-top: 100px; padding: 32px 0 40px; border-top: 1px solid var(--line-2); }
+.release-entry:target { border-top-color: var(--muted); }
+.release-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+.release-heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.release-heading h2 { font-size: 30px; letter-spacing: -0.025em; line-height: 1.2; }
+.release-heading time, .release-date { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.release-badge { border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 10px; font-size: 11px; color: var(--muted); }
+.release-body { max-width: 780px; color: var(--muted); font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
+.release-body strong, .release-body h3 { color: var(--text); }
+.release-body h3 { margin: 24px 0 12px; }
+.release-body p + p { margin-top: 12px; }
+.release-body ul, .release-body ol { padding-left: 22px; margin: 0; }
+.release-body li + li { margin-top: 12px; }
+.release-body li > ul, .release-body li > ol { margin-top: 8px; }
+.release-body a { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+.release-body code { font-family: var(--mono); font-size: 0.88em; color: #d4d4d8; background: var(--card); padding: 2px 5px; border-radius: 4px; }
+.release-body pre { overflow: auto; padding: 16px; background: var(--card); border-radius: 8px; }
+.release-body pre code { padding: 0; }
+@media (max-width: 860px) {
+  .changelog-layout { grid-template-columns: 1fr; gap: 32px; }
+  .changelog-index { position: static; }
+  .changelog-index nav > div { max-height: 144px; }
+}
+@media (max-width: 520px) {
+  .changelog-nav-actions .button { display: none; }
+  .changelog-hero { padding-top: 112px; padding-bottom: 40px; }
 }

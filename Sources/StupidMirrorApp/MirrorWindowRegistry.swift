@@ -43,6 +43,7 @@ final class MirrorWindowRegistry {
     func openAuthorized(session: DeviceSession, store: DeviceGalleryStore) {
         DockPresence.windowWillShow()
         if let window = windows[session.id] {
+            if window.isMiniaturized { window.deminiaturize(nil) }
             startCapture(session: session, store: store)
             update(window: window, session: session, store: store)
             resize(window: window, session: session, aspectRatio: resolvedAspectRatio(for: session, fallback: store.displayAspectRatio(for: session)), centerIfNeeded: false)
@@ -55,9 +56,9 @@ final class MirrorWindowRegistry {
             .environmentObject(store)
         let aspectRatio = resolvedAspectRatio(for: session, fallback: store.displayAspectRatio(for: session))
         let defaultSize = defaultMirrorSize(for: session, aspectRatio: aspectRatio)
-        let window = NSWindow(
+        let window = MirrorWindow(
             contentRect: NSRect(x: 0, y: 0, width: defaultSize.width, height: defaultSize.height),
-            styleMask: [.borderless, .resizable],
+            styleMask: [.borderless, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -67,9 +68,11 @@ final class MirrorWindowRegistry {
         window.isOpaque = false
         window.hasShadow = true
         window.isMovableByWindowBackground = false
+        window.isMovable = true
         window.isReleasedWhenClosed = false
-        window.contentMinSize = NSSize(width: 200, height: 200 + MirrorWindowChrome.height)
+        window.contentMinSize = NSSize(width: MirrorWindowChrome.minimumWidth, height: 200 + MirrorWindowChrome.height)
         window.contentView = makeMirrorContentView(rootView: rootView)
+        configureContextMenu(for: window, session: session, store: store)
         var frame = window.frame
         frame.size = defaultSize
         window.setFrame(frame, display: false)
@@ -128,7 +131,7 @@ final class MirrorWindowRegistry {
 
     func updateAspectRatio(for session: DeviceSession, aspectRatio: Double) {
         guard aspectRatio > 0 else { return }
-        delegates[session.id]?.aspectRatio = aspectRatio
+        delegates[session.id]?.aspectRatio = MirrorBezelCatalog.bezel(for: session, aspectRatio: aspectRatio).aspectRatio
     }
 
     func setFloating(_ floating: Bool, for session: DeviceSession) {
@@ -142,7 +145,8 @@ final class MirrorWindowRegistry {
         guard aspectRatio > 0, let window = windows[session.id] else { return }
         let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
         let longEdge = min(visible.height * preset.heightFraction, preset.maxLongEdge)
-        let target = windowSize(forLongEdge: longEdge, aspectRatio: aspectRatio, in: visible)
+        let ratio = MirrorBezelCatalog.bezel(for: session, aspectRatio: aspectRatio).aspectRatio
+        let target = windowSize(forLongEdge: longEdge, aspectRatio: ratio, in: visible)
 
         var frame = window.frame
         let centerX = frame.midX
@@ -157,10 +161,11 @@ final class MirrorWindowRegistry {
     // aspect and resize to fit, keeping the window centered in place.
     func applyLiveAspectRatio(_ aspectRatio: Double, for session: DeviceSession) {
         guard aspectRatio > 0, let window = windows[session.id] else { return }
+        let aspectRatio = MirrorBezelCatalog.bezel(for: session, aspectRatio: aspectRatio).aspectRatio
         let delegate = delegates[session.id]
         delegate?.aspectRatio = aspectRatio
         let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
-        let longEdge = min(visible.height * 0.85, 900)
+        let longEdge = max(window.frame.width, window.frame.height - MirrorWindowChrome.height)
         let targetContentSize = windowSize(forLongEdge: longEdge, aspectRatio: aspectRatio, in: visible)
         let target = targetContentSize
         guard abs(window.frame.width - target.width) > 2 || abs(window.frame.height - target.height) > 2 else { return }
@@ -175,12 +180,18 @@ final class MirrorWindowRegistry {
     }
 
     private func windowSize(forLongEdge longEdge: CGFloat, aspectRatio: Double, in visible: CGRect) -> CGSize {
-        var width = aspectRatio >= 1 ? longEdge : longEdge * aspectRatio
+        var width = max(aspectRatio >= 1 ? longEdge : longEdge * aspectRatio,
+                        MirrorWindowChrome.minimumWidth, 200 * aspectRatio)
         var height = width / aspectRatio
         let maxWidth = visible.width * 0.92
         if width > maxWidth {
             width = maxWidth
             height = width / aspectRatio
+        }
+        let maxHeight = visible.height * 0.92 - MirrorWindowChrome.height
+        if height > maxHeight {
+            height = maxHeight
+            width = height * aspectRatio
         }
         return CGSize(width: width, height: height + MirrorWindowChrome.height)
     }
@@ -190,15 +201,57 @@ final class MirrorWindowRegistry {
             .environmentObject(store)
         let aspectRatio = resolvedAspectRatio(for: session, fallback: store.displayAspectRatio(for: session))
         window.title = session.device.name
-        window.contentView = makeMirrorContentView(rootView: rootView)
-        installDelegate(for: window, session: session, aspectRatio: aspectRatio)
+        // Discovery refreshes update the existing SwiftUI graph. Replacing the
+        // host destroys open menus, hover state, and the keyboard responder.
+        if let host = window.contentView?.subviews.first as? TransparentHostingView<AnyView> {
+            host.rootView = AnyView(rootView)
+        }
+        delegates[session.id]?.aspectRatio = aspectRatio
+        configureContextMenu(for: window, session: session, store: store)
+    }
+
+    private func configureContextMenu(for window: NSWindow, session: DeviceSession, store: DeviceGalleryStore) {
+        (window as? MirrorWindow)?.makeContextMenu = { [weak store] in
+            guard let store else { return MirrorNativeMenu.make() }
+            let menu = MirrorNativeMenu.make()
+            let ready = store.canUseControl && session.controlSession.isReady
+            MirrorNativeMenu.add(store.t(session.mirrorSession.state == .running ? "mirror.pause" : "mirror.start"),
+                                 to: menu, enabled: store.canAttemptConnection(session)) {
+                session.mirrorSession.state == .running ? store.stop(session) : store.start(session)
+            }
+            menu.addItem(.separator())
+            MirrorNativeMenu.add(store.t(session.controlSession.isReady ? "mirror.disconnectControl" : "card.installControlAgent"),
+                                 to: menu, enabled: store.canAttemptConnection(session)
+                                    && !(store.canUseControl && session.device.udid == nil)) {
+                session.controlSession.isReady ? store.stopControl(for: session) : store.connectControl(for: session)
+            }
+            MirrorNativeMenu.add(store.t("mirror.home"), to: menu, enabled: ready) { store.pressHome(for: session) }
+            MirrorNativeMenu.add(store.t("mirror.appSwitcher"), to: menu, enabled: ready) { store.openAppSwitcher(for: session) }
+            MirrorNativeMenu.add(store.t("mirror.pasteClipboard"), to: menu, enabled: ready) {
+                guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+                store.typeControlText(text, for: session)
+            }
+            menu.addItem(.separator())
+            MirrorNativeMenu.addSubmenu(store.t("mirror.size"), to: menu) { sizes in
+                for preset in MirrorSizePreset.allCases {
+                    MirrorNativeMenu.add(store.t(preset.labelKey), to: sizes) {
+                        MirrorWindowRegistry.shared.setSizePreset(preset, for: session,
+                                                                 aspectRatio: store.displayAspectRatio(for: session))
+                    }
+                }
+            }
+            MirrorNativeMenu.add(store.t("mirror.floatOnTop"), to: menu, checked: store.isFloating(session)) {
+                store.toggleFloating(for: session)
+            }
+            menu.addItem(.separator())
+            MirrorNativeMenu.add(store.t("mirror.close"), to: menu) { store.stop(session) }
+            return menu
+        }
     }
 
     private func resolvedAspectRatio(for session: DeviceSession, fallback: Double) -> Double {
-        if let liveRatio = session.mirrorSession.frameAspectRatio, liveRatio > 0 {
-            return liveRatio
-        }
-        return fallback
+        let screenRatio = session.mirrorSession.frameAspectRatio ?? fallback
+        return MirrorBezelCatalog.bezel(for: session, aspectRatio: screenRatio).aspectRatio
     }
 
     private func resize(window: NSWindow, session: DeviceSession, aspectRatio: Double, centerIfNeeded: Bool) {
@@ -228,14 +281,12 @@ final class MirrorWindowRegistry {
         delegates[session.id] = delegate
     }
 
-    // The SwiftUI chrome + phone content fill the borderless window, clipped
-    // to the window's rounded corners.
     private func makeMirrorContentView(rootView: some View) -> NSView {
-        // Rounded clip so the square window corners never reveal the black
-        // video backing as wedges outside the phone's larger corner radius.
-        let container = RoundedContainerView(frame: NSRect(x: 0, y: 0, width: 400, height: 800))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 800))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = .clear
 
-        let host = TransparentHostingView(rootView: rootView)
+        let host = TransparentHostingView(rootView: AnyView(rootView))
         host.frame = container.bounds
         host.autoresizingMask = [.width, .height]
         container.addSubview(host)
@@ -244,22 +295,51 @@ final class MirrorWindowRegistry {
     }
 
     private func defaultMirrorSize(for session: DeviceSession, aspectRatio: Double) -> CGSize {
-        let visibleHeight = NSScreen.main?.visibleFrame.height ?? 900
-        let maxPhoneHeight = min(visibleHeight * 0.92 - MirrorWindowChrome.height, 980)
-
-        if session.mirrorSession.frameAspectRatio == nil,
-           let profile = DeviceDisplayProfile.profile(for: session.device.productType, name: session.device.name) {
-            let height = min(profile.logicalSize.height, maxPhoneHeight)
-            return CGSize(width: height * CGFloat(profile.aspectRatio), height: height + MirrorWindowChrome.height)
-        }
-
-        let height = defaultMirrorHeight()
-        return CGSize(width: max(280, height * aspectRatio), height: height + MirrorWindowChrome.height)
+        let visible = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        return windowSize(forLongEdge: min(visible.height * 0.88, 980), aspectRatio: aspectRatio, in: visible)
     }
 
-    private func defaultMirrorHeight() -> CGFloat {
-        let visibleHeight = NSScreen.main?.visibleFrame.height ?? 900
-        return min(max(visibleHeight * 0.9 - MirrorWindowChrome.height, 700), 1080)
+}
+
+// The title bar owns window dragging. Phone touches always follow the normal
+// responder chain, and explicit control bounds take priority over resizing.
+final class MirrorWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    let toolbarControls = NSHashTable<WindowControlAreaView>.weakObjects()
+    var makeContextMenu: (() -> NSMenu)?
+    let resizeAreas = NSHashTable<ResizeHandleView>.weakObjects()
+    private weak var activeResize: ResizeHandleView?
+
+    func isToolbarControl(at point: NSPoint) -> Bool {
+        toolbarControls.allObjects.contains { $0.window === self && $0.containsWindowPoint(point) }
+    }
+
+    override func sendEvent(_ event: NSEvent) {
+        if let activeResize {
+            if event.type == .leftMouseDragged { activeResize.mouseDragged(with: event); return }
+            if event.type == .leftMouseUp {
+                activeResize.mouseUp(with: event)
+                self.activeResize = nil
+                return
+            }
+        }
+        if event.type == .leftMouseDown {
+            if isToolbarControl(at: event.locationInWindow) {
+                super.sendEvent(event)
+                return
+            }
+            if let resize = resizeAreas.allObjects.first(where: { $0.containsWindowPoint(event.locationInWindow) }) {
+                activeResize = resize
+                resize.mouseDown(with: event)
+                return
+            }
+        }
+        // The native toolbar input view receives the normal AppKit mouse
+        // sequence. Do not swallow mouseDown before AppKit establishes its
+        // drag target; resize edges are the only manually routed exception.
+        super.sendEvent(event)
     }
 }
 
@@ -293,33 +373,10 @@ private final class MirrorWindowDelegate: NSObject, NSWindowDelegate {
     }
 }
 
-// The outer edge is a macOS window shell, not the iPhone screen. Keep its
-// radius close to native macOS panels; the screen itself gets the larger
-// continuous iPhone radius in StandaloneMirrorWindowView.
-private final class RoundedContainerView: NSView {
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.backgroundColor = .clear
-        layer?.masksToBounds = true
-        layer?.cornerCurve = .continuous
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func layout() {
-        super.layout()
-        layer?.cornerRadius = 24
-    }
-}
-
-// NSHostingView paints an opaque backing by default, so a borderless
-// window shows a square white wedge outside the SwiftUI corner radius.
-// Forcing a clear layer lets the rounded phone frame sit on transparency.
+// The chassis artwork defines the window silhouette. Keep the hosting layer
+// clear so it cannot paint square white corners outside that artwork.
 private final class TransparentHostingView<Content: View>: NSHostingView<Content> {
+    override var isOpaque: Bool { false }
     required init(rootView: Content) {
         super.init(rootView: rootView)
         wantsLayer = true
@@ -334,5 +391,15 @@ private final class TransparentHostingView<Content: View>: NSHostingView<Content
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         layer?.backgroundColor = .clear
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = (window as? MirrorWindow)?.makeContextMenu?() else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        // Build once per opening. Video refreshes cannot replace a submenu
+        // while the pointer is moving into it.
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 }

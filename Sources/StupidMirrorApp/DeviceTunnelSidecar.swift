@@ -7,6 +7,21 @@ enum DeviceTunnelTransport: String, Sendable {
     case auto
     case network
     case usb
+
+    /// usbmuxd's actual route, as reported by the running sidecar. A requested
+    /// `auto` route must resolve to one of these concrete connection types.
+    init?(connectionType: String) {
+        switch connectionType {
+        case "USB": self = .usb
+        case "Network": self = .network
+        default: return nil
+        }
+    }
+
+    func accepts(connectionType: String) -> Bool {
+        guard let actual = Self(connectionType: connectionType) else { return false }
+        return self == .auto || self == actual
+    }
 }
 
 /// One JSON line printed by the `smtunnel` sidecar.
@@ -210,6 +225,10 @@ final class DeviceTunnelSidecar: @unchecked Sendable {
     /// Blocks for up to `stopGrace`; async callers use `stopAndWait()`.
     func stop() {
         lock.withLock { stopping = true }
+        Self.stopProcess(process, stdin: stdin)
+    }
+
+    private static func stopProcess(_ process: Process, stdin: Pipe) {
         try? stdin.fileHandleForWriting.close()
         if process.isRunning {
             process.terminate()
@@ -333,6 +352,11 @@ final class DeviceTunnelSidecar: @unchecked Sendable {
 
         do {
             let endpoints = try await startup.waitUntilReady(timeout: readyTimeout)
+            guard configuration.transport.accepts(connectionType: endpoints.connectionType) else {
+                throw DeviceTunnelSidecarError.tunnelFailed(
+                    "smtunnel reported \(endpoints.connectionType) for requested \(configuration.transport.rawValue) transport"
+                )
+            }
             let sidecar = DeviceTunnelSidecar(
                 configuration: configuration,
                 endpoints: endpoints,
@@ -343,14 +367,18 @@ final class DeviceTunnelSidecar: @unchecked Sendable {
             // A sidecar that already ended before we attached must still report it.
             if !process.isRunning {
                 sidecar.processEnded(status: process.terminationStatus, output: stderrTail.value, lastError: startup.lastError)
+                throw startup.lastError ?? DeviceTunnelSidecarError.terminated(
+                    status: process.terminationStatus, output: stderrTail.value
+                )
             }
             logger.info("smtunnel ready for \(configuration.udid, privacy: .public) over \(endpoints.connectionType, privacy: .public)")
             return sidecar
         } catch {
-            if process.isRunning {
-                try? stdin.fileHandleForWriting.close()
-                process.terminate()
-            }
+            // Do not let a retry start another runner while this failed launch
+            // is still closing its tunnel or killing its XCTest session.
+            await Task.detached(priority: .userInitiated) {
+                Self.stopProcess(process, stdin: stdin)
+            }.value
             logger.error("smtunnel failed for \(configuration.udid, privacy: .public): \((error as? DeviceTunnelSidecarError)?.message ?? error.localizedDescription, privacy: .public)")
             throw error
         }
@@ -493,7 +521,7 @@ final class DeviceTunnelSidecar: @unchecked Sendable {
 // MARK: - Startup bookkeeping
 
 /// Collects the events a starting sidecar prints until it is ready or dead.
-private final class StartupCollector: @unchecked Sendable {
+final class StartupCollector: @unchecked Sendable {
     private let lock = NSLock()
     private let udid: String
     private var connectionType = ""
@@ -501,7 +529,7 @@ private final class StartupCollector: @unchecked Sendable {
     private var tcpPorts: [Int: Int] = [:]
     private var udpPorts: [Int: Int] = [:]
     private var recordedError: DeviceTunnelSidecarError?
-    private var outcome: Result<DeviceTunnelEndpoints, DeviceTunnelSidecarError>?
+    private var outcome: Result<DeviceTunnelEndpoints, Error>?
     private var continuation: CheckedContinuation<DeviceTunnelEndpoints, Error>?
     private let onWaiting: @Sendable () -> Void
 
@@ -571,7 +599,7 @@ private final class StartupCollector: @unchecked Sendable {
     }
 
     /// Must be called with the lock held; releases it.
-    private func settle(_ result: Result<DeviceTunnelEndpoints, DeviceTunnelSidecarError>) {
+    private func settle(_ result: Result<DeviceTunnelEndpoints, Error>) {
         guard outcome == nil else {
             lock.unlock()
             return
@@ -581,34 +609,43 @@ private final class StartupCollector: @unchecked Sendable {
         continuation = nil
         lock.unlock()
         if let waiting {
-            waiting.resume(with: result.mapError { $0 as Error })
+            waiting.resume(with: result)
         }
     }
 
+    private func resolve(_ result: Result<DeviceTunnelEndpoints, Error>) {
+        lock.lock()
+        settle(result)
+    }
+
     func waitUntilReady(timeout: Duration) async throws -> DeviceTunnelEndpoints {
-        try await withThrowingTaskGroup(of: DeviceTunnelEndpoints.self) { group in
-            group.addTask {
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DeviceTunnelEndpoints, Error>) in
-                    self.lock.lock()
-                    if let outcome = self.outcome {
-                        self.lock.unlock()
-                        continuation.resume(with: outcome.mapError { $0 as Error })
-                        return
-                    }
-                    self.continuation = continuation
-                    self.lock.unlock()
-                }
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw DeviceTunnelSidecarError.timedOut
-            }
-            guard let first = try await group.next() else {
-                throw DeviceTunnelSidecarError.timedOut
-            }
-            group.cancelAll()
-            return first
+        try Task.checkCancellation()
+        // A task group cannot cancel a child suspended in a checked continuation.
+        // Resolve this same waiter on every terminal path instead, so timeout or
+        // cancellation can return to start() and terminate the sidecar process.
+        let timeoutTask = Task { [self] in
+            do { try await Task.sleep(for: timeout) }
+            catch { return }
+            resolve(.failure(DeviceTunnelSidecarError.timedOut))
         }
+        defer { timeoutTask.cancel() }
+
+        let endpoints = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<DeviceTunnelEndpoints, Error>) in
+                self.lock.lock()
+                if let outcome = self.outcome {
+                    self.lock.unlock()
+                    continuation.resume(with: outcome)
+                    return
+                }
+                self.continuation = continuation
+                self.lock.unlock()
+            }
+        } onCancel: {
+            self.resolve(.failure(CancellationError()))
+        }
+        try Task.checkCancellation()
+        return endpoints
     }
 }
 

@@ -13,9 +13,10 @@ struct KeyboardForwardingView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: KeyboardForwardingNSView, context: Context) {
+        let becameEnabled = isEnabled && !nsView.isForwardingEnabled
         nsView.isForwardingEnabled = isEnabled
         nsView.onText = onText
-        nsView.becomeFirstResponderWhenPossible()
+        if becameEnabled { nsView.becomeFirstResponderWhenPossible() }
     }
 }
 
@@ -37,6 +38,15 @@ final class KeyboardForwardingNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: nil)
+        if let window {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowBecameKey(_:)),
+                                                   name: NSWindow.didBecomeKeyNotification, object: window)
+        }
+        becomeFirstResponderWhenPossible()
+    }
+
+    @objc private func windowBecameKey(_ notification: Notification) {
         becomeFirstResponderWhenPossible()
     }
 
@@ -45,9 +55,12 @@ final class KeyboardForwardingNSView: NSView {
     }
 
     func becomeFirstResponderWhenPossible() {
+        // Preview refreshes must not steal focus from a toolbar or submenu.
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.window?.firstResponder !== self else { return }
-            self.window?.makeFirstResponder(self)
+            guard let self, self.isForwardingEnabled,
+                  let window = self.window, window.isKeyWindow,
+                  window.firstResponder !== self else { return }
+            window.makeFirstResponder(self)
         }
     }
 

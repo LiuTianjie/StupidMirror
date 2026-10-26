@@ -5,8 +5,10 @@
 @import CoreImage;
 @import CoreMedia;
 @import CoreVideo;
+@import ImageIO;
 @import VideoToolbox;
 #import <libsrt/srt.h>
+#import <mach/mach.h>
 #import <netinet/in.h>
 
 static const uint16_t SMH264DefaultPort = 9200;
@@ -17,6 +19,10 @@ static const NSTimeInterval SMH264FrameTimeout = 1.0;
 static const NSUInteger SMSRTMaximumMessageSize = 1316;
 static const NSUInteger SMSRTHeaderSize = 24;
 static const NSUInteger SMSRTMaximumPayloadSize = SMSRTMaximumMessageSize - SMSRTHeaderSize;
+static const NSUInteger SMH264MaximumPendingFrames = 2;
+static const NSUInteger SMH264MaximumPixelBuffers = 4;
+static const uint64_t SMH264StatsInterval = 5 * NSEC_PER_SEC;
+static const void *SMH264CaptureQueueKey = &SMH264CaptureQueueKey;
 
 // Export startup health through WDA's existing /status response. This keeps
 // transport observability on the same probe the desktop already performs.
@@ -25,13 +31,22 @@ char SMStupidMirrorSRTStartupError[512] = {0};
 
 @class FBStupidMirrorH264Server;
 
-static void SMH264CompressionOutputCallback(
-  void *outputCallbackRefCon,
-  void *sourceFrameRefCon,
-  OSStatus status,
-  VTEncodeInfoFlags infoFlags,
-  CMSampleBufferRef sampleBuffer
-);
+// The simulator display controller observes the active internal panel. Both
+// video transports resolve it for every capture, including external changes
+// from Device Hub. Ordinary devices keep the normal XCTest display.
+extern long long FBStupidMirrorActiveDisplayID(long long defaultID);
+
+static long long FBStupidMirrorResolveScreenID(long long defaultID)
+{
+  return FBStupidMirrorActiveDisplayID(defaultID);
+}
+
+static dispatch_queue_t SMH264CreateQueue(const char *label, qos_class_t qos)
+{
+  dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, qos, 0);
+  attributes = dispatch_queue_attr_make_with_autorelease_frequency(attributes, DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
+  return dispatch_queue_create(label, attributes);
+}
 
 @interface FBStupidMirrorH264Server : NSObject
 
@@ -43,13 +58,21 @@ static void SMH264CompressionOutputCallback(
 @property (nonatomic, assign) VTCompressionSessionRef compressionSession;
 @property (nonatomic, assign) int32_t encodedWidth;
 @property (nonatomic, assign) int32_t encodedHeight;
-@property (nonatomic, assign) BOOL isRunning;
+@property (atomic, assign) BOOL isRunning;
 @property (nonatomic, assign) NSUInteger inFlightFrameCount;
 @property (nonatomic, assign) BOOL needsKeyFrame;
 @property (nonatomic, assign) SRTSOCKET srtListener;
 @property (nonatomic, assign) SRTSOCKET srtClient;
 @property (nonatomic, assign) uint32_t srtFrameID;
 @property (nonatomic, assign) NSUInteger srtPendingFrames;
+@property (nonatomic, assign) uint64_t srtGeneration;
+@property (nonatomic, assign) BOOL srtAwaitingKeyFrame;
+@property (nonatomic, assign) uint64_t lastStatsTime;
+@property (nonatomic, assign) NSUInteger capturedFrames;
+@property (nonatomic, assign) NSUInteger encodedFrames;
+@property (nonatomic, assign) NSUInteger sentFrames;
+@property (nonatomic, assign) NSUInteger skippedFrames;
+@property (nonatomic, assign) NSUInteger droppedFrames;
 
 - (instancetype)initWithPort:(uint16_t)port;
 - (void)stop;
@@ -64,21 +87,25 @@ static void SMH264CompressionOutputCallback(
 - (instancetype)initWithPort:(uint16_t)port
 {
   if ((self = [super init])) {
-    _captureQueue = dispatch_queue_create(
+    _captureQueue = SMH264CreateQueue(
       "com.stupidmirror.wda.h264.capture",
       // Keep the 45 fps target, but let XCTest control work preempt capture
       // when both paths contend for device-side automation resources.
-      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0)
+      QOS_CLASS_UTILITY
     );
-    _srtAcceptQueue = dispatch_queue_create(
+    dispatch_queue_set_specific(_captureQueue, SMH264CaptureQueueKey, (__bridge void *)self, NULL);
+    _srtAcceptQueue = SMH264CreateQueue(
       "com.stupidmirror.wda.h264.srt-accept",
-      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0)
+      QOS_CLASS_USER_INITIATED
     );
-    _srtSendQueue = dispatch_queue_create(
+    _srtSendQueue = SMH264CreateQueue(
       "com.stupidmirror.wda.h264.srt-send",
-      dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0)
+      QOS_CLASS_USER_INTERACTIVE
     );
-    _ciContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer: @NO}];
+    _ciContext = [CIContext contextWithOptions:@{
+      kCIContextUseSoftwareRenderer: @NO,
+      kCIContextCacheIntermediates: @NO
+    }];
     _mainScreenID = [XCUIScreen.mainScreen displayID];
     _encodedWidth = 0;
     _encodedHeight = 0;
@@ -89,6 +116,9 @@ static void SMH264CompressionOutputCallback(
     _srtClient = SRT_INVALID_SOCK;
     _srtFrameID = arc4random();
     _srtPendingFrames = 0;
+    _srtGeneration = 0;
+    _srtAwaitingKeyFrame = YES;
+    _lastStatsTime = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);
     [self startSRTListenerOnPort:port];
     __weak typeof(self) weakSelf = self;
     dispatch_async(_captureQueue, ^{
@@ -198,6 +228,8 @@ static void SMH264CompressionOutputCallback(
       self.srtClient = client;
       self.needsKeyFrame = YES;
       self.srtFrameID = arc4random();
+      self.srtGeneration++;
+      self.srtAwaitingKeyFrame = YES;
     }
     [FBLogger log:@"StupidMirror SRT client connected"];
     [self receiveControlMessagesFromClient:client];
@@ -279,6 +311,7 @@ static void SMH264CompressionOutputCallback(
   if (!self.isRunning) {
     return;
   }
+  [self logStatsIfNeeded:timeStarted];
   uint64_t interval = (uint64_t)(1.0 / (double)self.targetFPS * NSEC_PER_SEC);
   uint64_t elapsed = clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) - timeStarted;
   int64_t delay = (int64_t)interval - (int64_t)elapsed;
@@ -294,6 +327,32 @@ static void SMH264CompressionOutputCallback(
   }
 }
 
+- (void)logStatsIfNeeded:(uint64_t)now
+{
+  if (now - self.lastStatsTime < SMH264StatsInterval) {
+    return;
+  }
+  self.lastStatsTime = now;
+  task_vm_info_data_t memory = {0};
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  kern_return_t memoryStatus = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&memory, &count);
+  NSUInteger captured, encoded, sent, skipped, dropped, encoding, sending;
+  @synchronized (self) {
+    captured = self.capturedFrames;
+    encoded = self.encodedFrames;
+    sent = self.sentFrames;
+    skipped = self.skippedFrames;
+    dropped = self.droppedFrames;
+    encoding = self.inFlightFrameCount;
+    sending = self.srtPendingFrames;
+  }
+  [FBLogger logFmt:@"StupidMirror H.264 stats: footprint=%lld resident=%lld captured=%lu encoded=%lu sent=%lu skipped=%lu dropped=%lu encoding=%lu sending=%lu",
+    memoryStatus == KERN_SUCCESS ? (long long)memory.phys_footprint : -1LL,
+    memoryStatus == KERN_SUCCESS ? (long long)memory.resident_size : -1LL,
+    (unsigned long)captured, (unsigned long)encoded, (unsigned long)sent,
+    (unsigned long)skipped, (unsigned long)dropped, (unsigned long)encoding, (unsigned long)sending];
+}
+
 - (BOOL)hasClients
 {
   @synchronized (self) {
@@ -303,6 +362,13 @@ static void SMH264CompressionOutputCallback(
 }
 
 - (void)captureNextFrame
+{
+  @autoreleasepool {
+    [self captureFrameInAutoreleasePool];
+  }
+}
+
+- (void)captureFrameInAutoreleasePool
 {
   if (!self.isRunning) {
     return;
@@ -314,9 +380,13 @@ static void SMH264CompressionOutputCallback(
   }
   BOOL canBeginEncoding = NO;
   @synchronized (self) {
-    if (self.inFlightFrameCount < 2) {
+    // Apply backpressure before asking XCTest for another full-resolution
+    // image. Skipping an unencoded source frame leaves H.264 references intact.
+    if (self.inFlightFrameCount + self.srtPendingFrames < SMH264MaximumPendingFrames) {
       self.inFlightFrameCount++;
       canBeginEncoding = YES;
+    } else {
+      self.skippedFrames++;
     }
   }
   if (!canBeginEncoding) {
@@ -325,7 +395,7 @@ static void SMH264CompressionOutputCallback(
   }
 
   NSError *error;
-  NSData *jpeg = [FBScreenshot takeInOriginalResolutionWithScreenID:self.mainScreenID
+  NSData *jpeg = [FBScreenshot takeInOriginalResolutionWithScreenID:FBStupidMirrorResolveScreenID(self.mainScreenID)
                                                 compressionQuality:self.sourceQuality
                                                                uti:UTTypeJPEG
                                                            timeout:SMH264FrameTimeout
@@ -334,6 +404,13 @@ static void SMH264CompressionOutputCallback(
     [self finishEncodingFrame];
     [FBLogger logFmt:@"StupidMirror H.264 screenshot failed: %@", error.description];
     [self scheduleNextFrameStartedAt:timeStarted];
+    return;
+  }
+  @synchronized (self) {
+    self.capturedFrames++;
+  }
+  if (!self.isRunning) {
+    [self finishEncodingFrame];
     return;
   }
 
@@ -361,7 +438,13 @@ static void SMH264CompressionOutputCallback(
 
   CVPixelBufferPoolRef pool = VTCompressionSessionGetPixelBufferPool(self.compressionSession);
   CVPixelBufferRef pixelBuffer = nil;
-  if (pool == nil || CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer) != kCVReturnSuccess) {
+  NSDictionary *allocationLimits = @{(__bridge NSString *)kCVPixelBufferPoolAllocationThresholdKey: @(SMH264MaximumPixelBuffers)};
+  if (pool == nil || CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(
+        kCFAllocatorDefault, pool, (__bridge CFDictionaryRef)allocationLimits, &pixelBuffer
+      ) != kCVReturnSuccess) {
+    @synchronized (self) {
+      self.skippedFrames++;
+    }
     [self finishEncodingFrame];
     [self scheduleNextFrameStartedAt:timeStarted];
     return;
@@ -381,19 +464,48 @@ static void SMH264CompressionOutputCallback(
       self.needsKeyFrame = NO;
     }
   }
-  OSStatus status = VTCompressionSessionEncodeFrame(
+  // The callback may run before EncodeFrame returns. Claim completion under
+  // the same lock on every path, so an error/drop cannot release two slots or
+  // let a late callback send a frame that has already been abandoned.
+  __block BOOL frameFinished = NO;
+  __weak typeof(self) weakSelf = self;
+  VTEncodeInfoFlags encodeFlags = 0;
+  OSStatus status = VTCompressionSessionEncodeFrameWithOutputHandler(
     self.compressionSession,
     pixelBuffer,
     presentationTime,
     kCMTimeInvalid,
     (__bridge CFDictionaryRef)frameProperties,
-    NULL,
-    NULL
+    &encodeFlags,
+    ^(OSStatus callbackStatus, VTEncodeInfoFlags flags, CMSampleBufferRef sampleBuffer) {
+      @autoreleasepool {
+        __strong typeof(weakSelf) server = weakSelf;
+        if (server == nil) { return; }
+        @synchronized (server) {
+          if (frameFinished) { return; }
+          frameFinished = YES;
+        }
+        [server didEncodeSampleBuffer:sampleBuffer status:callbackStatus infoFlags:flags];
+        [server finishEncodingFrame];
+      }
+    }
   );
   CVPixelBufferRelease(pixelBuffer);
-  if (status != noErr) {
-    [self finishEncodingFrame];
-    [FBLogger logFmt:@"StupidMirror H.264 encode submission failed: %@", @(status)];
+  if (status != noErr || ((encodeFlags & kVTEncodeInfo_FrameDropped) && !(encodeFlags & kVTEncodeInfo_Asynchronous))) {
+    BOOL shouldFinish = NO;
+    @synchronized (self) {
+      if (!frameFinished) {
+        frameFinished = YES;
+        shouldFinish = YES;
+      }
+    }
+    if (shouldFinish) {
+      [self markStreamDiscontinuity];
+      [self finishEncodingFrame];
+    }
+    if (status != noErr) {
+      [FBLogger logFmt:@"StupidMirror H.264 encode submission failed: %@", @(status)];
+    }
   }
   [self scheduleNextFrameStartedAt:timeStarted];
 }
@@ -420,8 +532,8 @@ static void SMH264CompressionOutputCallback(
     NULL,
     (__bridge CFDictionaryRef)pixelAttributes,
     NULL,
-    SMH264CompressionOutputCallback,
-    (__bridge void *)self,
+    NULL,
+    NULL,
     &session
   );
   if (status != noErr || session == nil) {
@@ -472,7 +584,11 @@ static void SMH264CompressionOutputCallback(
                        status:(OSStatus)status
                     infoFlags:(VTEncodeInfoFlags)infoFlags
 {
-  if (status == noErr && sampleBuffer != nil && CMSampleBufferDataIsReady(sampleBuffer)) {
+  if (status == noErr && !(infoFlags & kVTEncodeInfo_FrameDropped) &&
+      sampleBuffer != nil && CMSampleBufferDataIsReady(sampleBuffer)) {
+    @synchronized (self) {
+      self.encodedFrames++;
+    }
     BOOL isKeyFrame = YES;
     CFArrayRef attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, false);
     if (attachments != nil && CFArrayGetCount(attachments) > 0) {
@@ -484,11 +600,34 @@ static void SMH264CompressionOutputCallback(
       [self sendPayload:annexB
       presentationTime:CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                keyFrame:isKeyFrame];
+    } else {
+      [self markStreamDiscontinuity];
     }
-  } else if (status != noErr) {
-    [FBLogger logFmt:@"StupidMirror H.264 encode failed: %@ flags=%@", @(status), @(infoFlags)];
+  } else {
+    [self markStreamDiscontinuity];
+    if (status != noErr) {
+      [FBLogger logFmt:@"StupidMirror H.264 encode failed: %@ flags=%@", @(status), @(infoFlags)];
+    }
   }
-  [self finishEncodingFrame];
+}
+
+- (void)markStreamDiscontinuity
+{
+  @synchronized (self) {
+    self.droppedFrames++;
+    self.srtGeneration++;
+    self.srtAwaitingKeyFrame = YES;
+    self.needsKeyFrame = YES;
+  }
+}
+
+- (void)markStreamDiscontinuityForGeneration:(uint64_t)generation
+{
+  @synchronized (self) {
+    if (generation == self.srtGeneration) {
+      [self markStreamDiscontinuity];
+    }
+  }
 }
 
 - (void)finishEncodingFrame
@@ -506,22 +645,23 @@ static void SMH264CompressionOutputCallback(
   const uint8_t startCode[] = {0, 0, 0, 1};
   CMFormatDescriptionRef format = CMSampleBufferGetFormatDescription(sampleBuffer);
   int nalLengthSizeValue = 4;
-  if (isKeyFrame && format != nil) {
+  if (isKeyFrame) {
+    if (format == nil) { return nil; }
     size_t parameterSetCount = 0;
     OSStatus countStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
       format, 0, NULL, NULL, &parameterSetCount, &nalLengthSizeValue
     );
-    if (countStatus == noErr) {
-      for (size_t index = 0; index < parameterSetCount; index++) {
-        const uint8_t *parameterSet = NULL;
-        size_t parameterSetSize = 0;
-        if (CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-              format, index, &parameterSet, &parameterSetSize, NULL, NULL
-            ) == noErr && parameterSet != NULL && parameterSetSize > 0) {
-          [result appendBytes:startCode length:sizeof(startCode)];
-          [result appendBytes:parameterSet length:parameterSetSize];
-        }
+    if (countStatus != noErr || parameterSetCount == 0) { return nil; }
+    for (size_t index = 0; index < parameterSetCount; index++) {
+      const uint8_t *parameterSet = NULL;
+      size_t parameterSetSize = 0;
+      if (CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+            format, index, &parameterSet, &parameterSetSize, NULL, NULL
+          ) != noErr || parameterSet == NULL || parameterSetSize == 0) {
+        return nil;
       }
+      [result appendBytes:startCode length:sizeof(startCode)];
+      [result appendBytes:parameterSet length:parameterSetSize];
     }
   }
 
@@ -529,11 +669,11 @@ static void SMH264CompressionOutputCallback(
   size_t totalLength = blockBuffer == nil ? 0 : CMBlockBufferGetDataLength(blockBuffer);
   size_t nalLengthSize = (size_t)nalLengthSizeValue;
   if (totalLength == 0 || nalLengthSize < 1 || nalLengthSize > 4) {
-    return result;
+    return nil;
   }
   NSMutableData *avcc = [NSMutableData dataWithLength:totalLength];
   if (CMBlockBufferCopyDataBytes(blockBuffer, 0, totalLength, avcc.mutableBytes) != kCMBlockBufferNoErr) {
-    return result;
+    return nil;
   }
   const uint8_t *bytes = avcc.bytes;
   size_t offset = 0;
@@ -544,22 +684,34 @@ static void SMH264CompressionOutputCallback(
     }
     offset += nalLengthSize;
     if (nalLength == 0 || offset + nalLength > totalLength) {
-      break;
+      return nil;
     }
     [result appendBytes:startCode length:sizeof(startCode)];
     [result appendBytes:bytes + offset length:nalLength];
     offset += nalLength;
   }
-  return result;
+  return offset == totalLength ? result : nil;
 }
 
 - (void)sendPayload:(NSData *)payload presentationTime:(CMTime)presentationTime keyFrame:(BOOL)isKeyFrame
 {
+  uint64_t generation;
   @synchronized (self) {
-    if (self.srtPendingFrames >= 2) {
+    if (!self.isRunning) { return; }
+    if (self.srtAwaitingKeyFrame && !isKeyFrame) {
+      self.droppedFrames++;
       self.needsKeyFrame = YES;
       return;
     }
+    if (self.srtPendingFrames >= SMH264MaximumPendingFrames) {
+      [self markStreamDiscontinuity];
+      return;
+    }
+    // Admitting an IDR establishes a new ordered chain. A later enqueue or
+    // send failure invalidates its generation, including already queued P
+    // frames, before another chain can be admitted.
+    if (isKeyFrame) { self.srtAwaitingKeyFrame = NO; }
+    generation = self.srtGeneration;
     self.srtPendingFrames++;
   }
   __weak typeof(self) weakSelf = self;
@@ -568,7 +720,8 @@ static void SMH264CompressionOutputCallback(
     if (strongSelf != nil) {
       [strongSelf sendSRTPayloadOnSendQueue:payload
                            presentationTime:presentationTime
-                                  keyFrame:isKeyFrame];
+                                  keyFrame:isKeyFrame
+                                generation:generation];
       @synchronized (strongSelf) {
         if (strongSelf.srtPendingFrames > 0) {
           strongSelf.srtPendingFrames--;
@@ -581,14 +734,20 @@ static void SMH264CompressionOutputCallback(
 - (void)sendSRTPayloadOnSendQueue:(NSData *)annexB
                  presentationTime:(CMTime)presentationTime
                         keyFrame:(BOOL)isKeyFrame
+                      generation:(uint64_t)generation
 {
   __block SRTSOCKET client = SRT_INVALID_SOCK;
   __block uint32_t frameID = 0;
   @synchronized (self) {
+    if (!self.isRunning || generation != self.srtGeneration) {
+      self.droppedFrames++;
+      return;
+    }
     client = self.srtClient;
     frameID = self.srtFrameID++;
   }
   if (client == SRT_INVALID_SOCK || srt_getsockstate(client) != SRTS_CONNECTED) {
+    [self markStreamDiscontinuityForGeneration:generation];
     return;
   }
   Float64 seconds = CMTimeGetSeconds(presentationTime);
@@ -598,9 +757,7 @@ static void SMH264CompressionOutputCallback(
   NSUInteger fragmentCountValue = (annexB.length + SMSRTMaximumPayloadSize - 1) /
     SMSRTMaximumPayloadSize;
   if (fragmentCountValue == 0 || fragmentCountValue > UINT16_MAX) {
-    @synchronized (self) {
-      self.needsKeyFrame = YES;
-    }
+    [self markStreamDiscontinuityForGeneration:generation];
     return;
   }
   uint16_t fragmentCount = (uint16_t)fragmentCountValue;
@@ -608,31 +765,36 @@ static void SMH264CompressionOutputCallback(
   uint64_t networkPresentationMicros = CFSwapInt64HostToBig(presentationMicros);
   uint16_t networkFragmentCount = CFSwapInt16HostToBig(fragmentCount);
   const uint8_t magic[] = {'S', 'M', 'S', '2'};
+  // Reuse one fixed packet buffer; an IDR no longer allocates an Objective-C
+  // object for every 1,292-byte fragment.
+  uint8_t message[SMSRTMaximumMessageSize];
+  memcpy(message, magic, sizeof(magic));
+  memcpy(message + 4, &networkFrameID, sizeof(networkFrameID));
+  memcpy(message + 8, &networkPresentationMicros, sizeof(networkPresentationMicros));
+  memcpy(message + 18, &networkFragmentCount, sizeof(networkFragmentCount));
+  message[20] = isKeyFrame ? 1 : 0;
+  memset(message + 21, 0, 3);
   BOOL sendFailed = NO;
   for (uint16_t index = 0; index < fragmentCount; index++) {
     NSUInteger offset = (NSUInteger)index * SMSRTMaximumPayloadSize;
     NSUInteger length = MIN(SMSRTMaximumPayloadSize, annexB.length - offset);
     uint16_t networkIndex = CFSwapInt16HostToBig(index);
-    uint8_t flags = isKeyFrame ? 1 : 0;
-    uint8_t reserved[3] = {0, 0, 0};
-    NSMutableData *message = [NSMutableData dataWithCapacity:SMSRTHeaderSize + length];
-    [message appendBytes:magic length:sizeof(magic)];
-    [message appendBytes:&networkFrameID length:sizeof(networkFrameID)];
-    [message appendBytes:&networkPresentationMicros length:sizeof(networkPresentationMicros)];
-    [message appendBytes:&networkIndex length:sizeof(networkIndex)];
-    [message appendBytes:&networkFragmentCount length:sizeof(networkFragmentCount)];
-    [message appendBytes:&flags length:sizeof(flags)];
-    [message appendBytes:reserved length:sizeof(reserved)];
-    [message appendBytes:(const uint8_t *)annexB.bytes + offset length:length];
-    int sent = srt_sendmsg(client, message.bytes, (int)message.length, 200, 0);
-    if (sent != (int)message.length) {
+    memcpy(message + 16, &networkIndex, sizeof(networkIndex));
+    memcpy(message + SMSRTHeaderSize, (const uint8_t *)annexB.bytes + offset, length);
+    int messageLength = (int)(SMSRTHeaderSize + length);
+    int sent = srt_sendmsg(client, (const char *)message, messageLength, 200, 0);
+    if (sent != messageLength) {
       sendFailed = YES;
       break;
     }
   }
-  if (sendFailed) {
-    @synchronized (self) {
-      self.needsKeyFrame = YES;
+  @synchronized (self) {
+    if (sendFailed) {
+      // A failure from an old client/generation must not discard an IDR
+      // already queued for a replacement client.
+      [self markStreamDiscontinuityForGeneration:generation];
+    } else {
+      self.sentFrames++;
     }
   }
 }
@@ -654,7 +816,19 @@ static void SMH264CompressionOutputCallback(
   if (client != SRT_INVALID_SOCK) {
     srt_close(client);
   }
-  [self invalidateEncoder];
+  // Only the capture queue may touch the encoder or its pool. In particular,
+  // do not invalidate it while another thread is rendering into a pool buffer.
+  // The synchronous barrier also makes this safe when called from dealloc.
+  __unsafe_unretained typeof(self) server = self;
+  void (^releaseEncoder)(void) = ^{
+    [server invalidateEncoder];
+    [server.ciContext clearCaches];
+  };
+  if (dispatch_get_specific(SMH264CaptureQueueKey) == (__bridge void *)self) {
+    releaseEncoder();
+  } else {
+    dispatch_sync(self.captureQueue, releaseEncoder);
+  }
 }
 
 - (void)dealloc
@@ -663,15 +837,3 @@ static void SMH264CompressionOutputCallback(
 }
 
 @end
-
-static void SMH264CompressionOutputCallback(
-  void *outputCallbackRefCon,
-  void *sourceFrameRefCon,
-  OSStatus status,
-  VTEncodeInfoFlags infoFlags,
-  CMSampleBufferRef sampleBuffer
-)
-{
-  FBStupidMirrorH264Server *server = (__bridge FBStupidMirrorH264Server *)outputCallbackRefCon;
-  [server didEncodeSampleBuffer:sampleBuffer status:status infoFlags:infoFlags];
-}

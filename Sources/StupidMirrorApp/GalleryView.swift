@@ -364,7 +364,7 @@ private struct DeviceSidebar: View {
                     systemImage: store.audioPlaybackEnabled ? "speaker.wave.2" : "speaker.slash",
                     isOn: store.audioPlaybackToggle
                 )
-                .disabled(store.isRequestingMicrophonePermission)
+                .disabled((store.isRequestingMicrophonePermission || store.isRequestingCameraPermission) || !store.canPlayDeviceAudioOnMac)
                 .help(store.t("settings.audioPlaybackHelp"))
 
                 Button {
@@ -559,16 +559,16 @@ struct MicrophonePermissionBanner: View {
         ) {
             if store.microphonePermissionStatus == .notDetermined {
                 Button {
-                    Task { await store.requestMicrophonePermission() }
+                    Task { await store.enableAudioPlayback() }
                 } label: {
-                    if store.isRequestingMicrophonePermission {
+                    if store.isRequestingMicrophonePermission || store.isRequestingCameraPermission {
                         Text(store.t("permission.requesting"))
                     } else {
                         Text(store.t("permission.microphone.requestAccess"))
                     }
                 }
                 .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
-                .disabled(store.isRequestingMicrophonePermission)
+                .disabled(store.isRequestingMicrophonePermission || store.isRequestingCameraPermission)
             } else {
                 Button {
                     store.recheckMicrophonePermission()
@@ -1147,7 +1147,7 @@ struct SettingsView: View {
                     RowDivider()
                     SettingRow(store.t("settings.audioPlayback"), help: store.t("settings.audioPlaybackHelp")) {
                         SettingSwitch(isOn: store.audioPlaybackToggle, label: store.t("settings.audioPlayback"))
-                            .disabled(store.isRequestingMicrophonePermission)
+                            .disabled((store.isRequestingMicrophonePermission || store.isRequestingCameraPermission) || !store.canPlayDeviceAudioOnMac)
                     }
                 }
 

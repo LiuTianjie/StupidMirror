@@ -9,6 +9,8 @@ struct StandaloneMirrorWindowView: View {
     let session: DeviceSession
     @State private var chromeVisible = false
     @State private var chromeHideWorkItem: DispatchWorkItem?
+    @State private var menuTrackingDepth = 0
+    @State private var chromePointer = WindowChromePointer()
 
     init(session: DeviceSession) {
         self.session = session
@@ -22,6 +24,7 @@ struct StandaloneMirrorWindowView: View {
                 MirrorWindowChromeBar(
                     session: session,
                     isVisible: chromeVisible,
+                    pointer: chromePointer,
                     showChrome: showChrome,
                     scheduleHideChrome: scheduleHideChrome
                 )
@@ -31,67 +34,24 @@ struct StandaloneMirrorWindowView: View {
 
             resizeHandles
         }
-        .background(windowShellColor.opacity(chromeVisible ? 1 : 0))
-        .frame(minWidth: 180, minHeight: 180)
+        .background(Color.clear)
+        .frame(minWidth: MirrorWindowChrome.minimumWidth, minHeight: 180)
         .animation(.easeInOut(duration: 0.16), value: statusTitle)
         .animation(.spring(response: 0.28, dampingFraction: 0.88), value: statusTitle)
-        .contextMenu {
-            Button(mirrorSession.state == .running ? store.t("mirror.pause") : store.t("mirror.start")) {
-                mirrorSession.state == .running ? store.stop(session) : store.start(session)
-            }
-            .disabled(!store.canAttemptConnection(session))
-
-            Divider()
-
-            Button(controlSession.isReady
-                ? store.t("mirror.disconnectControl")
-                : store.t("card.installControlAgent")) {
-                controlSession.isReady ? store.stopControl(for: session) : store.connectControl(for: session)
-            }
-            .disabled(
-                !store.canAttemptConnection(session)
-                    || (store.canUseControl && session.device.udid == nil)
-            )
-
-            Button(store.t("mirror.home")) {
-                store.pressHome(for: session)
-            }
-            .disabled(!store.canUseControl || !controlSession.isReady)
-
-            Button(store.t("mirror.appSwitcher")) {
-                store.openAppSwitcher(for: session)
-            }
-            .disabled(!store.canUseControl || !controlSession.isReady)
-
-            Button(store.t("mirror.pasteClipboard")) {
-                pasteClipboardText()
-            }
-            .disabled(!store.canUseControl || !controlSession.isReady)
-
-            Divider()
-
-            Menu(store.t("mirror.size")) {
-                ForEach(MirrorSizePreset.allCases, id: \.self) { preset in
-                    Button(store.t(preset.labelKey)) {
-                        MirrorWindowRegistry.shared.setSizePreset(
-                            preset,
-                            for: session,
-                            aspectRatio: store.displayAspectRatio(for: session)
-                        )
-                    }
-                }
-            }
-
-            Toggle(store.t("mirror.floatOnTop"), isOn: Binding(
-                get: { store.isFloating(session) },
-                set: { _ in store.toggleFloating(for: session) }
-            ))
-
-            Divider()
-
-            Button(store.t("mirror.close")) {
-                store.stop(session)
-            }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didBeginTrackingNotification)) { _ in
+            menuTrackingDepth += 1
+            chromeHideWorkItem?.cancel()
+            chromeHideWorkItem = nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSMenu.didEndTrackingNotification)) { _ in
+            menuTrackingDepth = max(0, menuTrackingDepth - 1)
+            if menuTrackingDepth == 0 { scheduleHideChrome() }
+        }
+        .onDisappear {
+            chromeHideWorkItem?.cancel()
+        }
+        .onChange(of: mirrorSession.simulatorDisplay) { _, _ in
+            MirrorWindowRegistry.shared.applyLiveAspectRatio(store.displayAspectRatio(for: session), for: session)
         }
         .onChange(of: mirrorSession.frameAspectRatio) { _, newRatio in
             guard let newRatio else { return }
@@ -102,12 +62,12 @@ struct StandaloneMirrorWindowView: View {
         }
     }
 
-    private var windowShellColor: Color {
-        Theme.Surface.panel
+    private var bezel: MirrorBezel {
+        MirrorBezelCatalog.bezel(for: session, aspectRatio: store.displayAspectRatio(for: session))
     }
 
     private var resizeHandles: some View {
-        let aspectRatio = mirrorSession.frameAspectRatio ?? store.displayAspectRatio(for: session)
+        let aspectRatio = bezel.aspectRatio
 
         return ZStack {
             VStack(spacing: 0) {
@@ -148,52 +108,47 @@ struct StandaloneMirrorWindowView: View {
                 }
             }
         }
-        .allowsHitTesting(true)
+        // NSWindow routes the narrow native resize regions directly. The
+        // full-size SwiftUI overlay must not intercept the toolbar below it.
+        .allowsHitTesting(false)
     }
 
     private var phoneFrame: some View {
-        GeometryReader { proxy in
-            let cornerRadius = phoneCornerRadius(for: proxy.size)
-            let phoneShape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-
+        DeviceBezelView(bezel: bezel,
+                        gestureHandlers: store.canUseControl && controlSession.isReady
+                        && !mirrorSession.isChangingPosture ? store.gestureHandlers(for: session) : nil,
+                        screenImage: mirrorSession.latestWirelessFrame, mirrorSession: mirrorSession) {
             ZStack {
-                // One opaque backing plus one rounded clip avoids the bright
-                // fringe caused by two slightly different antialiased masks.
                 Color.black
-
-                MirrorPreviewView(mirrorSession: mirrorSession, cornerRadius: 0)
-                    .overlay(controlGestureLayer)
-                    .overlay(keyboardForwardingLayer)
+                Group {
+                    if bezel.mesh != nil, let frame = mirrorSession.latestWirelessFrame {
+                        // Both panels share one decoded frame. A second video
+                        // consumer would disconnect the first panel's stream.
+                        Image(nsImage: frame).resizable().scaledToFit()
+                    } else {
+                        MirrorPreviewView(mirrorSession: mirrorSession, cornerRadius: 0)
+                    }
+                }
                     .overlay {
                         AutomationActionOverlayView(actions: mirrorSession.automationActions)
                     }
-
                 if mirrorSession.state != .running || session.device.connectionState != .connected {
                     statusOverlay
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 }
-
                 if controlSession.isConnecting {
-                    Color.black.opacity(0.42)
-                        .allowsHitTesting(false)
-
-                    ControlConnectionLoadingView(controlSession: controlSession) {
-                        store.stopControl(for: session)
-                    }
-                    .padding(12)
-                    .transition(.opacity.combined(with: .scale(scale: 0.97)))
+                    Color.black.opacity(0.42).allowsHitTesting(false)
                 }
             }
-            .clipShape(phoneShape)
-            .overlay(
-                phoneShape
-                    .strokeBorder(.black.opacity(0.42), lineWidth: 0.75)
-                    .allowsHitTesting(false)
-            )
-            .shadow(color: .black.opacity(0.11), radius: 20, y: 10)
-            .contentShape(phoneShape)
         }
-        .background(Color.clear)
+        .overlay(keyboardForwardingLayer)
+        .overlay {
+            if controlSession.isConnecting {
+                ControlConnectionLoadingView(controlSession: controlSession) {
+                    store.stopControl(for: session)
+                }
+                .padding(12)
+            }
+        }
     }
 
     private var statusOverlay: some View {
@@ -265,20 +220,6 @@ struct StandaloneMirrorWindowView: View {
         return max(0, Int(date.timeIntervalSince(beganAt)))
     }
 
-    private func phoneCornerRadius(for size: CGSize) -> CGFloat {
-        // Real iPhone screen corners are ~14% of the short edge.
-        min(max(min(size.width, size.height) * 0.14, 44), 96)
-    }
-
-    private var controlGestureLayer: some View {
-        ControlGestureOverlay(
-            isEnabled: store.canUseControl && controlSession.isReady,
-            aspectRatio: store.displayAspectRatio(for: session),
-            handlers: store.gestureHandlers(for: session)
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
     private var keyboardForwardingLayer: some View {
         KeyboardForwardingView(
             isEnabled: store.canUseControl
@@ -288,11 +229,6 @@ struct StandaloneMirrorWindowView: View {
             store.typeControlText(text, for: session)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func pasteClipboardText() {
-        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
-        store.typeControlText(text, for: session)
     }
 
     private func showChrome() {
@@ -305,7 +241,11 @@ struct StandaloneMirrorWindowView: View {
 
     private func scheduleHideChrome() {
         chromeHideWorkItem?.cancel()
+        guard menuTrackingDepth == 0, !chromePointer.containsMouse else { return }
         let workItem = DispatchWorkItem {
+            // Recheck actual pointer geometry: menu tracking and resize-edge
+            // exits do not necessarily produce matching toolbar hover events.
+            guard menuTrackingDepth == 0, !chromePointer.containsMouse else { return }
             withAnimation(.easeIn(duration: 0.12)) {
                 chromeVisible = false
             }
@@ -319,32 +259,82 @@ private struct MirrorWindowChromeBar: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     let session: DeviceSession
     let isVisible: Bool
+    let pointer: WindowChromePointer
     let showChrome: () -> Void
     let scheduleHideChrome: () -> Void
+    @ObservedObject private var mirrorSession: MirrorCaptureSession
     @State private var screenshotCopied = false
     @State private var screenshotFeedbackTask: Task<Void, Never>?
 
+    init(
+        session: DeviceSession,
+        isVisible: Bool,
+        pointer: WindowChromePointer,
+        showChrome: @escaping () -> Void,
+        scheduleHideChrome: @escaping () -> Void
+    ) {
+        self.session = session
+        self.isVisible = isVisible
+        self.pointer = pointer
+        self.showChrome = showChrome
+        self.scheduleHideChrome = scheduleHideChrome
+        self.mirrorSession = session.mirrorSession
+    }
+
+    @ViewBuilder
+    private var screenSwitcher: some View {
+        if session.isIOSSimulator && session.device.formFactor == .foldable {
+            DevicePosturePicker(session: session, showsLabels: false)
+                .background(WindowControlArea(isEnabled: isVisible))
+        }
+    }
+
     var body: some View {
-        ZStack {
-            WindowDragArea()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            HStack(alignment: .center) {
-                HStack(spacing: 11) {
-                    WindowDot(color: .systemRed) { _ in
-                        store.stop(session)
+        GeometryReader { geometry in
+            let showsPosture = session.isIOSSimulator && session.device.formFactor == .foldable
+            let compact = geometry.size.width < (showsPosture ? 456 : 304)
+            HStack(spacing: 8) {
+                windowDots
+                    .background(WindowControlArea(isEnabled: isVisible))
+                Spacer(minLength: 16)
+                if compact {
+                    ChromeIconButton(systemName: "house", help: store.t("mirror.home")) {
+                        store.pressHome(for: session)
                     }
-                    WindowDot(color: .systemYellow) {
-                        $0?.miniaturize(nil)
-                    }
-                    WindowDot(color: .systemGray) {
-                        $0?.zoom(nil)
-                    }
+                    .disabled(!store.canUseControl || !session.controlSession.isReady)
+                    .background(WindowControlArea(isEnabled: isVisible))
+                    overflowMenu
+                        .background(WindowControlArea(isEnabled: isVisible))
+                } else {
+                    fullControls.fixedSize(horizontal: true, vertical: false)
                 }
+            }
+            .padding(.horizontal, 12)
+            .frame(height: MirrorWindowChrome.height - 6)
+            .background { Capsule().fill(.regularMaterial).allowsHitTesting(false) }
+            .overlay { Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5).allowsHitTesting(false) }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
+            .opacity(isVisible ? 1 : 0)
+            .allowsHitTesting(isVisible)
+        }
+        .contentShape(Rectangle())
+        .overlay(WindowChromeInteractionArea(pointer: pointer, onEnter: showChrome, onExit: scheduleHideChrome))
+        .onDisappear {
+            screenshotFeedbackTask?.cancel()
+        }
+    }
 
-                Spacer()
+    private var windowDots: some View {
+        HStack(spacing: 11) {
+            WindowDot(color: .systemRed) { _ in store.stop(session) }
+            WindowDot(color: .systemYellow) { $0?.miniaturize(nil) }
+            WindowDot(color: .systemGray) { $0?.zoom(nil) }
+        }
+    }
 
-                HStack(spacing: 8) {
+    private var fullControls: some View {
+        HStack(spacing: 8) {
                     ChromeIconButton(
                         systemName: screenshotCopied ? "checkmark" : "camera",
                         help: store.t(screenshotCopied ? "mirror.screenshotCopied" : "mirror.copyScreenshot")
@@ -352,43 +342,78 @@ private struct MirrorWindowChromeBar: View {
                         copyScreenshotToClipboard()
                     }
                     .disabled(session.mirrorSession.state != .running)
+                    .background(WindowControlArea(isEnabled: isVisible))
 
                     ChromeIconButton(
-                        systemName: store.audioPlaybackEnabled ? "speaker.wave.2.fill" : "speaker.slash",
-                        help: store.t("settings.audioPlaybackHelp")
+                        systemName: store.audioPlaybackEnabled && session.canPlayAudioOnMac ? "speaker.wave.2.fill" : "speaker.slash",
+                        help: store.t(session.canPlayAudioOnMac ? "settings.audioPlaybackHelp" :
+                            (session.isIOSSimulator ? "settings.audioSimulatorHelp" : "settings.audioPhoneOnlyHelp"))
                     ) {
                         store.audioPlaybackToggle.wrappedValue.toggle()
                     }
-                    .disabled(store.isRequestingMicrophonePermission)
+                    .disabled((store.isRequestingMicrophonePermission || store.isRequestingCameraPermission) || !session.canPlayAudioOnMac)
+                    .background(WindowControlArea(isEnabled: isVisible))
 
                     ChromeIconButton(systemName: "chevron.backward", help: store.t("mirror.back")) {
                         store.pressBack(for: session)
                     }
                     .disabled(!store.canUseControl || !session.controlSession.isReady)
+                    .background(WindowControlArea(isEnabled: isVisible))
 
                     ChromeIconButton(systemName: "house", help: store.t("mirror.home")) {
                         store.pressHome(for: session)
                     }
                     .disabled(!store.canUseControl || !session.controlSession.isReady)
+                    .background(WindowControlArea(isEnabled: isVisible))
 
                     ChromeIconButton(systemName: "rectangle.grid.2x2", help: store.t("mirror.appSwitcher")) {
                         store.openAppSwitcher(for: session)
                     }
                     .disabled(!store.canUseControl || !session.controlSession.isReady)
+                    .background(WindowControlArea(isEnabled: isVisible))
+
+                    screenSwitcher
+        }
+    }
+
+    private var overflowMenu: some View {
+        MirrorNativeMenuButton(help: store.t("mirror.moreControls"), onOpen: showChrome, onClose: scheduleHideChrome) {
+            let menu = MirrorNativeMenu.make()
+            let ready = store.canUseControl && session.controlSession.isReady
+            MirrorNativeMenu.add(store.t("mirror.copyScreenshot"), to: menu, symbol: "camera",
+                                 enabled: mirrorSession.state == .running, action: copyScreenshotToClipboard)
+            MirrorNativeMenu.add(store.t("settings.audioPlayback"), to: menu,
+                                 enabled: !store.isRequestingMicrophonePermission && !store.isRequestingCameraPermission && session.canPlayAudioOnMac,
+                                 checked: store.audioPlaybackEnabled && session.canPlayAudioOnMac) {
+                store.audioPlaybackToggle.wrappedValue.toggle()
+            }
+            MirrorNativeMenu.add(store.t("mirror.back"), to: menu, symbol: "chevron.backward", enabled: ready) { store.pressBack(for: session) }
+            MirrorNativeMenu.add(store.t("mirror.appSwitcher"), to: menu, symbol: "rectangle.grid.2x2", enabled: ready) { store.openAppSwitcher(for: session) }
+            if session.isIOSSimulator && session.device.formFactor == .foldable {
+                let canChange = !mirrorSession.isChangingPosture && session.device.connectionState == .connected
+                menu.addItem(.separator())
+                MirrorNativeMenu.add(store.t("mirror.rotateDevice"), to: menu, symbol: "rotate.right", enabled: canChange) {
+                    store.rotateSimulator(session)
+                }
+                for posture in DevicePosture.allCases {
+                    MirrorNativeMenu.add(store.t(posture.labelKey), to: menu, symbol: posture.systemImage,
+                                         enabled: canChange, checked: mirrorSession.simulatorDisplay?.posture == posture) {
+                        store.changePosture(posture, for: session)
+                    }
                 }
             }
-            .padding(.leading, 18)
-            .padding(.trailing, 18)
-            .opacity(isVisible ? 1 : 0)
-            .allowsHitTesting(isVisible)
+            menu.addItem(.separator())
+            MirrorNativeMenu.addSubmenu(store.t("mirror.size"), to: menu) { sizes in
+                for preset in MirrorSizePreset.allCases {
+                    MirrorNativeMenu.add(store.t(preset.labelKey), to: sizes) {
+                        MirrorWindowRegistry.shared.setSizePreset(preset, for: session,
+                                                                 aspectRatio: store.displayAspectRatio(for: session))
+                    }
+                }
+            }
+            return menu
         }
-        .contentShape(Rectangle())
-        .onHover { inside in
-            inside ? showChrome() : scheduleHideChrome()
-        }
-        .onDisappear {
-            screenshotFeedbackTask?.cancel()
-        }
+        .frame(width: 28, height: 24)
     }
 
     private func copyScreenshotToClipboard() {
@@ -427,6 +452,7 @@ private struct MirrorWindowChromeBar: View {
 private struct ChromeIconButton: View {
     let systemName: String
     let help: String
+    var emphasized: Bool = false
     let action: () -> Void
 
     var body: some View {
@@ -437,7 +463,7 @@ private struct ChromeIconButton: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Theme.Ink.secondary)
+        .foregroundStyle(emphasized ? Theme.Ink.primary : Theme.Ink.secondary)
         .background(.black.opacity(0.001))
         .help(help)
         .accessibilityLabel(help)
@@ -515,6 +541,122 @@ struct WindowDragArea: NSViewRepresentable {
     func updateNSView(_ nsView: DragAreaView, context: Context) {}
 }
 
+/// Keep the interaction region alive when the toolbar's artwork fades out.
+@MainActor
+private final class WindowChromePointer {
+    weak var view: WindowChromeInteractionView?
+
+    var containsMouse: Bool {
+        guard let view, let window = view.window, !view.isHiddenOrHasHiddenAncestor else { return false }
+        if view.isDragging { return true }
+        return view.bounds.intersection(view.visibleRect).contains(view.convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+}
+
+private struct WindowChromeInteractionArea: NSViewRepresentable {
+    let pointer: WindowChromePointer
+    let onEnter: () -> Void
+    let onExit: () -> Void
+
+    func makeNSView(context: Context) -> WindowChromeInteractionView {
+        let view = WindowChromeInteractionView()
+        updateNSView(view, context: context)
+        return view
+    }
+
+    func updateNSView(_ view: WindowChromeInteractionView, context: Context) {
+        pointer.view = view
+        view.onEnter = onEnter
+        view.onExit = onExit
+    }
+}
+
+private final class WindowChromeInteractionView: NSView {
+    var onEnter: () -> Void = {}
+    var onExit: () -> Void = {}
+    private var hoverArea: NSTrackingArea?
+    private var dragStart: (mouse: NSPoint, origin: NSPoint)?
+
+    var isDragging: Bool { dragStart != nil }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        // A completely transparent borderless-window pixel can be skipped by
+        // WindowServer before NSWindow.sendEvent or NSView.hitTest is called.
+        // Paint this toolbar-only input plane even while its artwork is hidden.
+        // Keep alpha above 1/255 so it survives an 8-bit backing-store resolve.
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.01).cgColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        guard !isHiddenOrHasHiddenAncestor, bounds.contains(local) else { return nil }
+        // Only controls pass through this overlay. All toolbar whitespace is
+        // an actual native mouse target, including the gaps around the capsule.
+        if let window = window as? MirrorWindow,
+           window.isToolbarControl(at: convert(local, to: nil)) { return nil }
+        return self
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        if event.modifierFlags.contains(.control) {
+            rightMouseDown(with: event)
+            return
+        }
+        onEnter()
+        dragStart = (mouse: NSEvent.mouseLocation, origin: window.frame.origin)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = (window as? MirrorWindow)?.makeContextMenu?() else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        moveWindowWithPointer()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        moveWindowWithPointer()
+        dragStart = nil
+        onExit()
+    }
+
+    private func moveWindowWithPointer() {
+        guard let window, let dragStart else { return }
+        let mouse = NSEvent.mouseLocation
+        window.setFrameOrigin(NSPoint(x: dragStart.origin.x + mouse.x - dragStart.mouse.x,
+                                      y: dragStart.origin.y + mouse.y - dragStart.mouse.y))
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        // SwiftUI's non-clipping hosts can expose a visibleRect larger than
+        // this view. Track only the toolbar's own 44-point bounds.
+        let area = NSTrackingArea(rect: bounds.intersection(visibleRect), options: [.activeAlways, .mouseEnteredAndExited],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onEnter() }
+    override func mouseExited(with event: NSEvent) { onExit() }
+}
+
 final class DragAreaView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -522,6 +664,40 @@ final class DragAreaView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
+    }
+}
+
+/// Geometry only: this view never handles input or covers a SwiftUI button.
+private struct WindowControlArea: NSViewRepresentable {
+    let isEnabled: Bool
+
+    func makeNSView(context: Context) -> WindowControlAreaView {
+        let view = WindowControlAreaView()
+        view.isEnabled = isEnabled
+        return view
+    }
+
+    func updateNSView(_ view: WindowControlAreaView, context: Context) {
+        view.isEnabled = isEnabled
+    }
+}
+
+final class WindowControlAreaView: NSView {
+    var isEnabled = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        (window as? MirrorWindow)?.toolbarControls.add(self)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func containsWindowPoint(_ point: CGPoint) -> Bool {
+        guard isEnabled, window != nil, !isHiddenOrHasHiddenAncestor else { return false }
+        // visibleRect is the ancestor clipping region, not the button bounds.
+        // Under SwiftUI it can cover the entire window when clipsToBounds is
+        // false; using it alone incorrectly excludes every point from dragging.
+        return bounds.intersection(visibleRect).contains(convert(point, from: nil))
     }
 }
 
@@ -664,7 +840,7 @@ private struct WindowResizeHandle: NSViewRepresentable {
     }
 }
 
-private final class ResizeHandleView: NSView {
+final class ResizeHandleView: NSView {
     var region: WindowResizeCorner
     var aspectRatio: Double
     var onHover: () -> Void
@@ -688,8 +864,17 @@ private final class ResizeHandleView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard region.containsResizePoint(point, in: bounds) else { return nil }
+        guard region.containsResizePoint(convert(point, from: superview), in: bounds) else { return nil }
         return super.hitTest(point)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        (window as? MirrorWindow)?.resizeAreas.add(self)
+    }
+
+    func containsWindowPoint(_ point: CGPoint) -> Bool {
+        window != nil && !isHiddenOrHasHiddenAncestor && region.containsResizePoint(convert(point, from: nil), in: bounds)
     }
 
     override func updateTrackingAreas() {

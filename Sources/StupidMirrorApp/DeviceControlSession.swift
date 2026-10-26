@@ -229,6 +229,15 @@ struct ControlServiceUnavailableError: LocalizedError {
     var errorDescription: String? { "control.error.appiumUnavailable" }
 }
 
+/// Acceptance/transport status only, not a claim that UIKit handled input.
+struct TouchInputStatus: Sendable {
+    let accepted: Bool
+    let generation: UInt64
+    let activeSource: String?
+    let uncertain: Bool
+    let backendName: String?
+}
+
 // MARK: - Failure wording
 
 /// Maps raw agent or driver errors to the localized copy keys the UI shows.
@@ -289,6 +298,7 @@ final class DeviceControlSession: ObservableObject {
     /// How long the device took to perform recent interactive gestures, from
     /// send to answer, newest last.
     @Published private(set) var recentGestureMS: [Int] = []
+    @Published private(set) var touchGeneration: UInt64 = 0
 
     private(set) var device: DeviceIdentity
     private var backend: (any ControlBackend)?
@@ -296,10 +306,14 @@ final class DeviceControlSession: ObservableObject {
     private var connectTask: Task<Void, Never>?
     private var pumpTask: Task<Void, Never>?
     private var keepAliveTask: Task<Void, Never>?
+    private var teardownTask: Task<Void, Never>?
     private var pending = ControlActionBuffer()
     private var lastSentTap: (point: CGPoint, at: Date)?
     private var generation: UInt64 = 0
     private var keepAliveInterval: Duration = .seconds(30)
+    private var observedTouchGeometry: UInt64 = 0
+    private var observedTouchBackend: String?
+    private var changingTouchGeometry = false
 
     /// Called with a localized-copy key or message when a connection attempt
     /// fails, so the owner can open the matching guide.
@@ -321,7 +335,22 @@ final class DeviceControlSession: ObservableObject {
         return false
     }
 
+    var supportsContinuousTouch: Bool {
+        guard isReady, let backend = backend as? HIDControlBackend else { return false }
+        return backend.touch.hasBackend && !backend.touch.uncertain
+    }
+
+    var supportsNativeGestures: Bool {
+        supportsContinuousTouch && (backend as? HIDControlBackend)?.touch.supportsNativeGestures == true
+    }
+
+    var touchIsUncertain: Bool { (backend as? HIDControlBackend)?.touch.uncertain == true }
+
     func updateDevice(_ device: DeviceIdentity) {
+        if self.device.id != device.id || self.device.udid != device.udid
+            || (self.device.connectionState == .connected && device.connectionState != .connected) {
+            invalidateTouchGeometry()
+        }
         self.device = device
     }
 
@@ -337,19 +366,23 @@ final class DeviceControlSession: ObservableObject {
 
     private func startConnection(_ connector: @escaping Connector) {
         generation &+= 1
+        touchGeneration &+= 1
         let attempt = generation
         state = .connecting
         connectionPhase = .startingAgent
         connectionStartedAt = Date()
         statusMessage = "Connecting device control"
         let previousBackend = backend
+        let previousTeardown = teardownTask
         backend = nil
         screenSize = nil
         pending.removeAll()
         connectTask = Task { [weak self] in
+            await previousTeardown?.value
             if let previousBackend {
                 await previousBackend.close()
             }
+            guard !Task.isCancelled, self?.generation == attempt else { return }
             let report: ProgressReporter = { [weak self] phase, message in
                 await MainActor.run {
                     guard let self, self.generation == attempt else { return }
@@ -390,6 +423,32 @@ final class DeviceControlSession: ObservableObject {
         connectionPhase = nil
         connectionStartedAt = nil
         statusMessage = "Control ready: \(Int(backend.screenSize.width)) x \(Int(backend.screenSize.height))"
+        if let backend = backend as? HIDControlBackend {
+            observedTouchGeometry = backend.touch.geometryGeneration
+            observedTouchBackend = backend.touch.name
+            backend.touch.onChange = { [weak self, weak backend] in
+                guard let self, let backend, self.backend === backend else { return }
+                if self.observedTouchGeometry != backend.touch.geometryGeneration {
+                    self.observedTouchGeometry = backend.touch.geometryGeneration
+                    self.touchGeneration &+= 1
+                }
+                self.screenSize = backend.screenSize
+                if backend.touch.uncertain {
+                    self.statusMessage = "control.touch.uncertain"
+                } else if self.observedTouchBackend != backend.touch.name {
+                    self.observedTouchBackend = backend.touch.name
+                    self.statusMessage = backend.touch.hasBackend ? "control.touch.ready" : "control.touch.compatibility"
+                }
+                self.objectWillChange.send()
+            }
+            backend.touch.onFailure = { [weak self, weak backend] error in
+                guard let self, let backend, self.backend === backend else { return }
+                let message = backend.touch.uncertain ? "control.touch.uncertain" : error.localizedDescription
+                self.statusMessage = message
+                self.onFailure?(message)
+            }
+            statusMessage = backend.touch.hasBackend ? "control.touch.ready" : "control.touch.compatibility"
+        }
         startKeepAlive()
     }
 
@@ -399,10 +458,9 @@ final class DeviceControlSession: ObservableObject {
     /// (the iOS agent registry keeps it warm; Appium keeps UiAutomator2).
     func disconnect() {
         let closing = backend
+        let connecting = connectTask
         resetToUnavailable()
-        if let closing {
-            Task.detached(priority: .utility) { await closing.close() }
-        }
+        scheduleTeardown(backend: closing, connecting: connecting)
     }
 
     /// Awaitable teardown for app termination.
@@ -410,15 +468,24 @@ final class DeviceControlSession: ObservableObject {
         let closing = backend
         let task = connectTask
         resetToUnavailable()
-        task?.cancel()
-        _ = await task?.value
-        if let closing {
-            await closing.close()
+        scheduleTeardown(backend: closing, connecting: task)
+        await teardownTask?.value
+    }
+
+    /// A replacement connection waits for both a late connector result and
+    /// the old transport's drain. Resetting UI state is not an I/O barrier.
+    private func scheduleTeardown(backend: (any ControlBackend)?, connecting: Task<Void, Never>?) {
+        let previous = teardownTask
+        teardownTask = Task {
+            await previous?.value
+            await connecting?.value
+            await backend?.close()
         }
     }
 
     private func resetToUnavailable() {
         generation &+= 1
+        touchGeneration &+= 1
         connectTask?.cancel()
         connectTask = nil
         pumpTask?.cancel()
@@ -435,6 +502,72 @@ final class DeviceControlSession: ObservableObject {
     }
 
     // MARK: Interactive input
+
+    /// Synchronous ingress keeps native mouse events ordered before the async
+    /// transport pump. Only the touch session may coalesce queued moves.
+    func enqueueTouch(_ event: TouchEvent, source: String, geometryGeneration: UInt64? = nil) {
+        do {
+            let touch = try touchSession(expectedGeneration: event.phase == .cancel ? nil : geometryGeneration)
+            try touch.enqueue(event, source: source, geometryGeneration: touch.geometryGeneration)
+        } catch { statusMessage = touchIsUncertain ? "control.touch.uncertain" : error.localizedDescription }
+    }
+
+    func sendTouch(
+        _ event: TouchEvent, source: String, geometryGeneration: UInt64? = nil
+    ) async throws -> TouchInputStatus {
+        let touch = try touchSession(expectedGeneration: event.phase == .cancel ? nil : geometryGeneration)
+        try await touch.accept(event, source: source, geometryGeneration: touch.geometryGeneration,
+                               waitForFlush: event.phase == .up || event.phase == .cancel)
+        return TouchInputStatus(accepted: true, generation: touchGeneration,
+                                activeSource: touch.activeSource, uncertain: touch.uncertain,
+                                backendName: touch.name)
+    }
+
+    private func touchSession(expectedGeneration: UInt64?) throws -> DeviceTouchSession {
+        guard isReady, let backend = backend as? HIDControlBackend else {
+            throw ControlBackendError.rejected("Continuous touch is not available on this connection.")
+        }
+        if let expectedGeneration, expectedGeneration != touchGeneration {
+            throw ControlBackendError.rejected("The screen geometry changed. Start a new gesture using the current screen.")
+        }
+        return backend.touch
+    }
+
+    func cancelTouch(source: String) async {
+        guard let backend = backend as? HIDControlBackend else { return }
+        guard backend.touch.activeSource == nil || backend.touch.activeSource == source else { return }
+        do { try await backend.touch.cancel(source: source) }
+        catch { statusMessage = touchIsUncertain ? "control.touch.uncertain" : error.localizedDescription }
+    }
+
+    func invalidateTouchGeometry() {
+        pending.removeAll()
+        lastSentTap = nil
+        if let backend = backend as? HIDControlBackend {
+            backend.screenGeometryDidChange()
+            backend.touch.invalidateGeometry()
+        } else {
+            touchGeneration &+= 1
+        }
+    }
+
+    /// A requested rotation/posture change owns input until it finishes, so a
+    /// fresh pointer cannot start between release and the display transition.
+    func withTouchGeometryChange<T: Sendable>(
+        _ body: @escaping @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
+        invalidateTouchGeometry()
+        guard let backend = backend as? HIDControlBackend else { return try await body() }
+        try await backend.touch.cancel(force: true)
+        changingTouchGeometry = true
+        defer {
+            changingTouchGeometry = false
+            invalidateTouchGeometry()
+        }
+        return try await backend.touch.runExclusive(source: "geometry:\(UUID().uuidString)") {
+            try await body()
+        }
+    }
 
     func enqueue(_ action: ControlAction) {
         guard backend != nil, isReady else { return }
@@ -612,7 +745,9 @@ final class DeviceControlSession: ObservableObject {
         }
         let attempt = generation
         do {
-            return try await body(backend)
+            let result = try await body(backend)
+            if generation == attempt { screenSize = backend.screenSize }
+            return result
         } catch {
             if generation == attempt {
                 handleActionError(error)
@@ -646,6 +781,10 @@ final class DeviceControlSession: ObservableObject {
     /// The device-side agent went away (its tunnel ended). A ready session is
     /// rebuilt right away instead of waiting for the next gesture or ping.
     func agentDidExit() {
+        if let backend = backend as? HIDControlBackend {
+            backend.auxiliaryDidExit()
+            return
+        }
         guard isReady else { return }
         let error = ControlBackendError.sessionLost("The device tunnel ended.")
         rebuild(after: error, message: ControlFailure.messageKey(for: error))
@@ -655,11 +794,13 @@ final class DeviceControlSession: ObservableObject {
     /// the phone rotate. A dead session is rebuilt.
     func refreshScreenSize() {
         guard isReady else { return }
+        if !changingTouchGeometry { invalidateTouchGeometry() }
         Task { _ = await verifyReady() }
     }
 
     private func handleActionError(_ error: Error) {
-        let message = ControlFailure.messageKey(for: error)
+        pending.removeAll()
+        let message = touchIsUncertain ? "control.touch.uncertain" : ControlFailure.messageKey(for: error)
         statusMessage = message
         guard Self.isSessionLoss(error) else { return }
         rebuild(after: error, message: message)
@@ -669,10 +810,9 @@ final class DeviceControlSession: ObservableObject {
         Self.logger.error("Control session lost for \(self.device.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
         let connector = self.connector
         let dead = backend
+        let connecting = connectTask
         resetToUnavailable()
-        if let dead {
-            Task.detached(priority: .utility) { await dead.close() }
-        }
+        scheduleTeardown(backend: dead, connecting: connecting)
         state = .failed(message)
         statusMessage = message
         if let connector {

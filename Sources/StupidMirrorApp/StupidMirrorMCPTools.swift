@@ -5,7 +5,7 @@ enum StupidMirrorMCPToolCatalog {
     static let tools: [Tool] = [
         tool("list_devices", "List connected and reconnecting iOS and Android devices, including booted iOS Simulators and Android emulators (transport \"simulator\"), with mirror and control state.", readOnly: true),
         tool("refresh_devices", "Refresh iOS and Android discovery and return the updated device list."),
-        tool("get_device_status", "Get detailed state for one mobile device.", deviceProperties, readOnly: true),
+        tool("get_device_status", "Get detailed state for one mobile device. supports_native_gestures indicates support for host-native scroll, pinch and rotation events, not arbitrary-center multi-finger gesture synthesis.", deviceProperties, readOnly: true),
         tool("get_diagnostics", "Get StupidMirror runtime, permission, Appium, control-agent, and device diagnostics.", readOnly: true),
         tool(
             "show_screen", "Open or reuse the live phone screen inside Codex. Captures in the background without opening a Mac mirror window. With multiple devices, pass device_id or choose one in the screen panel. Pause/resume controls preview only.",
@@ -21,19 +21,21 @@ enum StupidMirrorMCPToolCatalog {
             "screen_frame", "App-only cached preview frame. Never captures through WDA, queries accessibility or acquires the device action lock.",
             deviceProperties.merging([
                 "after_seq": integer("Last displayed frame sequence.", minimum: 0, maximum: Int.max, defaultValue: 0),
+                "shell_id": string("ID of cached device shell artwork; omit to receive the current artwork and framebuffer mask."),
+                "model_id": string("Cached articulated device model ID; send an empty string to request its geometry and animation."),
                 "include_frame": boolean("Include a native PNG fallback. False while WebRTC video is active.", defaultValue: true)
             ]) { _, new in new },
             readOnly: true, metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
         ),
         tool(
-            "screen_action", "App-only user controls: refresh, connect control, tap/swipe, Home, screenshot copy, or pause/resume preview.",
+            "screen_action", "App-only user controls: refresh, connect control, tap/long press/swipe, Home, screenshot copy, pause/resume preview, or change a foldable simulator's actual hinge posture.",
             deviceProperties.merging([
-                "action": enumeration("User action.", values: ["refresh", "home", "screenshot", "pause", "resume", "connect", "tap", "swipe"]),
+                "action": enumeration("User action.", values: ["refresh", "home", "screenshot", "pause", "resume", "connect", "tap", "long_press", "swipe", "rotate", "closed", "partially_open", "open"]),
                 "x": number("Normalized start X.", minimum: 0, maximum: 1),
                 "y": number("Normalized start Y.", minimum: 0, maximum: 1),
                 "end_x": number("Normalized destination X.", minimum: 0, maximum: 1),
                 "end_y": number("Normalized destination Y.", minimum: 0, maximum: 1),
-                "duration_ms": integer("Swipe duration.", minimum: 50, maximum: 5_000, defaultValue: 300)
+                "duration_ms": integer("Gesture duration; long press requires at least 500 ms.", minimum: 50, maximum: 5_000, defaultValue: 300)
             ]) { _, new in new },
             required: ["action"], destructive: true,
             metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
@@ -47,6 +49,13 @@ enum StupidMirrorMCPToolCatalog {
             metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
         ),
         tool("start_mirror", "Open and start the device mirror. Unactivated installations can mirror one device at a time.", deviceProperties),
+        tool(
+            "set_device_posture", "Set a foldable iOS Simulator's actual hinge to Closed (0°), Partially Open (130°) or Open (180°), matching Device Hub. Waits for the system to confirm the posture and active display. Check can_set_posture in list_devices first.",
+            deviceProperties.merging([
+                "posture": enumeration("Hinge posture.", values: DevicePosture.allCases.map(\.rawValue))
+            ]) { _, new in new },
+            required: ["posture"], idempotent: true
+        ),
         tool("stop_mirror", "Stop and close the device mirror.", deviceProperties, idempotent: true),
         tool(
             "set_mirror_floating",
@@ -55,7 +64,7 @@ enum StupidMirrorMCPToolCatalog {
             required: ["floating"],
             idempotent: true
         ),
-        tool("connect_control", "Start or reuse the direct WDA connection on iOS or Appium/UiAutomator2 on Android, then wait until control is ready.", deviceProperties),
+        tool("connect_control", "Connect device control. iOS prefers system touch with WDA compatibility and on-demand semantic automation; Android uses Appium/UiAutomator2.", deviceProperties),
         tool("disconnect_control", "Disconnect the device control session while keeping its agent warm for quick reuse.", deviceProperties, idempotent: true),
         tool("screenshot", "Capture the current device screen as a native PNG. Control must be ready.", deviceProperties, readOnly: true),
         tool("get_ui_tree", "Read the current device accessibility hierarchy as XML. Control must be ready.", deviceProperties, readOnly: true),
@@ -479,11 +488,16 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
             case "screen_frame":
                 let afterSequence = args["after_seq"]?.intValue ?? 0
                 guard afterSequence >= 0 else { throw DeviceAutomationError.invalidArgument("after_seq must be nonnegative") }
+                let preview = try await automation.screenFrame(
+                    deviceID: optionalString("device_id", args), afterSequence: UInt64(afterSequence),
+                    includeFrame: optionalBool("include_frame", args) ?? true,
+                    includeShellImages: true, knownShellID: optionalString("shell_id", args), knownModelID: optionalString("model_id", args)
+                )
+                // Encoding a first model payload must not stall native display
+                // links. All of the preview's data is an immutable snapshot.
+                let structured = try await Task.detached(priority: .utility) { try Value(preview) }.value
                 return CallTool.Result(
-                    content: [], structuredContent: Optional.some(try Value(try await automation.screenFrame(
-                        deviceID: optionalString("device_id", args), afterSequence: UInt64(afterSequence),
-                        includeFrame: optionalBool("include_frame", args) ?? true
-                    ))), isError: false
+                    content: [], structuredContent: Optional.some(structured), isError: false
                 )
             case "screen_action":
                 return CallTool.Result(
@@ -501,6 +515,10 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 ))), isError: false)
             case "start_mirror":
                 return try success(try await automation.startMirror(deviceID: optionalString("device_id", args)))
+            case "set_device_posture":
+                return try success(try await automation.setDevicePosture(
+                    deviceID: optionalString("device_id", args), posture: try requiredString("posture", args)
+                ))
             case "stop_mirror":
                 return try success(try await automation.stopMirror(deviceID: optionalString("device_id", args)))
             case "set_mirror_floating":

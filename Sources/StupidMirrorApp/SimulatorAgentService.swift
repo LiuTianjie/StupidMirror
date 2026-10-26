@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 import OSLog
@@ -357,10 +358,13 @@ actor SimulatorAgentService {
         throw SimulatorAgentError.timedOut
     }
 
-    nonisolated static func launchEnvironment(controlPort: Int, mjpegPort: Int) -> [String: String] {
+    nonisolated static func launchEnvironment(
+        controlPort: Int,
+        mjpegPort: Int
+    ) -> [String: String] {
         // xcodebuild hands TEST_RUNNER_-prefixed variables to the runner
         // without the prefix.
-        [
+        let environment = [
             "TEST_RUNNER_USE_IP": "127.0.0.1",
             "TEST_RUNNER_USE_PORT": "\(controlPort)",
             "TEST_RUNNER_MJPEG_SERVER_PORT": "\(mjpegPort)",
@@ -370,9 +374,79 @@ actor SimulatorAgentService {
             // simulator; port 0 leaves its SRT listener off.
             "TEST_RUNNER_STUPIDMIRROR_H264_PORT": "0"
         ]
+        return environment
     }
 
     // MARK: Build
+
+    func displayState(udid: String) async throws -> SimulatorDisplayState {
+        guard let endpoint = agents[udid]?.endpoint else { throw SimulatorAgentError.timedOut }
+        return try await Self.readDisplayState(endpoint: endpoint)
+    }
+
+    func setPosture(udid: String, posture: DevicePosture) async throws -> SimulatorDisplayState {
+        let endpoint = try await ensureRunning(udid: udid)
+        var request = URLRequest(url: endpoint.controlURL.appendingPathComponent("stupidmirror/posture"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["posture": posture.rawValue])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw SimulatorAgentError.launchFailed(Self.routeError(data))
+        }
+        // A successful HID send is not proof of a completed fold. Wait for
+        // CoreMotion to report the requested pose before marking it selected.
+        let deadline = ContinuousClock.now + .seconds(8)
+        while ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            let state = try await Self.readDisplayState(endpoint: endpoint)
+            if state.posture == posture,
+               let angle = state.hingeAngle, abs(angle - posture.hingeAngle) < 1,
+               state.activeScreen == (posture == .closed ? "outer" : "inner") {
+                return state
+            }
+            try await Task.sleep(for: .milliseconds(120))
+        }
+        throw SimulatorAgentError.launchFailed("The simulator did not confirm the requested posture.")
+    }
+
+    func rotateDisplay(udid: String) async throws -> SimulatorDisplayState {
+        let endpoint = try await ensureRunning(udid: udid)
+        let previous = try await Self.readDisplayState(endpoint: endpoint)
+        var request = URLRequest(url: endpoint.controlURL.appendingPathComponent("stupidmirror/rotate"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw SimulatorAgentError.launchFailed(Self.routeError(data))
+        }
+        let deadline = ContinuousClock.now + .seconds(8)
+        while ContinuousClock.now < deadline {
+            try Task.checkCancellation()
+            let state = try await Self.readDisplayState(endpoint: endpoint)
+            if state.orientation != previous.orientation { return state }
+            try await Task.sleep(for: .milliseconds(120))
+        }
+        throw SimulatorAgentError.launchFailed("The simulator did not confirm the rotation.")
+    }
+
+    private static func readDisplayState(endpoint: SimulatorAgentEndpoint) async throws -> SimulatorDisplayState {
+        var request = URLRequest(url: endpoint.controlURL.appendingPathComponent("stupidmirror/display"))
+        request.timeoutInterval = 3
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            throw SimulatorAgentError.launchFailed(routeError(data))
+        }
+        struct Response: Decodable { let value: SimulatorDisplayState }
+        return try JSONDecoder().decode(Response.self, from: data).value
+    }
+
+    private static func routeError(_ data: Data) -> String {
+        let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let value = root?["value"] as? [String: Any]
+        return value?["message"] as? String ?? "The simulator display service did not answer."
+    }
 
     /// The runner's `.xctestrun`, building it first when this Xcode and
     /// StupidMirror have not built one yet.
@@ -431,9 +505,23 @@ actor SimulatorAgentService {
         ]
         let result: HostCommand.Result
         do {
+            // A CPATH or C_INCLUDE_PATH inherited from the shell that
+            // launched the app is handed to clang as a system include
+            // directory. Cross-compiling for the simulator then fails with
+            // -Wpoison-system-directories, which the runner builds as an
+            // error, so the build is run without them.
+            let scrubbedIncludePaths = [
+                "-u", "CPATH",
+                "-u", "C_INCLUDE_PATH",
+                "-u", "CPLUS_INCLUDE_PATH",
+                "-u", "OBJC_INCLUDE_PATH",
+                "-u", "OBJCPLUS_INCLUDE_PATH"
+            ]
             result = try await HostCommand.runDetached(
                 "/usr/bin/env",
-                arguments: ["STUPIDMIRROR_SKIP_WDA_ICON_EMBED=1", "/usr/bin/xcrun"] + arguments,
+                arguments: scrubbedIncludePaths
+                    + ["STUPIDMIRROR_SKIP_WDA_ICON_EMBED=1", "/usr/bin/xcrun"]
+                    + arguments,
                 timeout: buildTimeout
             )
         } catch HostCommand.Failure.timedOut {
@@ -459,18 +547,21 @@ actor SimulatorAgentService {
             info?["CFBundleShortVersionString"] as? String,
             info?["CFBundleVersion"] as? String
         ].compactMap { $0 }.joined(separator: "+")
-        var sourceDate = 0.0
+        var fingerprint = SHA256()
         if let project = IOSAgentService.webDriverAgentProjectURL() {
             let lib = project.deletingLastPathComponent().appendingPathComponent("WebDriverAgentLib")
-            for file in ["Utilities/FBMjpegServer.m", "Utilities/FBStupidMirrorH264Server.inc", "Routing/FBTCPSocket.m", "Routing/FBWebServer.m"] {
-                let date = (try? FileManager.default.attributesOfItem(
-                    atPath: lib.appendingPathComponent(file).path
-                )[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-                sourceDate = max(sourceDate, date)
+            for file in [
+                "Utilities/FBMjpegServer.m", "Utilities/FBStupidMirrorH264Server.inc",
+                "Commands/FBCustomCommands.m", "Commands/FBStupidMirrorDisplayCommands.inc",
+                "Commands/FBStupidMirrorTouchCommands.inc", "Routing/FBTCPSocket.m", "Routing/FBWebServer.m"
+            ] {
+                fingerprint.update(data: Data(file.utf8))
+                fingerprint.update(data: (try? Data(contentsOf: lib.appendingPathComponent(file))) ?? Data())
             }
         }
+        let sourceHash = fingerprint.finalize().map { String(format: "%02x", $0) }.joined()
         let xcode = xcodeVersion.split(whereSeparator: \.isNewline).joined(separator: " ")
-        return "\(xcode)|\(appVersion)|\(Int(sourceDate))"
+        return "\(xcode)|\(appVersion)|\(sourceHash)"
     }
 
     private static func xctestrun(in derivedData: URL) -> URL? {

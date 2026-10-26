@@ -1,9 +1,11 @@
 import type { App } from '@modelcontextprotocol/ext-apps';
+import { createTouchSender, type TouchMessage } from './touch';
 
 type Size = { width: number; height: number };
 type Answer = { type?: RTCSdpType; sdp?: string; peer_id?: string; error?: { message?: string } };
 export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
   ready: (size: Size) => void; stopped: (reason: string, retrying: boolean) => void; fps: (value: number) => void;
+  touchStopped?: (reason: string) => void;
 }) {
   let connection: RTCPeerConnection | undefined;
   let peerId: string | undefined;
@@ -19,11 +21,13 @@ export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
   let frameCallback: number | undefined;
   let fpsStarted = 0, rendered = 0;
   const available = typeof RTCPeerConnection !== 'undefined';
+  const touch = createTouchSender(reason => callbacks.touchStopped?.(reason));
 
   function finishPeer(id: string) {
     void app.callServerTool({ name: 'screen_signal', arguments: { action: 'close', peer_id: id } }, { timeout: 3000 }).catch(() => {});
   }
   function close() {
+    touch.close();
     generation++;
     request?.abort(); request = undefined;
     clearTimeout(firstFrameTimer); firstFrameTimer = undefined;
@@ -63,6 +67,7 @@ export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
       connection = peer;
       const controller = new AbortController(); request = controller;
       peer.addTransceiver('video', { direction: 'recvonly' });
+      touch.attach(peer.createDataChannel('stupidmirror-touch', { ordered: true }));
       peer.ontrack = event => {
         if (generation !== ownGeneration) return;
         video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
@@ -114,5 +119,6 @@ export function createVideo(app: App, video: HTMLVideoElement, callbacks: {
       if (generation === ownGeneration) fail(`${stage}失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { available, connect, close, retry, get active() { return active; }, get pending() { return pending; } };
+  return { available, connect, close, retry, sendTouch: (message: TouchMessage) => touch.send(message),
+    get touchReady() { return touch.ready; }, get active() { return active; }, get pending() { return pending; } };
 }

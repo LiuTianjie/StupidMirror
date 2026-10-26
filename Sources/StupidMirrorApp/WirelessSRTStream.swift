@@ -3,6 +3,7 @@ import CoreMedia
 import Darwin
 import Foundation
 import libsrt
+import OSLog
 
 struct WirelessSRTFragment: Equatable, Sendable {
     static let magic = Data([0x53, 0x4D, 0x53, 0x32]) // SMS2
@@ -19,6 +20,7 @@ struct WirelessSRTFragment: Equatable, Sendable {
 
     init?(message: Data) {
         guard message.count >= Self.headerSize,
+              message.count <= Self.maximumMessageSize,
               message.prefix(Self.magic.count) == Self.magic else { return nil }
         let bytes = [UInt8](message)
         frameID = Self.readUInt32(bytes, at: 4)
@@ -92,6 +94,8 @@ struct WirelessSRTReassemblyResult: Equatable, Sendable {
 }
 
 struct WirelessSRTFrameReassembler: Sendable {
+    static let maximumFrameBytes = 16 * 1_024 * 1_024
+    private let maximumPayloadBytes: Int
     private var frameID: UInt32?
     private var presentationTimeMicroseconds: UInt64 = 0
     private var fragmentCount: UInt16 = 0
@@ -101,8 +105,15 @@ struct WirelessSRTFrameReassembler: Sendable {
     private var lastCompletedFrameID: UInt32?
     private var waitingForKeyFrame = true
 
+    init(maximumPayloadBytes: Int = Self.maximumFrameBytes) {
+        precondition(maximumPayloadBytes > 0)
+        self.maximumPayloadBytes = maximumPayloadBytes
+    }
+
     mutating func append(message: Data) -> WirelessSRTReassemblyResult {
         guard let fragment = WirelessSRTFragment(message: message) else {
+            discardCurrentFrame()
+            waitingForKeyFrame = true
             return WirelessSRTReassemblyResult(
                 frame: nil,
                 shouldRequestKeyFrame: true,
@@ -138,6 +149,15 @@ struct WirelessSRTFrameReassembler: Sendable {
         }
 
         guard frameID == fragment.frameID else {
+            return WirelessSRTReassemblyResult(
+                frame: nil,
+                shouldRequestKeyFrame: true,
+                shouldResetDecoder: true
+            )
+        }
+        guard fragment.payload.count <= maximumPayloadBytes - payload.count else {
+            discardCurrentFrame()
+            waitingForKeyFrame = true
             return WirelessSRTReassemblyResult(
                 frame: nil,
                 shouldRequestKeyFrame: true,
@@ -196,7 +216,7 @@ struct WirelessSRTFrameReassembler: Sendable {
         fragmentCount = fragment.fragmentCount
         nextFragmentIndex = 0
         keyFrame = fragment.isKeyFrame
-        payload.removeAll(keepingCapacity: true)
+        payload = Data()
     }
 
     private mutating func discardCurrentFrame() {
@@ -205,13 +225,98 @@ struct WirelessSRTFrameReassembler: Sendable {
         fragmentCount = 0
         nextFragmentIndex = 0
         keyFrame = false
-        payload.removeAll(keepingCapacity: true)
+        payload = Data()
+    }
+}
+
+/// Protected by the stream's state lock. Admission happens on the receiver,
+/// before submitting any decode work, so queued Dispatch blocks cannot retain
+/// an unbounded second backlog of compressed frames.
+struct WirelessH264DecodeBuffer: Sendable {
+    struct Work: Equatable, Sendable {
+        let resetDecoder: Bool
+        let frame: WirelessH264Packet?
+    }
+
+    private let maximumFrames: Int
+    private let maximumBytes: Int
+    private var frames: [WirelessH264Packet] = []
+    private var byteCount = 0
+    private var resetPending = false
+    private(set) var waitingForKeyFrame = true
+    private(set) var overloadResets = 0
+    private(set) var droppedFrames = 0
+    private(set) var peakFrames = 0
+    private(set) var peakBytes = 0
+
+    init(maximumFrames: Int = 2, maximumBytes: Int = WirelessSRTFrameReassembler.maximumFrameBytes) {
+        precondition(maximumFrames > 0 && maximumBytes > 0)
+        self.maximumFrames = maximumFrames
+        self.maximumBytes = maximumBytes
+    }
+
+    var hasWork: Bool { resetPending || !frames.isEmpty }
+    var pendingFrameCount: Int { frames.count }
+    var pendingByteCount: Int { byteCount }
+
+    /// Returns true when recovery needs a new IDR. P frames can never replace
+    /// other P frames: a dropped reference invalidates the entire queued chain.
+    mutating func append(_ frame: WirelessH264Packet) -> Bool {
+        guard frame.annexBPayload.count <= maximumBytes else {
+            overloadResets += 1
+            droppedFrames += 1
+            resetForDiscontinuity()
+            return true
+        }
+        if waitingForKeyFrame && !frame.isKeyFrame {
+            droppedFrames += 1
+            return true
+        }
+        if frames.count >= maximumFrames || frame.annexBPayload.count > maximumBytes - byteCount {
+            overloadResets += 1
+            resetForDiscontinuity()
+            if !frame.isKeyFrame {
+                droppedFrames += 1
+                return true
+            }
+        }
+        if frame.isKeyFrame { waitingForKeyFrame = false }
+        frames.append(frame)
+        byteCount += frame.annexBPayload.count
+        peakFrames = max(peakFrames, frames.count)
+        peakBytes = max(peakBytes, byteCount)
+        return false
+    }
+
+    mutating func resetForDiscontinuity() {
+        droppedFrames += frames.count
+        frames.removeAll(keepingCapacity: true)
+        byteCount = 0
+        waitingForKeyFrame = true
+        resetPending = true
+    }
+
+    mutating func take() -> Work? {
+        guard hasWork else { return nil }
+        let reset = resetPending
+        resetPending = false
+        let frame = frames.isEmpty ? nil : frames.removeFirst()
+        byteCount -= frame?.annexBPayload.count ?? 0
+        return Work(resetDecoder: reset, frame: frame)
+    }
+
+    mutating func removeAll() {
+        frames.removeAll(keepingCapacity: false)
+        byteCount = 0
+        resetPending = false
+        waitingForKeyFrame = true
     }
 }
 
 final class WirelessSRTH264Stream: @unchecked Sendable {
     private static let keyFrameRequest = Data([0x53, 0x4D, 0x4B, 0x46]) // SMKF
     private static let startupResult: Int32 = srt_startup()
+    private static let logger = Logger(subsystem: "com.stupidmirror.app", category: "WirelessSRT")
 
     private let host: String
     private let port: Int
@@ -225,18 +330,27 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
         label: "stupidmirror.wireless-srt.decode",
         qos: .userInteractive
     )
+    private let controlQueue = DispatchQueue(
+        label: "stupidmirror.wireless-srt.control",
+        qos: .userInitiated
+    )
     private let stateLock = NSLock()
     private var socket: SRTSOCKET = SRT_INVALID_SOCK
     private var decoder: WirelessH264Decoder?
     private var reassembler = WirelessSRTFrameReassembler()
-    private var pendingFrames: [WirelessH264Packet] = []
+    private var decodeBuffer = WirelessH264DecodeBuffer()
     private var decodeScheduled = false
-    private var decodeWaitingForKeyFrame = true
+    private var started = false
     private var deliveredFrame = false
     private var stopped = false
     private var failureDelivered = false
     private var lastDecodedFrameUptime: TimeInterval?
     private var lastKeyFrameRequestUptime = TimeInterval.zero
+    private var keyFrameRequestScheduled = false
+    private var forceKeyFrameRequest = false
+    private var receivedFrames = 0
+    private var decodedFrames = 0
+    private var lastStatisticsUptime = ProcessInfo.processInfo.systemUptime
     private var firstFrameTimeout: DispatchWorkItem?
     private var stallWatchdog: DispatchSourceTimer?
 
@@ -253,23 +367,34 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
     }
 
     func start() {
+        guard stateLock.withLock({
+            guard !started, !stopped else { return false }
+            started = true
+            return true
+        }) else { return }
         guard Self.startupResult == 0 else {
             failOnce(WirelessSRTStreamError.libraryStartupFailed)
             return
         }
-        decoder = WirelessH264Decoder(
-            onFrame: { [weak self] frame in self?.receiveDecodedFrame(frame) },
-            onFailure: { [weak self] error in self?.failOnce(error) }
-        )
+        decodeQueue.async { [weak self] in
+            guard let self, stateLock.withLock({ !stopped }) else { return }
+            decoder = WirelessH264Decoder(
+                onFrame: { [weak self] frame in self?.receiveDecodedFrame(frame) },
+                onFailure: { [weak self] error in self?.failOnce(error) }
+            )
+        }
         scheduleFirstFrameTimeout()
         startStallWatchdog()
         receiveQueue.async { [weak self] in self?.connectAndReceive() }
     }
 
     func stop() {
-        let activeSocket: SRTSOCKET = stateLock.withLock {
-            guard !stopped else { return SRT_INVALID_SOCK }
+        let activeSocket: SRTSOCKET? = stateLock.withLock {
+            guard !stopped else { return nil }
             stopped = true
+            decodeBuffer.removeAll()
+            keyFrameRequestScheduled = false
+            forceKeyFrameRequest = false
             firstFrameTimeout?.cancel()
             firstFrameTimeout = nil
             stallWatchdog?.cancel()
@@ -278,13 +403,15 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
             socket = SRT_INVALID_SOCK
             return activeSocket
         }
+        guard let activeSocket else { return }
         if activeSocket != SRT_INVALID_SOCK {
-            srt_close(activeSocket)
+            // Sends and closes share this queue. Never close/reuse a socket
+            // between a control request's state check and srt_sendmsg.
+            controlQueue.async { srt_close(activeSocket) }
         }
-        decodeQueue.sync {
-            pendingFrames.removeAll(keepingCapacity: false)
-            decodeScheduled = false
-            decodeWaitingForKeyFrame = true
+        // VT output callbacks finish synchronously with decode(). Waiting here
+        // could deadlock if a callback's consumer is the caller of stop().
+        decodeQueue.async { [self] in
             decoder?.stop()
             decoder = nil
         }
@@ -296,6 +423,7 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
             failOnce(makeSRTError(.connectionFailed))
             return
         }
+        var registered = false
         do {
             try configure(candidate)
             let shouldContinue = stateLock.withLock { () -> Bool in
@@ -307,11 +435,13 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
                 srt_close(candidate)
                 return
             }
+            registered = true
             try connect(candidate)
-            requestKeyFrame(on: candidate, force: true)
+            requestRecoveryKeyFrame(force: true)
             receiveMessages(from: candidate)
         } catch {
-            closeIfCurrent(candidate)
+            if registered { closeIfCurrent(candidate) }
+            else { srt_close(candidate) }
             failOnce(error)
         }
     }
@@ -329,6 +459,10 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
         try setOption(socket, SRTO_LOSSMAXTTL, &reorderTolerance)
         var receiveTimeout: Int32 = 1_000
         try setOption(socket, SRTO_RCVTIMEO, &receiveTimeout)
+        // A keyframe request must never block the control queue/watchdog.
+        // The TTL in srt_sendmsg is not a send timeout.
+        var synchronousSend = false
+        try setOption(socket, SRTO_SNDSYN, &synchronousSend)
         var connectTimeout: Int32 = 4_000
         try setOption(socket, SRTO_CONNTIMEO, &connectTimeout)
         var peerIdleTimeout: Int32 = 4_000
@@ -384,7 +518,7 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
                 )
             }
             if received > 0 {
-                processMessage(buffer.prefix(Int(received)))
+                autoreleasepool { processMessage(buffer.prefix(Int(received))) }
                 continue
             }
             if srt_getsockstate(socket) == SRTS_CONNECTED {
@@ -401,31 +535,53 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
 
     private func processMessage(_ message: Data) {
         let result = reassembler.append(message: message)
-        if result.shouldRequestKeyFrame {
-            let activeSocket = stateLock.withLock { socket }
-            requestKeyFrame(on: activeSocket)
-        }
-        if result.shouldResetDecoder {
-            decodeQueue.async { [weak self] in
-                guard let self else { return }
-                pendingFrames.removeAll(keepingCapacity: true)
-                decodeWaitingForKeyFrame = true
-                decoder?.resetForDiscontinuity()
+        var requestKeyFrame = result.shouldRequestKeyFrame
+        let scheduleDecode = stateLock.withLock { () -> Bool in
+            guard !stopped else { return false }
+            if result.shouldResetDecoder { decodeBuffer.resetForDiscontinuity() }
+            if let frame = result.frame {
+                receivedFrames += 1
+                requestKeyFrame = decodeBuffer.append(frame) || requestKeyFrame
             }
+            guard decodeBuffer.hasWork, !decodeScheduled else { return false }
+            decodeScheduled = true
+            return true
         }
-        guard let frame = result.frame else { return }
-        decodeQueue.async { [weak self] in self?.enqueueLatestFrame(frame) }
+        if requestKeyFrame { requestRecoveryKeyFrame() }
+        if scheduleDecode {
+            decodeQueue.async { [weak self] in self?.drainFrames() }
+        }
     }
 
-    private func requestKeyFrame(on socket: SRTSOCKET, force: Bool = false) {
-        guard socket != SRT_INVALID_SOCK else { return }
+    private func sendPendingKeyFrameRequest() {
         let now = ProcessInfo.processInfo.systemUptime
-        guard force || now - lastKeyFrameRequestUptime >= 0.2 else { return }
-        lastKeyFrameRequestUptime = now
+        let request = stateLock.withLock { () -> (socket: SRTSOCKET, delay: TimeInterval)? in
+            guard !stopped, socket != SRT_INVALID_SOCK else {
+                keyFrameRequestScheduled = false
+                forceKeyFrameRequest = false
+                return nil
+            }
+            let delay = forceKeyFrameRequest ? 0 : max(0, 0.2 - (now - lastKeyFrameRequestUptime))
+            if delay == 0 {
+                keyFrameRequestScheduled = false
+                forceKeyFrameRequest = false
+                lastKeyFrameRequestUptime = now
+            }
+            return (socket, delay)
+        }
+        guard let request else { return }
+        if request.delay > 0 {
+            // Keep the scheduled flag set: all intervening recovery requests
+            // coalesce into this one delayed send, without retaining frames.
+            controlQueue.asyncAfter(deadline: .now() + request.delay) { [weak self] in
+                self?.sendPendingKeyFrameRequest()
+            }
+            return
+        }
         _ = Self.keyFrameRequest.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return SRT_ERROR }
             return srt_sendmsg(
-                socket,
+                request.socket,
                 baseAddress.assumingMemoryBound(to: CChar.self),
                 Int32(rawBuffer.count),
                 200,
@@ -434,50 +590,35 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
         }
     }
 
-    private func enqueueLatestFrame(_ frame: WirelessH264Packet) {
-        guard stateLock.withLock({ !stopped }) else { return }
-        if decodeWaitingForKeyFrame {
-            guard frame.isKeyFrame else {
-                requestRecoveryKeyFrame()
-                return
-            }
-            decodeWaitingForKeyFrame = false
-        }
-        // H.264 P frames depend on previously decoded reference frames. Never
-        // replace an encoded P frame with a newer P frame: that creates the
-        // macroblocking/corruption that a latest-JPEG strategy can tolerate but
-        // an inter-frame codec cannot. If decoding falls behind, discard the
-        // entire dependency chain and resume only from a fresh IDR.
-        if pendingFrames.count >= 2 {
-            pendingFrames.removeAll(keepingCapacity: true)
-            decodeWaitingForKeyFrame = true
-            decoder?.resetForDiscontinuity()
-            requestRecoveryKeyFrame()
-            guard frame.isKeyFrame else { return }
-            decodeWaitingForKeyFrame = false
-        }
-        pendingFrames.append(frame)
-        guard !decodeScheduled else { return }
-        decodeScheduled = true
-        decodeQueue.async { [weak self] in self?.drainLatestFrames() }
-    }
-
-    private func drainLatestFrames() {
+    private func drainFrames() {
         while true {
-            guard !pendingFrames.isEmpty else {
-                decodeScheduled = false
-                return
+            let work = stateLock.withLock { () -> WirelessH264DecodeBuffer.Work? in
+                guard !stopped, let work = decodeBuffer.take() else {
+                    decodeScheduled = false
+                    return nil
+                }
+                return work
             }
-            let frame = pendingFrames.removeFirst()
-            decoder?.decode(frame)
+            guard let work else { return }
+            // Keep VT synchronous: at most one frame is in flight in addition
+            // to the bounded pending buffer. No state lock spans callbacks.
+            autoreleasepool {
+                if work.resetDecoder { decoder?.resetForDiscontinuity() }
+                if let frame = work.frame { decoder?.decode(frame) }
+            }
         }
     }
 
-    private func requestRecoveryKeyFrame() {
-        receiveQueue.async { [weak self] in
-            guard let self else { return }
-            let activeSocket = stateLock.withLock { socket }
-            requestKeyFrame(on: activeSocket)
+    private func requestRecoveryKeyFrame(force: Bool = false) {
+        let schedule = stateLock.withLock { () -> Bool in
+            guard !stopped, socket != SRT_INVALID_SOCK else { return false }
+            forceKeyFrameRequest = forceKeyFrameRequest || force
+            guard !keyFrameRequestScheduled else { return false }
+            keyFrameRequestScheduled = true
+            return true
+        }
+        if schedule {
+            controlQueue.async { [weak self] in self?.sendPendingKeyFrameRequest() }
         }
     }
 
@@ -487,7 +628,7 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
             socket = SRT_INVALID_SOCK
             return true
         }
-        if shouldClose { srt_close(candidate) }
+        if shouldClose { controlQueue.async { srt_close(candidate) } }
     }
 
     private func scheduleFirstFrameTimeout() {
@@ -496,13 +637,17 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
             let shouldFail = stateLock.withLock { !stopped && !deliveredFrame }
             if shouldFail { failOnce(WirelessSRTStreamError.firstFrameTimedOut) }
         }
-        stateLock.withLock { firstFrameTimeout = timeout }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 8, execute: timeout)
+        let schedule = stateLock.withLock { () -> Bool in
+            guard !stopped else { return false }
+            firstFrameTimeout = timeout
+            return true
+        }
+        if schedule { controlQueue.asyncAfter(deadline: .now() + 8, execute: timeout) }
     }
 
     private func startStallWatchdog() {
-        let timer = DispatchSource.makeTimerSource(queue: receiveQueue)
-        timer.schedule(deadline: .now() + 3, repeating: 1)
+        let timer = DispatchSource.makeTimerSource(queue: controlQueue)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             let shouldFail = stateLock.withLock {
@@ -511,22 +656,42 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
                         ProcessInfo.processInfo.systemUptime - $0 >= 3
                     } == true
             }
+            reportStatisticsIfNeeded()
             if shouldFail { failOnce(WirelessSRTStreamError.streamStalled) }
+            else if stateLock.withLock({ !stopped && decodeBuffer.waitingForKeyFrame }) {
+                requestRecoveryKeyFrame()
+            }
         }
-        stateLock.withLock { stallWatchdog = timer }
         timer.resume()
+        stateLock.withLock {
+            if stopped { timer.cancel() }
+            else { stallWatchdog = timer }
+        }
     }
 
     private func receiveDecodedFrame(_ sampleBuffer: CMSampleBuffer) {
         let shouldDeliver = stateLock.withLock { () -> Bool in
             guard !stopped else { return false }
             deliveredFrame = true
+            decodedFrames += 1
             lastDecodedFrameUptime = ProcessInfo.processInfo.systemUptime
             firstFrameTimeout?.cancel()
             firstFrameTimeout = nil
             return true
         }
         if shouldDeliver { onFrame(sampleBuffer) }
+    }
+
+    private func reportStatisticsIfNeeded() {
+        let statistics = stateLock.withLock { () -> String? in
+            let now = ProcessInfo.processInfo.systemUptime
+            guard !stopped, now - lastStatisticsUptime >= 5 else { return nil }
+            lastStatisticsUptime = now
+            return "received=\(receivedFrames) decoded=\(decodedFrames) overload_resets=\(decodeBuffer.overloadResets) dropped=\(decodeBuffer.droppedFrames) pending=\(decodeBuffer.pendingFrameCount) peak_pending=\(decodeBuffer.peakFrames) pending_bytes=\(decodeBuffer.pendingByteCount) peak_bytes=\(decodeBuffer.peakBytes) waiting_idr=\(decodeBuffer.waitingForKeyFrame)"
+        }
+        if let statistics {
+            Self.logger.info("SRT \(self.host, privacy: .public):\(self.port) video \(statistics, privacy: .public)")
+        }
     }
 
     private func makeSRTError(_ fallback: WirelessSRTStreamError) -> Error {
@@ -542,7 +707,10 @@ final class WirelessSRTH264Stream: @unchecked Sendable {
             firstFrameTimeout = nil
             return true
         }
-        if shouldDeliver { onFailure(error) }
+        if shouldDeliver {
+            stop()
+            onFailure(error)
+        }
     }
 }
 

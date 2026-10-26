@@ -186,6 +186,110 @@ final class WirelessSRTStreamTests: XCTestCase {
         XCTAssertFalse(jumped?.shouldRequestKeyFrame ?? true)
     }
 
+    func testDecodeBufferOverloadDiscardsDependencyChainUntilNewIDR() {
+        var buffer = WirelessH264DecodeBuffer(maximumFrames: 2, maximumBytes: 100)
+        XCTAssertFalse(buffer.append(packet(time: 1, keyFrame: true)))
+        XCTAssertFalse(buffer.append(packet(time: 2)))
+
+        XCTAssertTrue(buffer.append(packet(time: 3)))
+        XCTAssertTrue(buffer.waitingForKeyFrame)
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: true, frame: nil))
+        XCTAssertTrue(buffer.append(packet(time: 4)))
+        XCTAssertNil(buffer.take())
+
+        let recovery = packet(time: 5, keyFrame: true)
+        let dependent = packet(time: 6)
+        XCTAssertFalse(buffer.append(recovery))
+        XCTAssertFalse(buffer.append(dependent))
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: false, frame: recovery))
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: false, frame: dependent))
+        XCTAssertNil(buffer.take())
+    }
+
+    func testDecodeBufferOverloadKeepsIncomingIDRAsNewChain() {
+        var buffer = WirelessH264DecodeBuffer(maximumFrames: 2, maximumBytes: 100)
+        XCTAssertFalse(buffer.append(packet(time: 1, keyFrame: true)))
+        XCTAssertFalse(buffer.append(packet(time: 2)))
+
+        let recovery = packet(time: 3, keyFrame: true)
+        let dependent = packet(time: 4)
+        XCTAssertFalse(buffer.append(recovery))
+        XCTAssertFalse(buffer.append(dependent))
+        XCTAssertFalse(buffer.waitingForKeyFrame)
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: true, frame: recovery))
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: false, frame: dependent))
+        XCTAssertNil(buffer.take())
+    }
+
+    func testDecodeBufferEnforcesByteBudgetAndRecoversAfterOversizedIDR() {
+        let initial = packet(time: 1, keyFrame: true)
+        let byteBudget = initial.annexBPayload.count * 2
+        var buffer = WirelessH264DecodeBuffer(maximumFrames: 8, maximumBytes: byteBudget)
+        XCTAssertFalse(buffer.append(initial))
+        XCTAssertFalse(buffer.append(packet(time: 2)))
+        XCTAssertEqual(buffer.pendingByteCount, byteBudget)
+
+        XCTAssertTrue(buffer.append(packet(time: 3)))
+        XCTAssertEqual(buffer.pendingByteCount, 0)
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: true, frame: nil))
+
+        let oversized = WirelessH264Packet(
+            presentationTimeMicroseconds: 4,
+            isKeyFrame: true,
+            annexBPayload: Data(repeating: 0x65, count: byteBudget + 1)
+        )
+        XCTAssertTrue(buffer.append(oversized))
+        XCTAssertTrue(buffer.append(packet(time: 5)))
+        XCTAssertEqual(buffer.pendingByteCount, 0)
+
+        let recovery = packet(time: 6, keyFrame: true)
+        let dependent = packet(time: 7)
+        XCTAssertFalse(buffer.append(recovery))
+        XCTAssertFalse(buffer.append(dependent))
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: true, frame: recovery))
+        XCTAssertEqual(buffer.take(), WirelessH264DecodeBuffer.Work(resetDecoder: false, frame: dependent))
+        XCTAssertNil(buffer.take())
+    }
+
+    func testReassemblerRejectsOversizedFrameAndWaitsForNewIDR() {
+        let byteBudget = WirelessSRTFragment.maximumPayloadSize + 5
+        var reassembler = WirelessSRTFrameReassembler(maximumPayloadBytes: byteBudget)
+        let initial = packet(time: 1, keyFrame: true)
+        let initialResult = WirelessSRTFragment.makeMessages(for: initial, frameID: 1)
+            .map { reassembler.append(message: $0) }.last
+        XCTAssertEqual(initialResult?.frame, initial)
+
+        let oversized = WirelessH264Packet(
+            presentationTimeMicroseconds: 2,
+            isKeyFrame: true,
+            annexBPayload: Data(repeating: 0x65, count: byteBudget + 1)
+        )
+        let oversizedResults = WirelessSRTFragment.makeMessages(for: oversized, frameID: 2)
+            .map { reassembler.append(message: $0) }
+        XCTAssertTrue(oversizedResults.allSatisfy { $0.frame == nil })
+        XCTAssertTrue(oversizedResults.last?.shouldResetDecoder ?? false)
+        XCTAssertTrue(oversizedResults.last?.shouldRequestKeyFrame ?? false)
+
+        for frameID in [UInt32(3), UInt32(4)] {
+            let rejected = WirelessSRTFragment.makeMessages(
+                for: packet(time: UInt64(frameID)), frameID: frameID
+            ).map { reassembler.append(message: $0) }.last
+            XCTAssertNil(rejected?.frame)
+            XCTAssertTrue(rejected?.shouldRequestKeyFrame ?? false)
+        }
+
+        let recovery = packet(time: 5, keyFrame: true)
+        let recovered = WirelessSRTFragment.makeMessages(for: recovery, frameID: 5)
+            .map { reassembler.append(message: $0) }.last
+        let dependent = packet(time: 6)
+        let resumed = WirelessSRTFragment.makeMessages(for: dependent, frameID: 6)
+            .map { reassembler.append(message: $0) }.last
+        XCTAssertEqual(recovered?.frame, recovery)
+        XCTAssertFalse(recovered?.shouldRequestKeyFrame ?? true)
+        XCTAssertEqual(resumed?.frame, dependent)
+        XCTAssertFalse(resumed?.shouldResetDecoder ?? true)
+    }
+
     func testFragmentRejectsTruncatedAndInvalidMetadata() {
         XCTAssertNil(WirelessSRTFragment(message: Data(WirelessSRTFragment.magic)))
         var invalid = Data(WirelessSRTFragment.magic)

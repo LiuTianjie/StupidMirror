@@ -225,9 +225,7 @@ final class DeviceGalleryStore: ObservableObject {
             DiagnosticItem(name: t("diagnostic.microphone"), value: authorizationLabel(microphonePermissionStatus)),
             DiagnosticItem(
                 name: t("diagnostic.backend"),
-                value: wirelessMirroringEnabled
-                    ? "USB: AVFoundation / Wireless: WDA H.264 over SRT"
-                    : "CoreMediaIO + AVFoundation"
+                value: "iPhone: WDA H.264 over SRT (USB / Wi-Fi); Mac audio: USB"
             ),
             DiagnosticItem(
                 name: t("settings.wirelessMirroring"),
@@ -282,11 +280,16 @@ final class DeviceGalleryStore: ObservableObject {
     /// An iPhone whose audio the Mac could play. Simulators play through the
     /// Mac already.
     var hasConnectedIOSDevice: Bool {
-        connectedSessions.contains { $0.platform == .iOS && !$0.isIOSSimulator }
+        connectedSessions.contains { $0.platform == .iOS && $0.transport == .usb }
+    }
+
+    var canPlayDeviceAudioOnMac: Bool {
+        connectedSessions.contains { $0.canPlayAudioOnMac }
     }
 
     var cameraPermissionPresentation: CameraPermissionPresentation {
-        Self.cameraPermissionPresentation(
+        guard connectedSessions.contains(where: { $0.needsCameraPermission }) else { return .hidden }
+        return Self.cameraPermissionPresentation(
             authorizationStatus: permissionStatus,
             hasCameraIndependentConnectedDevice: connectedSessions.contains {
                 !$0.needsCameraPermission
@@ -350,9 +353,6 @@ final class DeviceGalleryStore: ObservableObject {
     func refreshIfCameraAuthorized() {
         permissionStatus = AVFoundationMirrorBackend.videoAuthorizationStatus()
         microphonePermissionStatus = AVFoundationMirrorBackend.audioAuthorizationStatus()
-        if permissionStatus != .authorized && !wirelessMirroringEnabled {
-            statusMessage = t("status.permissionRequired")
-        }
         refresh()
     }
 
@@ -586,51 +586,11 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func updateCameraPermissionStatus(_ status: AVAuthorizationStatus) {
-        let previous = permissionStatus
+        guard permissionStatus != status else { return }
         permissionStatus = status
-        guard previous == .authorized, status != .authorized else { return }
-
-        refreshGeneration &+= 1
-        refreshTask?.cancel()
-        refreshTask = nil
-        refreshRequestedWhileRunning = false
-        let usbIDs = Set(sessions.filter {
-            $0.platform == .iOS && $0.transport == .usb
-        }.map(\.id))
-        if !wirelessMirroringEnabled {
-            desiredMirrorIDs.subtract(usbIDs)
-            desiredControlIDs.subtract(usbIDs)
-            pendingActivationMirrorIDs.subtract(usbIDs)
-        }
-        dismissActivationSheetIfPresented()
-        let usbSessions = sessions.filter {
-            $0.platform == .iOS && $0.transport == .usb
-        }
-        if wirelessMirroringEnabled {
-            for session in usbSessions {
-                session.mirrorSession.stop()
-            }
-        } else {
-            MirrorWindowRegistry.shared.closeAll(sessions: usbSessions)
-            for session in usbSessions {
-                session.mirrorSession.dispose()
-                session.controlSession.disconnect()
-            }
-            for capture in thumbnailCaptures.values {
-                capture.cancel()
-            }
-            thumbnailCaptures.removeAll()
-            for id in usbIDs {
-                clearThumbnail(for: id)
-                disconnectedSince[id] = nil
-                floatingMirrorIDs.remove(id)
-            }
-            sessions.removeAll { $0.platform == .iOS && $0.transport == .usb }
-            if selectedSessionID.map(usbIDs.contains) == true {
-                selectedSessionID = sessions.first?.id
-            }
-        }
-        statusMessage = wirelessMirroringEnabled ? localizedStatusMessage : t("status.permissionRequired")
+        // Physical iPhone video does not depend on Camera permission. Only
+        // the optional USB audio input must be released after revocation.
+        applyAudioPlaybackPreference()
         refresh()
     }
 
@@ -644,19 +604,19 @@ final class DeviceGalleryStore: ObservableObject {
         for session in sessions {
             let audioEnabled = session.platform == .android
                 ? audioPlaybackEnabled
-                : Self.shouldCaptureAudio(
-                    playbackEnabled: audioPlaybackEnabled,
-                    authorizationStatus: microphonePermissionStatus
-                  )
+                : iosAudioPlaybackAllowed
             session.mirrorSession.setAudioEnabled(audioEnabled)
         }
     }
 
     func enableAudioPlayback() async {
+        if hasConnectedIOSDevice, permissionStatus != .authorized {
+            await requestCameraPermission()
+        }
         if needsIOSAudioPermission {
             await requestMicrophonePermission()
             if microphonePermissionStatus != .authorized {
-                let androidCanPlayWithoutMicrophone = sessions.contains {
+                let androidCanPlayWithoutMicrophone = connectedSessions.contains {
                     $0.platform == .android
                 }
                 if !androidCanPlayWithoutMicrophone {
@@ -665,7 +625,16 @@ final class DeviceGalleryStore: ObservableObject {
                 }
             }
         }
-        audioPlaybackEnabled = true
+        audioPlaybackEnabled = !hasConnectedIOSDevice || permissionStatus == .authorized
+            || connectedSessions.contains { $0.platform == .android }
+        refresh()
+    }
+
+    private var iosAudioPlaybackAllowed: Bool {
+        permissionStatus == .authorized && Self.shouldCaptureAudio(
+            playbackEnabled: audioPlaybackEnabled,
+            authorizationStatus: microphonePermissionStatus
+        )
     }
 
     nonisolated static func shouldDeferUSBForWireless(
@@ -736,14 +705,15 @@ final class DeviceGalleryStore: ObservableObject {
 
         refreshGeneration &+= 1
         let generation = refreshGeneration
-        let canDiscoverUSB = permissionStatus == .authorized
+        let canDiscoverUSB = audioPlaybackEnabled && permissionStatus == .authorized
+            && microphonePermissionStatus == .authorized
         let discoverWireless = wirelessMirroringEnabled
         refreshTask = Task { [weak self] in
             if canDiscoverUSB {
                 AVFoundationMirrorBackend.warmUpDiscovery()
             }
             async let metadataTask = Task.detached(priority: .utility) {
-                canDiscoverUSB ? DeviceMetadataService.connectedDevices() : []
+                DeviceMetadataService.connectedDevices()
             }.value
             async let wirelessTask = Task.detached(priority: .utility) {
                 discoverWireless
@@ -781,11 +751,6 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func refreshForAutomation() async throws {
-        guard permissionStatus == .authorized
-                || wirelessMirroringEnabled
-                || AndroidRuntime.adbExecutablePath() != nil else {
-            throw DeviceAutomationError.permissionRequired
-        }
         refresh()
         let deadline = ContinuousClock.now + .seconds(15)
         while refreshTask != nil {
@@ -861,6 +826,9 @@ final class DeviceGalleryStore: ObservableObject {
                 captureCount: devices.count,
                 remaining: remaining
             )
+            // Capture discovery can expose an unrelated or unresolved muxed
+            // source. It is only an audio attachment to a known USB phone.
+            guard let udid = identity.udid, metadata.contains(where: { $0.udid == udid }) else { continue }
             guard !isRemovedDevice(identity.id) else { continue }
             if Self.shouldDeferUSBForWireless(
                 wirelessModeEnabled: wirelessMirroringEnabled,
@@ -888,25 +856,20 @@ final class DeviceGalleryStore: ObservableObject {
                 captureUniqueID: captureDevice.uniqueID
             ) {
                 let previousID = existing.id
-                let captureDeviceChanged = existing.captureDevice !== captureDevice
-                    || existing.captureDevice?.uniqueID != captureDevice.uniqueID
                 let shouldResume = shouldResumeAfterAdoption(
                     existing,
                     becomingConnected: identity.connectionState == .connected,
-                    transport: .usb,
-                    captureDeviceChanged: captureDeviceChanged
+                    transport: .usb
                 )
                 if existing.transport != .usb {
                     cancelWirelessTransport(for: existing)
+                    existing.controlSession.disconnect()
                 }
                 rebaseSession(&existing, to: identity)
                 existing.adoptUSB(identity: identity, captureDevice: captureDevice)
                 existing.device.connectionState = identity.connectionState
                 configureUSBMirrorCallbacks(for: existing.mirrorSession)
-                existing.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
-                    playbackEnabled: audioPlaybackEnabled,
-                    authorizationStatus: microphonePermissionStatus
-                ))
+                existing.mirrorSession.setAudioEnabled(iosAudioPlaybackAllowed)
                 disconnectedSince[existing.id] = nil
                 if shouldResume {
                     resumeIDs.insert(existing.id)
@@ -919,15 +882,50 @@ final class DeviceGalleryStore: ObservableObject {
             } else {
                 let session = DeviceSession(device: identity, captureDevice: captureDevice)
                 configureUSBMirrorCallbacks(for: session.mirrorSession)
-                session.mirrorSession.setAudioEnabled(Self.shouldCaptureAudio(
-                    playbackEnabled: audioPlaybackEnabled,
-                    authorizationStatus: microphonePermissionStatus
-                ))
+                session.mirrorSession.setAudioEnabled(iosAudioPlaybackAllowed)
                 nextSessions.append(session)
                 claim(session)
                 if shouldAutoStartMirrors, identity.connectionState == .connected {
                     autoStartIDs.insert(session.id)
                 }
+            }
+        }
+
+        // A USB tunnel only needs the phone's identity. AVFoundation may be
+        // unavailable or deliberately unused while sound stays on the phone.
+        for record in metadata where !claimedIDs.contains(record.udid) {
+            guard !isRemovedDevice(record.udid),
+                  !Self.shouldDeferUSBForWireless(
+                    wirelessModeEnabled: wirelessMirroringEnabled,
+                    usbUDID: record.udid,
+                    activeWirelessUDIDs: activeWirelessUDIDs
+                  ) else { continue }
+            let identity = DeviceIdentity(
+                id: record.udid, udid: record.udid, name: record.name,
+                productType: record.productType, osVersion: record.osVersion,
+                connectionState: .connected, trustState: .trusted
+            )
+            if var existing = takeExisting(from: &remaining, id: record.udid, udid: record.udid, captureUniqueID: nil) {
+                let shouldResume = shouldResumeAfterAdoption(existing, becomingConnected: true, transport: .usb)
+                if existing.transport != .usb {
+                    cancelWirelessTransport(for: existing)
+                    existing.controlSession.disconnect()
+                }
+                rebaseSession(&existing, to: identity)
+                existing.adoptUSB(identity: identity, captureDevice: nil)
+                configureUSBMirrorCallbacks(for: existing.mirrorSession)
+                existing.mirrorSession.setAudioEnabled(iosAudioPlaybackAllowed)
+                disconnectedSince[existing.id] = nil
+                if shouldResume { resumeIDs.insert(existing.id) }
+                nextSessions.append(existing)
+                claim(existing)
+            } else {
+                let session = DeviceSession(device: identity, captureDevice: nil)
+                configureUSBMirrorCallbacks(for: session.mirrorSession)
+                session.mirrorSession.setAudioEnabled(iosAudioPlaybackAllowed)
+                nextSessions.append(session)
+                claim(session)
+                if shouldAutoStartMirrors { autoStartIDs.insert(session.id) }
             }
         }
 
@@ -978,6 +976,7 @@ final class DeviceGalleryStore: ObservableObject {
                     )
                     if existing.transport != .wireless {
                         cancelWirelessTransport(for: existing)
+                        existing.controlSession.disconnect()
                     }
                     rebaseSession(&existing, to: identity)
                     existing.adoptWireless(identity: identity, wirelessDevice: wirelessDevice)
@@ -1111,11 +1110,11 @@ final class DeviceGalleryStore: ObservableObject {
         }
 
         for staleSession in remaining where !claimedIDs.contains(staleSession.id) {
-            // usbmuxd can drop a phone's network entry for a poll while the
-            // tunnel to it is still carrying video and control. The tunnel is
+            // Device discovery can miss a phone for one poll while its
+            // tunnel is still carrying video and control. The tunnel is
             // the authority: it ends on its own when the phone is really gone.
             if Self.shouldKeepLiveWirelessSession(
-                isIOSWireless: staleSession.isIOSWireless,
+                isIOSWireless: staleSession.usesIOSAgentVideo,
                 connectionState: staleSession.device.connectionState,
                 tunnelRunning: staleSession.device.udid.map(IOSAgentService.hasRunningAgent(udid:)) ?? false
             ) {
@@ -1288,15 +1287,14 @@ final class DeviceGalleryStore: ObservableObject {
         platform == .iOS && transport == .usb && connectionState == .connected && controlWanted
     }
 
-    /// Keeps USB screen capture running for every cabled iPhone whose control
-    /// is wanted, so mirror start/stop never flips USB Configuration 6/7 under
-    /// the control tunnel. See `MirrorCaptureSession.setUSBCaptureHold`.
+    /// Only a legacy AVFoundation video source can request a capture hold.
+    /// SRT and HID never open a media graph just to keep USB control alive.
     private func reconcileUSBCaptureHolds() {
         guard !isShuttingDown else { return }
         for session in sessions {
             let wanted = desiredControlIDs.contains(session.id)
                 || (session.device.udid.map { desiredControlIDs.contains($0) } ?? false)
-            session.mirrorSession.setUSBCaptureHold(Self.shouldHoldUSBCapture(
+            session.mirrorSession.setUSBCaptureHold(session.videoSource == .avFoundation && Self.shouldHoldUSBCapture(
                 platform: session.platform,
                 transport: session.transport,
                 connectionState: session.device.connectionState,
@@ -1306,6 +1304,9 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     private func configureUSBMirrorCallbacks(for mirrorSession: MirrorCaptureSession) {
+        mirrorSession.onAudioPlaybackFailure = { [weak self] message in
+            self?.statusMessage = message
+        }
         mirrorSession.onUSBCaptureInterrupted = { [weak self] in
             guard let self, !self.isShuttingDown else { return }
             self.refresh()
@@ -1781,10 +1782,12 @@ final class DeviceGalleryStore: ObservableObject {
         let mirrorSession = session.mirrorSession
         let key = ObjectIdentifier(mirrorSession)
         guard desiredMirrorIDs.contains(session.id),
-              session.transport == .wireless,
+              session.usesIOSAgentVideo,
               wirelessTransportTasks[key] == nil,
-              let wirelessDevice = session.wirelessDevice,
+              let udid = session.device.udid, !udid.isEmpty,
               let iosAgent = session.iosAgent else { return }
+        let physicalTransport = session.transport
+        let transport: DeviceTunnelTransport = physicalTransport == .usb ? .usb : .network
 
         mirrorSession.onWirelessEndpointNeedsRefresh = { [weak self, weak mirrorSession] in
             guard let self, let mirrorSession,
@@ -1803,10 +1806,13 @@ final class DeviceGalleryStore: ObservableObject {
                     self.wirelessTransportTasks[key] = nil
                 }
             }
-            @MainActor func stillWanted() -> Bool {
+            let stillWanted: @MainActor @Sendable () -> Bool = {
                 guard !Task.isCancelled, !self.isShuttingDown,
+                      self.wirelessTransportTasks[key]?.token == token,
                       let current = self.session(owning: mirrorSession) else { return false }
                 return self.desiredMirrorIDs.contains(current.id)
+                    && current.usesIOSAgentVideo && current.device.udid == udid
+                    && current.transport == physicalTransport
             }
 
             await self.detectSigningTeams()
@@ -1817,11 +1823,12 @@ final class DeviceGalleryStore: ObservableObject {
                 for attempt in 0..<3 {
                     do {
                         resolvedEndpoint = try await iosAgent.ensureRunning(
-                            udid: wirelessDevice.udid,
+                            udid: udid,
+                            transport: transport,
                             configuration: self.iosControlConfiguration(),
                             progress: { [weak self] progress in
                                 await MainActor.run {
-                                    guard let self else { return }
+                                    guard let self, stillWanted() else { return }
                                     let key = switch progress {
                                     case .checkingExistingAgent: "agent.start.checkingAgent"
                                     case .checkingDevice: "agent.start.checkingDevice"
@@ -1853,6 +1860,9 @@ final class DeviceGalleryStore: ObservableObject {
                     throw lastError ?? IOSAgentError.launchFailed
                 }
                 guard stillWanted() else { return }
+                guard resolvedEndpoint.transport == transport else {
+                    throw IOSAgentError.deviceUnavailable
+                }
                 mirrorSession.connectWirelessVideo(
                     host: resolvedEndpoint.videoHost,
                     port: resolvedEndpoint.videoPort
@@ -1860,6 +1870,7 @@ final class DeviceGalleryStore: ObservableObject {
             } catch is CancellationError {
                 return
             } catch {
+                guard stillWanted() else { return }
                 // A failed start says nothing about reachability: the phone
                 // stays connected and the mirror shows why it did not start.
                 let current = self.session(owning: mirrorSession)
@@ -1981,6 +1992,13 @@ final class DeviceGalleryStore: ObservableObject {
     }
 
     func connectControl(for session: DeviceSession) {
+        if session.controlSession.touchIsUncertain {
+            Task { @MainActor [weak self] in
+                await session.controlSession.shutdown()
+                self?.connectControl(for: session)
+            }
+            return
+        }
         guard !isShuttingDown,
               let session = beginConnectionAttemptIfNeeded(for: session) else { return }
         guard canStartControl(for: session) else {
@@ -2020,6 +2038,7 @@ final class DeviceGalleryStore: ObservableObject {
             sessions.first {
                 $0.platform == .iOS
                     && $0.transport == .usb
+                    && $0.videoSource == .avFoundation
                     && $0.device.udid == udid
                     && $0.device.connectionState == .connected
             }?.mirrorSession
@@ -2035,9 +2054,41 @@ final class DeviceGalleryStore: ObservableObject {
         try? await Task.sleep(for: .milliseconds(1_000))
     }
 
-    /// Builds the connector the control session runs off the main actor: it
-    /// brings the device-side agent up and returns a connected backend.
+    /// iOS chooses system HID before preparing a runner. Compatibility and
+    /// semantic capabilities share a lazy WDA connection behind that session.
     private func controlConnector(for session: DeviceSession, udid: String) -> DeviceControlSession.Connector {
+        let auxiliary = legacyControlConnector(for: session, udid: udid)
+        guard session.platform == .iOS else { return auxiliary }
+        let simulator = session.isIOSSimulator
+        let profile = DeviceDisplayProfile.profile(for: session.device.productType, name: session.device.name)
+        let sizeProvider: HIDControlBackend.SizeProvider = { [weak mirror = session.mirrorSession] in
+            if let display = mirror?.simulatorDisplay {
+                return DeviceScreenSize(width: display.logicalSize.width, height: display.logicalSize.height)
+            }
+            if let profile {
+                let landscape = (mirror?.frameAspectRatio ?? profile.aspectRatio) > 1
+                let width = Double(profile.logicalSize.width), height = Double(profile.logicalSize.height)
+                return DeviceScreenSize(width: landscape ? max(width, height) : min(width, height),
+                                        height: landscape ? min(width, height) : max(width, height))
+            }
+            // Coordinate gestures stay normalized until a backend consumes
+            // them. No WDA launch is needed just to obtain a point-space size.
+            return DeviceScreenSize(width: max(mirror?.frameAspectRatio ?? 1, 0.001), height: 1)
+        }
+        let touchConnector: HIDControlBackend.TouchConnector = {
+            if simulator { return try await SimulatorHIDBackend.connect(udid: udid) }
+            return try await PhysicalHIDBackend.connect(udid: udid)
+        }
+        return { report in
+            let size = await sizeProvider() ?? DeviceScreenSize(width: 1, height: 1)
+            return try await HIDControlBackend.connect(
+                screenSize: size, sizeProvider: sizeProvider,
+                touchConnector: touchConnector, auxiliaryConnector: auxiliary, report: report
+            )
+        }
+    }
+
+    private func legacyControlConnector(for session: DeviceSession, udid: String) -> DeviceControlSession.Connector {
         if session.platform == .android {
             let serverURL = appiumServerURL
             let appPackage = controlBundleID
@@ -2086,7 +2137,7 @@ final class DeviceGalleryStore: ObservableObject {
                     guard let current = self.sessions.first(where: { $0.platform == .iOS && $0.device.udid == udid }) else {
                         return .auto
                     }
-                    return current.transport == .usb ? .usb : .auto
+                    return current.transport == .usb ? .usb : .network
                 }
                 do {
                     let endpoint = try await agent.ensureRunning(
@@ -2124,7 +2175,7 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
-    func connectControlForAutomation(for session: DeviceSession) async throws {
+    func connectControlForAutomation(for session: DeviceSession, resetUncertain: Bool = false) async throws {
         guard let session = beginConnectionAttemptIfNeeded(for: session) else {
             throw DeviceAutomationError.deviceUnavailable
         }
@@ -2137,6 +2188,12 @@ final class DeviceGalleryStore: ObservableObject {
         }
         guard let udid = session.device.udid, !udid.isEmpty else {
             throw DeviceAutomationError.deviceUnavailable
+        }
+        if session.controlSession.touchIsUncertain {
+            guard resetUncertain else {
+                throw DeviceAutomationError.controlFailed("The previous input has an uncertain result. Call connect_control to explicitly reconnect before sending another action.")
+            }
+            await session.controlSession.shutdown()
         }
         desiredControlIDs.insert(session.id)
         thumbnailCaptures[session.id]?.cancel()
@@ -2198,10 +2255,9 @@ final class DeviceGalleryStore: ObservableObject {
         // Returning promptly keeps first-time WDA setup outside the host's tool timeout.
         guard waitUntilRunning else { return }
 
-        // A wireless iPhone opens a tunnel first; a simulator may build its
-        // runner the first time.
+        // Physical iPhones open a tunnel first; a simulator may build its runner.
         let deadline = ContinuousClock.now + .seconds(
-            session.isIOSWireless ? 120 : session.isIOSSimulator ? 200 : 20
+            session.usesIOSAgentVideo ? 120 : session.isIOSSimulator ? 200 : 20
         )
         while session.mirrorSession.state != .running {
             if case let .failed(message) = session.mirrorSession.state {
@@ -2335,7 +2391,17 @@ final class DeviceGalleryStore: ObservableObject {
 
     /// The full gesture surface of the mirror, wired to one device session.
     func gestureHandlers(for session: DeviceSession) -> ControlGestureHandlers {
-        ControlGestureHandlers(
+        let generation = session.controlSession.touchGeneration
+        // One native mirror window per device. Keep this owner stable across
+        // SwiftUI updates so a second click may queue behind the first UP.
+        let source = "native:\(session.id)"
+        let onTouch: ((TouchEvent) -> Void)? = session.controlSession.supportsContinuousTouch ? { [weak self] event in
+            if event.phase == .down || event.phase == .move {
+                guard self?.prepareQueuedControlAction(for: session) == true else { return }
+            }
+            session.controlSession.enqueueTouch(event, source: source, geometryGeneration: generation)
+        } : nil
+        return ControlGestureHandlers(
             onTap: { [weak self] point in
                 self?.tapControl(for: session, normalizedX: point.x, normalizedY: point.y)
             },
@@ -2356,7 +2422,10 @@ final class DeviceGalleryStore: ObservableObject {
             },
             onRotate: { [weak self] center, degrees, velocity in
                 self?.rotateControl(for: session, center: center, degrees: degrees, velocity: velocity)
-            }
+            },
+            onTouch: onTouch,
+            touchGeneration: generation,
+            supportsNativeGestures: session.controlSession.supportsNativeGestures
         )
     }
 
@@ -2368,6 +2437,41 @@ final class DeviceGalleryStore: ObservableObject {
     func pressHome(for session: DeviceSession) {
         guard prepareQueuedControlAction(for: session) else { return }
         session.controlSession.enqueue(.press(.home))
+    }
+
+    func changePosture(_ posture: DevicePosture, for session: DeviceSession) {
+        Task { @MainActor [weak self] in
+            do {
+                _ = try await self?.setPosture(posture, for: session)
+            } catch {
+                self?.statusMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func setPosture(_ posture: DevicePosture, for session: DeviceSession) async throws -> SimulatorDisplayState {
+        guard session.isIOSSimulator, session.device.formFactor == .foldable else {
+            throw DeviceAutomationError.invalidArgument("Posture control requires a foldable iOS Simulator.")
+        }
+        try await startMirrorForAutomation(for: session, showWindow: false, waitUntilRunning: false)
+        return try await session.controlSession.withTouchGeometryChange {
+            try await session.mirrorSession.setSimulatorPosture(posture)
+        }
+    }
+
+    func rotateSimulator(_ session: DeviceSession) {
+        Task { @MainActor [weak self] in
+            do { _ = try await self?.rotateSimulatorDisplay(for: session) }
+            catch { self?.statusMessage = error.localizedDescription }
+        }
+    }
+
+    func rotateSimulatorDisplay(for session: DeviceSession) async throws -> SimulatorDisplayState {
+        guard session.isIOSSimulator else { throw DeviceAutomationError.invalidArgument("Rotation requires an iOS Simulator.") }
+        try await startMirrorForAutomation(for: session, showWindow: false, waitUntilRunning: false)
+        return try await session.controlSession.withTouchGeometryChange {
+            try await session.mirrorSession.rotateSimulatorDisplay()
+        }
     }
 
     func openAppSwitcher(for session: DeviceSession) {
@@ -2442,11 +2546,14 @@ final class DeviceGalleryStore: ObservableObject {
         if let live = session.mirrorSession.frameAspectRatio, live > 0 {
             return live
         }
-        if let profile = DeviceDisplayProfile.profile(for: session.device.productType, name: session.device.name) {
-            return profile.aspectRatio
+        if let display = session.mirrorSession.simulatorDisplay {
+            return display.logicalSize.width / max(display.logicalSize.height, 1)
         }
         if let aspect = thumbnailAspectRatios[session.id], aspect > 0 {
             return aspect
+        }
+        if let profile = DeviceDisplayProfile.profile(for: session.device.productType, name: session.device.name) {
+            return profile.aspectRatio
         }
         if let aspect = session.controlSession.screenSize?.aspectRatio, aspect > 0 {
             return aspect
@@ -2461,7 +2568,7 @@ final class DeviceGalleryStore: ObservableObject {
         guard !isShuttingDown else { return }
         for session in sessions where session.platform == .iOS && session.device.udid == udid {
             session.controlSession.agentDidExit()
-            guard desiredMirrorIDs.contains(session.id), session.transport == .wireless else { continue }
+            guard desiredMirrorIDs.contains(session.id), session.usesIOSAgentVideo else { continue }
             session.mirrorSession.requestWirelessReconnect()
         }
     }
@@ -2642,7 +2749,7 @@ final class DeviceGalleryStore: ObservableObject {
             }
             return
         }
-        if session.transport == .wireless {
+        if session.usesIOSAgentVideo {
             if let liveFrame = session.mirrorSession.latestWirelessFrame,
                session.mirrorSession.state == .running || session.mirrorSession.state == .starting {
                 applyWirelessImageThumbnail(liveFrame, for: session)

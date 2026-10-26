@@ -50,6 +50,14 @@ enum DeviceTransport: String, Codable, Sendable {
     case simulator
 }
 
+/// The media producer is independent of the cable or network carrying it.
+enum MirrorVideoSource: Equatable, Sendable {
+    case avFoundation
+    case iosAgent
+    case android
+    case simulator
+}
+
 struct DeviceIdentity: Identifiable, Hashable, Sendable {
     let id: String
     let udid: String?
@@ -85,6 +93,12 @@ struct DeviceIdentity: Identifiable, Hashable, Sendable {
             guard let value, !value.isEmpty else { return nil }
             return value
         }.joined(separator: " / ")
+    }
+
+    /// The device's physical shape. Simulators report "iPhone Duo" as the
+    /// product type; CoreDevice reports the model id (iPhone19,4) there.
+    var formFactor: DeviceFormFactor {
+        DeviceFormFactor.detect(productType: productType, modelID: nil)
     }
 }
 
@@ -148,6 +162,7 @@ struct DeviceSession: Identifiable {
     var id: String
     var device: DeviceIdentity
     var transport: DeviceTransport
+    var videoSource: MirrorVideoSource
     var captureDevice: AVCaptureDevice?
     var lastUSBCaptureUniqueID: String?
     var wirelessDevice: WirelessDeviceMetadata?
@@ -159,6 +174,9 @@ struct DeviceSession: Identifiable {
     var mirrorState: MirrorState
 
     var sourceID: String {
+        if usesIOSAgentVideo {
+            return "ios-agent:\(device.udid ?? id):\(transport.rawValue)"
+        }
         if let androidDevice {
             return "android:\(androidDevice.serial)"
         }
@@ -178,22 +196,31 @@ struct DeviceSession: Identifiable {
         platform == .iOS && transport == .wireless
     }
 
-    /// Only a cabled iPhone is mirrored through AVFoundation, the capture
-    /// source macOS guards with the Camera permission.
     var needsCameraPermission: Bool {
-        platform == .iOS && transport == .usb
+        videoSource == .avFoundation
+    }
+
+    var usesIOSAgentVideo: Bool {
+        videoSource == .iosAgent
+    }
+
+    var canPlayAudioOnMac: Bool {
+        platform == .android || (platform == .iOS && transport == .usb)
     }
 
     @MainActor
-    init(device: DeviceIdentity, captureDevice: AVCaptureDevice) {
+    init(device: DeviceIdentity, captureDevice: AVCaptureDevice?) {
         self.id = device.id
         self.device = device
         self.transport = .usb
+        self.videoSource = .iosAgent
         self.captureDevice = captureDevice
-        self.lastUSBCaptureUniqueID = captureDevice.uniqueID
+        self.lastUSBCaptureUniqueID = captureDevice?.uniqueID
         self.wirelessDevice = nil
         self.androidDevice = nil
-        self.mirrorSession = MirrorCaptureSession(device: captureDevice)
+        self.mirrorSession = MirrorCaptureSession(
+            iosDeviceUDID: device.udid, transport: .usb, usbAudioDevice: captureDevice
+        )
         self.controlSession = DeviceControlSession(device: device)
         self.iosAgent = IOSAgentService()
         self.mirrorState = .stopped
@@ -204,6 +231,7 @@ struct DeviceSession: Identifiable {
         self.id = device.id
         self.device = device
         self.transport = .wireless
+        self.videoSource = .iosAgent
         self.captureDevice = nil
         self.lastUSBCaptureUniqueID = nil
         self.wirelessDevice = wirelessDevice
@@ -219,6 +247,7 @@ struct DeviceSession: Identifiable {
         self.id = device.id
         self.device = device
         self.transport = androidDevice.transport
+        self.videoSource = .android
         self.captureDevice = nil
         self.lastUSBCaptureUniqueID = nil
         self.wirelessDevice = nil
@@ -236,6 +265,7 @@ struct DeviceSession: Identifiable {
         self.id = device.id
         self.device = device
         self.transport = .simulator
+        self.videoSource = .simulator
         self.captureDevice = nil
         self.lastUSBCaptureUniqueID = nil
         self.wirelessDevice = nil
@@ -244,6 +274,9 @@ struct DeviceSession: Identifiable {
         self.controlSession = DeviceControlSession(device: device)
         self.iosAgent = nil
         self.mirrorState = .stopped
+        self.mirrorSession.onSimulatorDisplayChange = { [weak controlSession = self.controlSession] in
+            controlSession?.refreshScreenSize()
+        }
     }
 
     var isIOSSimulator: Bool {
@@ -253,36 +286,20 @@ struct DeviceSession: Identifiable {
     /// Mirrors whose start can take long enough (a tunnel, a first runner
     /// build) to show its progress, elapsed time and a cancel button.
     var showsMirrorStartupProgress: Bool {
-        isIOSWireless || isIOSSimulator
-    }
-
-    nonisolated static func needsUSBRetarget(
-        currentTransport: DeviceTransport,
-        currentUniqueID: String?,
-        newUniqueID: String,
-        sameCaptureDeviceInstance: Bool
-    ) -> Bool {
-        currentTransport != .usb
-            || currentUniqueID != newUniqueID
-            || !sameCaptureDeviceInstance
+        usesIOSAgentVideo || isIOSSimulator
     }
 
     @MainActor
-    mutating func adoptUSB(identity: DeviceIdentity, captureDevice: AVCaptureDevice) {
+    mutating func adoptUSB(identity: DeviceIdentity, captureDevice: AVCaptureDevice?) {
         device = identity
         controlSession.updateDevice(identity)
-        let needsRetarget = Self.needsUSBRetarget(
-            currentTransport: transport,
-            currentUniqueID: self.captureDevice?.uniqueID,
-            newUniqueID: captureDevice.uniqueID,
-            sameCaptureDeviceInstance: self.captureDevice === captureDevice
-        )
+        transport = .usb
+        videoSource = .iosAgent
         self.captureDevice = captureDevice
-        lastUSBCaptureUniqueID = captureDevice.uniqueID
-        if needsRetarget {
-            transport = .usb
-            mirrorSession.retargetToUSB(captureDevice)
-        }
+        if let captureDevice { lastUSBCaptureUniqueID = captureDevice.uniqueID }
+        mirrorSession.retargetToIOSStream(
+            udid: identity.udid, transport: .usb, usbAudioDevice: captureDevice
+        )
     }
 
     @MainActor
@@ -293,10 +310,10 @@ struct DeviceSession: Identifiable {
         if iosAgent == nil {
             iosAgent = IOSAgentService()
         }
-        guard transport != .wireless else { return }
         transport = .wireless
+        videoSource = .iosAgent
         captureDevice = nil
-        mirrorSession.retargetToWireless(udid: wirelessDevice.udid)
+        mirrorSession.retargetToIOSStream(udid: wirelessDevice.udid, transport: .wireless)
     }
 
     func matchesDiscovery(id: String, udid: String?, captureUniqueID: String?) -> Bool {
