@@ -321,8 +321,9 @@ final class SimulatorHIDBackend: TouchInputBackend, @unchecked Sendable {
         if !bestEffort { try checkNativeConnection() }
         guard !closed, let nativeConnection else { throw SimulatorHIDError.disconnected }
         let send = xpc_dictionary_create(nil, nil, 0)
-        report.data.withUnsafeBytes { bytes in
-            xpc_dictionary_set_data(send, "_0", bytes.baseAddress, bytes.count)
+        try report.data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { throw SimulatorHIDError.invalidReport }
+            xpc_dictionary_set_data(send, "_0", baseAddress, bytes.count)
         }
         xpc_dictionary_set_uint64(send, "_1", report.serviceID)
         let payload = xpc_dictionary_create(nil, nil, 0)

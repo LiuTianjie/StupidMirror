@@ -173,8 +173,13 @@ final class DuoModelRenderer {
         let lower = Int(step), upper = min(lower + 1, bounds.count - 1)
         let b = bounds[lower] + (bounds[upper] - bounds[lower]) * Float(step - Double(lower))
         let radians = orientation * .pi / 180, c = cos(radians), s = sin(radians)
-        let corners = [(b.x, b.y), (b.z, b.y), (b.x, b.w), (b.z, b.w)].map {
-            CGPoint(x: Double($0.0) * c - Double($0.1) * s, y: Double($0.0) * s + Double($0.1) * c)
+        let boundsCorners: [(Float, Float)] = [(b.x, b.y), (b.z, b.y), (b.x, b.w), (b.z, b.w)]
+        let corners: [CGPoint] = boundsCorners.map { corner in
+            let x = Double(corner.0)
+            let y = Double(corner.1)
+            let rotatedX = x * c - y * s
+            let rotatedY = x * s + y * c
+            return CGPoint(x: rotatedX, y: rotatedY)
         }
         let x = corners.map(\.x), y = corners.map(\.y)
         return CGRect(x: x.min()!, y: y.min()!, width: x.max()! - x.min()!, height: y.max()! - y.min()!)
