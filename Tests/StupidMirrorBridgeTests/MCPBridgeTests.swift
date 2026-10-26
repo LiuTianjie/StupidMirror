@@ -35,6 +35,8 @@ final class MCPBridgeTests: XCTestCase, @unchecked Sendable {
         let initialized = try await client.connect(transport: pair.client)
         XCTAssertEqual(initialized.instructions, "Use the embedded screen.")
         XCTAssertNotNil(initialized.capabilities.resources)
+        XCTAssertEqual(initialized.capabilities.resources?.listChanged, true)
+        XCTAssertEqual(initialized.capabilities.tools?.listChanged, true)
         let resources = try await client.listResources()
         XCTAssertEqual(resources.resources, [resource])
         let contents = try await client.readResource(uri: resource.uri)
@@ -54,8 +56,8 @@ final class MCPBridgeTests: XCTestCase, @unchecked Sendable {
         let first = await InMemoryTransport.createConnectedPair()
         let second = await InMemoryTransport.createConnectedPair()
         let state = TestState()
-        let oldBackend = Server(name: "stupidmirror", version: "1", capabilities: .init(tools: .init()))
-        let newBackend = Server(name: "stupidmirror", version: "1", capabilities: .init(tools: .init()))
+        let oldBackend = Server(name: "stupidmirror", version: "1", capabilities: .init(resources: .init(), tools: .init()))
+        let newBackend = Server(name: "stupidmirror", version: "1", capabilities: .init(resources: .init(), tools: .init()))
         await oldBackend.withMethodHandler(CallTool.self) { _ in
             XCTFail("Rotation must stop use of the old connection")
             return CallTool.Result()
@@ -73,6 +75,10 @@ final class MCPBridgeTests: XCTestCase, @unchecked Sendable {
         let pair = await InMemoryTransport.createConnectedPair()
         try await server.start(transport: pair.server)
         let client = Client(name: "test", version: "1")
+        let toolsChanged = expectation(description: "Reconnection refreshes tool metadata")
+        let resourcesChanged = expectation(description: "Reconnection refreshes widget resources")
+        await client.onNotification(ToolListChangedNotification.self) { _ in toolsChanged.fulfill() }
+        await client.onNotification(ResourceListChangedNotification.self) { _ in resourcesChanged.fulfill() }
         try await client.connect(transport: pair.client)
         await state.rotate()
         let call = try await client.send(CallTool.request(.init(name: "tap")))
@@ -82,6 +88,7 @@ final class MCPBridgeTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(count, 1)
         guard case let .text(text, _, _) = result.content.first else { return XCTFail("Expected recovery instruction") }
         XCTAssertTrue(text.contains("may have executed"))
+        await fulfillment(of: [toolsChanged, resourcesChanged], timeout: 2)
         await client.disconnect()
         await server.stop()
         await bridge.disconnect()

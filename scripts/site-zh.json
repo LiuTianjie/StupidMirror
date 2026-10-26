@@ -1,8 +1,8 @@
 {
   "text": [
     [
-      "iOS Simulators and Android emulators. App installs and screen recording for agents.",
-      "支持 iOS 模拟器与 Android 模拟器，Agent 可以安装应用、录制屏幕。"
+      "Real-time iPhone touch. Duo simulator support. Smoother wireless mirroring.",
+      "iPhone 实时触控、Duo 模拟器支持，以及更稳定的无线镜像。"
     ],
     [
       "Redesigned. Light and dark. Faster iPhone control.",
@@ -97,6 +97,10 @@
       "使用场景"
     ],
     [
+      "Changelog",
+      "更新日志"
+    ],
+    [
       "Download latest",
       "下载最新版"
     ],
@@ -157,16 +161,16 @@
       "不用来回切换。"
     ],
     [
-      "StupidMirror uses the iPhone screen source exposed directly by macOS. Even while the iPhone camera is active, the dashboard and standalone mirror keep rendering.",
-      "StupidMirror 直接使用 macOS 暴露的 iPhone 屏幕源。即使 iPhone 正在使用摄像头，Mac 上的主窗口与独立镜像窗口也能继续显示。"
+      "USB and Wi-Fi use the same signed iPhone screen agent and H.264/SRT video stream. Prepare the agent once over USB; video needs no Camera permission.",
+      "USB 和 Wi-Fi 使用同一套签名的 iPhone 屏幕组件与 H.264/SRT 视频流。先通过 USB 完成一次准备；画面本身不需要摄像头权限。"
     ],
     [
       "Plug in over USB",
-      "USB 即连即用"
+      "通过 USB 连接"
     ],
     [
-      "Connect, trust the Mac, and the device appears.",
-      "连接并信任 Mac，设备自动发现。"
+      "Connect, trust the Mac, and prepare the iPhone screen agent to start mirroring.",
+      "连接并信任 Mac，完成 iPhone 屏幕组件准备后即可镜像。"
     ],
     [
       "Standalone mirror",
@@ -189,8 +193,8 @@
       "原生速度"
     ],
     [
-      "Swift, AVFoundation, and CoreMediaIO — without a heavyweight browser shell.",
-      "Swift + AVFoundation / CoreMediaIO，不套一层笨重的浏览器壳。"
+      "On iOS 27+ and supported simulators, system touch follows your press, drag and release. Native trackpad scrolling, pinch and rotation also stream when the system gesture service is available.",
+      "在 iOS 27 及以上版本和支持的模拟器上，系统触控实时跟随按下、拖动与抬起。系统手势服务可用时，原生窗口中的触控板滚动、缩放和旋转也会逐事件发送。"
     ],
     [
       "Wireless freedom",
@@ -457,8 +461,8 @@
       "需要一直插线吗？"
     ],
     [
-      "Why does it ask for Camera permission?",
-      "为什么要摄像头权限？"
+      "When are Camera and Microphone permissions needed?",
+      "什么时候需要摄像头和麦克风权限？"
     ],
     [
       "Does it support Android?",
@@ -485,8 +489,8 @@
       "不需要。先用 USB 完成一次「设置这台 iPhone」，之后让 iPhone 和 Mac 处在同一网络，就能通过 Wi-Fi 镜像。无线方式暂不支持声音。"
     ],
     [
-      "macOS exposes a USB-connected iPhone screen as a camera-style capture source. StupidMirror reads that source; it does not use the Mac webcam.",
-      "macOS 把通过 USB 连接的 iPhone 屏幕当作一种摄像头式的采集源。StupidMirror 读取的是这个采集源，不会使用 Mac 的摄像头。"
+      "iPhone video over USB or Wi-Fi needs neither permission. For a USB iPhone, choose Phone to keep sound on the device, or Mac to play it on this computer. Mac audio requires Camera and Microphone permissions for the USB audio source.",
+      "iPhone 的 USB 和 Wi-Fi 画面都不需要这两项权限。USB 连接时，可选「手机」让声音留在设备上，或选「Mac」在电脑播放。Mac 声音通道需要摄像头和麦克风权限，以访问 USB 音频源。"
     ],
     [
       "Yes. Android 11 or newer over ADB with USB debugging enabled. Video and device audio come from scrcpy, and control uses Appium with UiAutomator2.",
@@ -505,8 +509,8 @@
       "单台设备无需登录即可镜像和控制。SM- 激活码可以解锁多台设备同时使用。源码以 PolyForm Noncommercial 许可公开，商业使用需要另行授权。"
     ],
     [
-      "A Mac with macOS 15 or newer. Wireless iPhone mirroring and iPhone control also need Developer Mode on the phone and an Apple Development signing identity on the Mac; simulators need Xcode.",
-      "一台 macOS 15 或更新版本的 Mac。iPhone 无线镜像和控制还需要在手机上开启开发者模式，并在 Mac 上有 Apple Development 签名身份；使用模拟器需要 Xcode。"
+      "A Mac with macOS 15 or newer and Xcode for iPhone or iOS Simulator support. Real iPhones need trust and Developer Mode. Both USB and Wi-Fi iPhone video require a signed screen agent prepared through Set Up This iPhone over USB; accessibility automation and compatibility control use that agent too.",
+      "一台 macOS 15 或更新版本的 Mac；iPhone 和 iOS 模拟器支持需要 Xcode。iPhone 真机需信任这台 Mac 并开启开发者模式。USB 和 Wi-Fi 画面都需要先通过 USB「设置这台 iPhone」准备签名的屏幕组件，无障碍自动化与兼容控制也使用该组件。"
     ],
     [
       "Set up MCP for Claude Code",

@@ -3,6 +3,23 @@ import MCP
 import XCTest
 
 final class MCPServerTests: XCTestCase {
+    func testDeviceSnapshotDistinguishesDirectTouchFromNativeGestureSupport() throws {
+        let legacy = Data("""
+        {"device_id":"device","platform":"ios","transport":"wireless","name":"Phone",
+         "product_type":"iPhone18,4","connection_state":"connected","mirror_state":"running",
+         "control_state":"ready","control_message":"Ready","form_factor":"standard",
+         "can_set_posture":false,"supports_continuous_touch":true,"touch_generation":7}
+        """.utf8)
+        var snapshot = try JSONDecoder().decode(AutomationDeviceSnapshot.self, from: legacy)
+        XCTAssertTrue(snapshot.supportsContinuousTouch)
+        XCTAssertFalse(snapshot.supportsNativeGestures, "An older backend's direct-touch support cannot imply native gestures")
+        snapshot.supportsNativeGestures = true
+        let encoded = try JSONEncoder().encode(snapshot)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(fields["supports_native_gestures"] as? Bool, true)
+        XCTAssertEqual(try JSONDecoder().decode(AutomationDeviceSnapshot.self, from: encoded), snapshot)
+    }
+
     func testHTTPInitializationAcceptsCodexCapabilitiesAndStillRequiresAuthentication() async throws {
         let application = MCPHTTPApplication(
             host: "127.0.0.1", port: 17_373, endpoint: "/mcp",
@@ -48,7 +65,7 @@ final class MCPServerTests: XCTestCase {
             "list_devices", "refresh_devices", "get_device_status", "get_diagnostics",
             "show_screen", "screen_frame", "screen_action", "screen_signal",
             "start_mirror", "stop_mirror", "set_mirror_floating",
-            "connect_control", "disconnect_control", "screenshot", "get_ui_tree",
+            "connect_control", "disconnect_control", "screenshot", "get_ui_tree", "set_device_posture",
             "observe_screen", "find_element", "find_any_element", "tap_text",
             "tap_element", "highlight_elements", "highlight_clickable_elements", "clear_highlights",
             "wait_for", "assert_screen",

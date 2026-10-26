@@ -142,6 +142,8 @@ if [ "$tag" != "v${version}" ]; then
   exit 1
 fi
 
+node scripts/build-site-changelog.mjs --check
+
 echo "Building app..."
 BUNDLE_ID="$official_bundle_id" \
   SIGN_IDENTITY="$sign_identity" \

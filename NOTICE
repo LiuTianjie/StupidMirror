@@ -1,9 +1,15 @@
 StupidMirror uses Apple platform APIs, including CoreMediaIO and AVFoundation,
 to discover and render USB iPhone screen sources exposed by macOS.
 
-Optional device control support relies on Appium, WebDriverAgent, and
-UiAutomator2, which are separate projects with their own licenses and setup
-requirements.
+iOS touch control uses system developer services when available. Compatibility
+and semantic automation use WebDriverAgent; Android control uses Appium and
+UiAutomator2. These projects have their own licenses and setup requirements.
+
+The system touch transport adapts portions of iphone-use by Sunghyun Kim
+(https://github.com/sunghyun-k/iphone-use, MIT License) and idb by Meta
+(https://github.com/facebook/idb, MIT License). License texts are kept in
+Assets/licenses/iphone-use-LICENSE.txt and Assets/licenses/idb-LICENSE.txt
+and are included in the app's Resources directory.
 
 Android mirroring uses the scrcpy server from the scrcpy project. The scrcpy
 server, Appium, WebDriverAgent, and UiAutomator2 remain subject to their

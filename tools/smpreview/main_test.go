@@ -42,6 +42,19 @@ func TestLoopbackVideoAndPeerCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	touch, err := browser.CreateDataChannel(touchChannelLabel, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	touch.OnOpen(func() {
+		_ = touch.SendText(`{"type":"touch","phase":"down","gesture_id":"loopback-finger","seq":0,"x":0.25,"y":0.75,"geometry_id":"1","device":"forged-phone"}`)
+	})
+	touch.OnMessage(func(message webrtc.DataChannelMessage) {
+		var value map[string]any
+		if json.Unmarshal(message.Data, &value) == nil && value["type"] == "ack" && value["accepted"] == true {
+			_ = touch.Close()
+		}
+	})
 	received := make(chan struct{}, 1)
 	browser.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 		if _, _, err := track.ReadRTP(); err == nil {
@@ -96,6 +109,7 @@ func TestLoopbackVideoAndPeerCleanup(t *testing.T) {
 	ticker := time.NewTicker(30 * time.Millisecond)
 	defer ticker.Stop()
 	timeout := time.After(10 * time.Second)
+	videoReceived, touchCancelled := false, false
 	for {
 		select {
 		case <-ticker.C:
@@ -105,7 +119,22 @@ func TestLoopbackVideoAndPeerCleanup(t *testing.T) {
 			if track != nil {
 				_ = track.WriteSample(media.Sample{Data: []byte{0, 0, 0, 1, 0x65, 0x88, 0x84, 0}, Duration: time.Second / 30})
 			}
+		case message := <-messages:
+			if message["event"] == "touch" {
+				if message["peer"] != "peer-1" || message["device"] != nil {
+					t.Fatalf("untrusted touch binding: %+v", message)
+				}
+				b.touchResult(command{Op: "touch_result", Peer: "peer-1", TouchID: message["touch_id"].(string), Accepted: true})
+			}
+			if message["event"] == "touch_cancel" && message["peer"] == "peer-1" {
+				touchCancelled = true
+			}
 		case <-received:
+			videoReceived = true
+		case <-timeout:
+			t.Fatalf("incomplete loopback: video=%v, touchCancellation=%v", videoReceived, touchCancelled)
+		}
+		if videoReceived && touchCancelled {
 			b.close("peer-1")
 			b.mu.Lock()
 			peers, tracks := len(b.peers), len(b.tracks)
@@ -114,8 +143,6 @@ func TestLoopbackVideoAndPeerCleanup(t *testing.T) {
 				t.Fatalf("peer cleanup leaked: %d peers, %d tracks", peers, tracks)
 			}
 			return
-		case <-timeout:
-			t.Fatal("no video RTP received")
 		}
 	}
 }

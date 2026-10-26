@@ -5,9 +5,10 @@ import SwiftUI
 struct MirrorPreviewView: NSViewRepresentable {
     let mirrorSession: MirrorCaptureSession
     var cornerRadius: CGFloat = 0
+    var forwardsAudio = true
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(mirrorSession: mirrorSession)
+        Coordinator(mirrorSession: mirrorSession, forwardsAudio: forwardsAudio)
     }
 
     func makeNSView(context: Context) -> PreviewContainerView {
@@ -15,14 +16,14 @@ struct MirrorPreviewView: NSViewRepresentable {
         view.cornerRadius = cornerRadius
         let videoRelay = view.videoFrameRelay
         let audioRelay = view.audioSampleBufferRelay
-        mirrorSession.setVideoSampleBufferConsumer { [weak videoRelay] sampleBuffer in
+        context.coordinator.videoConsumerID = mirrorSession.addVideoSampleBufferConsumer { [weak videoRelay] sampleBuffer in
             videoRelay?.submit(sampleBuffer)
         }
-        mirrorSession.setAudioSampleBufferConsumer { [weak audioRelay] sampleBuffer in
+        if forwardsAudio { mirrorSession.setAudioSampleBufferConsumer { [weak audioRelay] sampleBuffer in
             // AVSampleBufferAudioRenderer is fed directly from the serial
             // capture queue. No per-packet main-queue closure can accumulate.
             audioRelay?.enqueue(sampleBuffer)
-        }
+        } }
         return view
     }
 
@@ -34,15 +35,18 @@ struct MirrorPreviewView: NSViewRepresentable {
         // Invalidate the relays first so an in-flight delegate callback cannot
         // retain another full frame after the view starts tearing down.
         nsView.stop()
-        coordinator.mirrorSession.setVideoSampleBufferConsumer(nil)
-        coordinator.mirrorSession.setAudioSampleBufferConsumer(nil)
+        if let id = coordinator.videoConsumerID { coordinator.mirrorSession.removeVideoSampleBufferConsumer(id) }
+        if coordinator.forwardsAudio { coordinator.mirrorSession.setAudioSampleBufferConsumer(nil) }
     }
 
     final class Coordinator {
         let mirrorSession: MirrorCaptureSession
+        let forwardsAudio: Bool
+        var videoConsumerID: UUID?
 
-        init(mirrorSession: MirrorCaptureSession) {
+        init(mirrorSession: MirrorCaptureSession, forwardsAudio: Bool) {
             self.mirrorSession = mirrorSession
+            self.forwardsAudio = forwardsAudio
         }
     }
 }
@@ -72,7 +76,7 @@ final class PreviewContainerView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
 
-        displayLayer.videoGravity = .resizeAspectFill
+        displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = NSColor.black.cgColor
         layer?.backgroundColor = NSColor.black.cgColor
         layer?.addSublayer(displayLayer)

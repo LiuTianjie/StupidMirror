@@ -52,8 +52,8 @@ The app installs its bundled plugin through the Codex desktop app's CLI; no repo
 ## What makes it useful
 
 - **A native place for your devices.** Menu bar access, a device dashboard, live thumbnails, and independent mirror windows built with SwiftUI and AppKit.
-- **Real devices and simulators.** USB iPhone capture through AVFoundation, wireless iPhone H.264 over the local network, Android H.264/audio through a pinned scrcpy server, and booted iOS Simulators and Android emulators on this Mac.
-- **Control when you ask for it.** Tap, swipe, type, press device buttons, switch apps, and launch or terminate apps through native WebDriverAgent on iOS or Appium on Android. Opening a USB or Android mirror does not start a control session.
+- **Real devices and simulators.** iPhone H.264 video over USB or Wi-Fi, Android H.264/audio through a pinned scrcpy server, and booted iOS Simulators and Android emulators on this Mac.
+- **Control when you ask for it.** iOS prefers live system HID touch, with WebDriverAgent for compatibility and semantic automation; Android uses Appium. Tap, drag, hold, type, press device buttons, and switch apps. Opening a USB or Android mirror does not start a control session.
 - **An agent can see what it is doing.** Live frames, Apple Vision OCR, optional accessibility trees, semantic targeting, waits, and assertions share the same device workspace.
 - **Automation stays visible.** Agent taps, swipe paths, and selected targets appear on the Mac mirror. These overlays do not alter the phone screen or encoded video.
 - **Bring your own AI client.** Built-in connection guides for Codex and Claude Code. StupidMirror itself needs no model API key and runs no embedded model.
@@ -64,31 +64,39 @@ Download the macOS app from [GitHub Releases](https://github.com/LiuTianjie/Stup
 
 | Connection | Prepare | Video and audio |
 | --- | --- | --- |
-| **iPhone · USB** | Trust this Mac; allow Camera access when requested | AVFoundation capture; optional device audio on the Mac |
-| **iPhone · Wi-Fi** | Complete **Set Up This iPhone** once over USB (it turns on the phone's Wi-Fi connections); keep both devices on the same LAN | H.264 over SRT through a CoreDevice tunnel, VideoToolbox decoding; wireless audio is not available |
+| **iPhone · USB** | Complete **Set Up This iPhone** once over USB; trust this Mac and enable Developer Mode | Video-only H.264 / SRT from the signed runner; audio stays on the phone unless Mac playback is enabled |
+| **iPhone · Wi-Fi** | Complete **Set Up This iPhone** once over USB (it turns on the phone's Wi-Fi connections); keep both devices on the same LAN | The same H.264 / SRT video through a CoreDevice tunnel; audio stays on the phone |
 | **Android · ADB** | Android 11+; install Android SDK Platform-Tools on the Mac; enable USB debugging and approve the Mac's key | H.264 video and optional device audio from scrcpy |
 | **iOS Simulator** | Xcode; boot the simulator | The screen agent is built once for the simulator (no signing) and streams its screen; all of its ports listen on this Mac only |
 | **Android emulator** | Same as Android · ADB; start the emulator | Same as Android · ADB; listed by its AVD name |
 
 Simulators and emulators appear automatically while they are booted and count toward the simultaneous device limit like real devices. They are not mirrored automatically, so a simulator you are running UI tests on is left alone until you open it.
 
+With a compatible Xcode runtime, iPhone Duo simulators expose **Closed**, **Partially Open**, and **Open** posture controls. These change the simulator’s actual hinge and active display; the native mirror and Codex panel follow the confirmed state. The 3D device shell uses resources from the selected local Xcode installation when available.
+
 **macOS 15+ is required.** Device compatibility can depend on OS versions, trust state, and the available automation runtime. The project remains experimental.
 
 ### iPhone over USB
 
 1. Connect the iPhone, unlock it, and accept **Trust This Computer**.
-2. Open StupidMirror and grant Camera access from the in-app permission button.
-3. Select the discovered device and open its mirror.
+2. Open **Set Up This iPhone**, enable Developer Mode, and let the guide sign and install the screen runner using an Apple Development identity on this Mac.
+3. Select the discovered device and open its mirror. Video does not require Camera permission.
 
-Camera permission is needed because macOS exposes the iPhone screen as an AVFoundation capture source; StupidMirror is not using the Mac webcam for this. **Play Device Audio on Mac** is off by default, preserving playback on the iPhone. Turning it on routes USB device audio to the Mac and also requires Microphone permission.
+USB and Wi-Fi both use the WDA/XCTest runner to supply video-only H.264 over SRT, decoded by VideoToolbox on the Mac. USB video therefore needs the runner prepared once, just like wireless video.
+
+**Play Device Audio on Mac** is off by default, leaving audio on the iPhone. Enabling it opens a separate USB audio input and requires both Camera and Microphone permission; turning it off releases that input. These permissions are for optional USB audio, not the video stream. Wireless sessions keep audio on the phone.
+
+**Known limitation:** changing USB audio playback can re-enumerate the phone’s USB network interface and briefly interrupt mirroring while the tunnel reconnects. The audio switch is not seamless.
 
 ### iPhone over Wi-Fi
 
 Open **Set Up This iPhone** while the phone is connected over USB. The guide checks the device and Apple Development signing identity, builds and installs the screen runner, test-launches it, and enables Wi-Fi connections on the phone (the same switch as Xcode's "Connect via network") before you unplug.
 
-Later sessions reach the phone through the bundled `smtunnel` sidecar: it opens Apple's CoreDevice tunnel over the local network with an in-process network stack and starts the runner through testmanagerd, so no Xcode launcher, administrator password, Local Network prompt, or tap on the phone is involved. Wireless mirroring does not require Camera permission or a ReplayKit Broadcast Extension. It does require this signed device-side runner and Developer Mode on the phone; video setup does not itself enable a control session.
+Later sessions reach the phone through the bundled `smtunnel` sidecar: it opens Apple's CoreDevice tunnel over the local network with an in-process network stack and starts the runner through testmanagerd, so no Xcode launcher, administrator password, Local Network prompt, or tap on the phone is involved. Like USB video, wireless mirroring does not require Camera permission or a ReplayKit Broadcast Extension. Both use the signed device-side runner and require Developer Mode on the phone; video setup does not itself enable a control session.
 
 The app finds the phone over the same path: once usbmuxd lists it on the network, it shows as connected and can be started from the app or through MCP. Plugging the cable in while a wireless mirror or control session is in use keeps that session on Wi-Fi.
+
+Capture, encoding, transmission, and decoding keep bounded in-flight buffers to limit memory growth and accumulated delay. When video falls behind, it recovers from a new keyframe instead of replaying an ever-growing frame queue. HID touch uses a separate input channel from the video runner.
 
 ### Android
 
@@ -98,18 +106,26 @@ Install `adb`, enable USB debugging, connect the device, and approve this Mac on
 
 Click **Connect** to start control.
 
-| Platform | Control backend | First connection |
+| Platform | Preferred touch backend | Preparation |
 | --- | --- | --- |
-| iOS | WebDriverAgent driven directly through the `smtunnel` tunnel (one path for USB and Wi-Fi) | Run **Set Up This iPhone** once over USB: trust the Mac, enable Developer Mode, and let it sign and install the screen agent with an Apple Development identity |
+| Physical iPhone · iOS 27+ | System HID over USB or Wi-Fi | Compatible Xcode installed; phone paired with this Mac, Developer Mode enabled, and screen unlocked |
+| iOS Simulator | Simulator system HID, with WDA compatibility | Compatible Xcode runtime; simulator booted; the agent needs no signing |
+| Physical iPhone · other iOS versions, or HID unavailable | WebDriverAgent / XCTest compatibility control | Run **Set Up This iPhone** once over USB: trust the Mac, enable Developer Mode, and sign and install the runner with an Apple Development identity |
 | Android | Appium + UiAutomator2 (the release bundles the Node/Appium runtime for this) | Installs Appium settings/server helper APKs when needed |
 
-Mirror gestures reproduce what the mouse did: a slow drag replays its recorded path and timing, a quick flick keeps its start point, direction and speed so the phone coasts naturally, holding still is a long press (so is a right click), a double click is a double tap, the mouse wheel and trackpad scroll, trackpad pinch and rotate map to the device's pinch and rotate, and back is the system edge swipe. On iPhone, touches go straight to XCTest's event synthesizer through a StupidMirror route in the agent, skipping WebDriverAgent's per-call app lookup; phones prepared before 0.4.0 fall back to the stock endpoints until **Prepare Again** is run once over USB in iPhone Setup. XCTest can only replay a gesture once the mouse is released, so the finger cannot be followed while the button is held. Diagnostics shows each device's recent gesture round-trip times. The app follows the system light or dark appearance; Settings → Interface (and the menu bar) can pin either. Advanced settings support a custom Appium endpoint for Android; the default is `http://127.0.0.1:4723`.
+**HID is selected automatically when available.** The **HID** badge beside the ready control state identifies an active live-touch connection. Single-finger presses, movement, and releases are sent as they happen: hold the left mouse button to drag or long-press, and start native system gestures at the screen edge. A stationary touch remains held until release. Default touchscreen mode does not map right click to a long press. The native mirror, Codex preview, and MCP coordinate gestures share the same touch backend. Static or stopped dashboard previews do not accept device input; open the live mirror before interacting.
+
+When the device exposes the native gesture service, the Mac mirror forwards trackpad scrolling, magnification, and rotation as system gesture events. Mouse-wheel and momentum events are also forwarded individually. If that service is unavailable, the compatible gesture path remains available. Programmatic pinch/rotate calls that specify a center still use WDA to preserve that center; native trackpad gestures and these automation calls have different contracts.
+
+If HID cannot connect, control automatically uses the WDA compatibility path. That path records a mouse gesture and replays it after release; it cannot follow the finger live. An interrupted gesture is not replayed through another backend. HID touch itself does not install or launch WDA, but iPhone video over either USB or Wi-Fi needs the signed runner. Text entry, hardware-style buttons, app actions, native accessibility automation, and the centered pinch/rotate calls also prepare WDA when needed; on physical iPhones these capabilities require the setup above.
+
+Double click performs a double tap. The app follows the system light or dark appearance; Settings → Interface (and the menu bar) can pin either. Advanced settings support a custom Appium endpoint for Android; the default is `http://127.0.0.1:4723`.
 
 ## Connect an AI agent
 
 ### Codex plugin: connect from the app
 
-1. Install a build that includes the Codex plugin in Applications and open StupidMirror. For a first iPhone connection, connect by USB and complete the app's **iPhone setup guide**. Android needs USB debugging and authorization for this Mac.
+1. Install a build that includes the Codex plugin in Applications and open StupidMirror. For iPhone video over USB or Wi-Fi, or WDA capabilities, connect by USB and complete the app's **iPhone setup guide**. System HID touch uses the pairing, Xcode, and Developer Mode requirements described above. Android needs USB debugging and authorization for this Mac.
 2. Open **Settings → MCP Automation** and click **Connect Codex**. The app enables local MCP and installs its bundled plugin using the Codex / ChatGPT desktop app's CLI. No repository clone, Python / Node.js install, token copying or manual configuration is required.
 3. Start a new Codex chat, choose **StupidMirror**, and send:
 
@@ -117,7 +133,9 @@ Mirror gestures reproduce what the mouse did: a slow drag replays its recorded p
 
 4. Codex starts StupidMirror in the background when needed. The live screen uses local WebRTC inside the Codex plugin panel, with device selection, refresh, pause/resume, Home and screenshot-copy controls. No native mirror window opens automatically. Keep the phone connected and unlocked.
 
-**Interaction and annotation:** Enable **操作** to connect device control, then tap or drag the preview. AI actions continue to use the existing MCP tools. **标注** freezes the displayed frame. Drag empty space to draw regions, drag inside a box to move it, or drag its edges and corners to resize. The compact composer stays below the image and supports deletion and undo. Send just the marked screenshot and your note with **⌘ Enter** (or **Ctrl Enter**); plain Enter inserts a newline. Drawing annotations never sends gestures to the phone.
+**Interaction and annotation:** Enable **操作** to connect device control, then tap, hold, or drag the preview. It uses the same preferred HID touch and compatibility fallback as the native mirror. AI actions continue to use the existing MCP tools. **标注** freezes the displayed frame. Drag empty space to draw regions, drag inside a box to move it, or drag its edges and corners to resize. The compact composer stays below the image and supports deletion and undo. Send just the marked screenshot and your note with **⌘ Enter** (or **Ctrl Enter**); plain Enter inserts a newline. Drawing annotations never sends gestures to the phone.
+
+Browser wheel input also reaches the shared gesture backend. Browser events do not expose all of macOS’s native phase and acceleration information, so their behavior is not identical to the native Mac mirror.
 
 Video uses encrypted local WebRTC without a cloud relay. Hosts without a WebRTC API use native-resolution PNG; WebRTC failures show a reason and a retry button instead of silently switching to screenshots; annotation delivery requires the host’s image-message capability.
 
@@ -154,6 +172,7 @@ Try an instruction such as:
 | Verify | `wait_for`, `assert_screen`, `observe_screen` | Check the resulting state |
 | Guide | `highlight_clickable_elements`, `highlight_elements`, `clear_highlights` | Draw targets on the Mac mirror without sending input |
 | Apps | `list_apps`, `install_app`, `uninstall_app`, `open_url`, `activate_app`, `terminate_app` | Install a build (.app/.ipa/.apk), open a deep link, launch or stop an app |
+| Simulator posture | `set_device_posture` | Change a supported foldable simulator’s actual hinge and active display |
 | Record | `start_recording`, `stop_recording` | Save the live mirror as an .mp4 in `~/Movies/StupidMirror` (up to 10 minutes) |
 
 <details>
@@ -176,11 +195,13 @@ The [tool definitions](Sources/StupidMirrorApp/StupidMirrorMCPTools.swift) are t
 ## Architecture and privacy
 
 ```text
-iPhone USB → AVFoundation ─┐
-iPhone LAN → H.264 / SRT ──┼→ Capture → native mirror / Vision OCR
-Android → ADB / scrcpy ────┘     └→ VideoToolbox H.264 → local WebRTC → Codex panel
+iPhone USB / Wi-Fi → WDA/XCTest H.264 / SRT ─┐
+Android → ADB / scrcpy ───────────────────────┴→ Capture → native mirror / Vision OCR
+                                                   └→ H.264 → local WebRTC → Codex panel
+iPhone USB audio → optional separate audio input → Mac playback
 Codex → bundled stdio bridge → authenticated localhost MCP → observations/actions
-iOS actions → WDA through smtunnel; Android actions → Appium / UiAutomator2
+iOS touch / supported native gestures → system HID; compatibility / semantic actions → WDA
+Android actions → Appium / UiAutomator2
 ```
 
 Capture, playback, and OCR run locally. StupidMirror does not independently upload mirrored content to a model provider. **An external AI client can receive screenshots and tool results through MCP**; its account, model provider, and data settings determine what happens to that information afterward.

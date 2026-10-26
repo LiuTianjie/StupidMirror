@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.6.0 - 2026-10-26
+
+- Prefer system HID touch on supported iOS 27+ iPhones over USB or Wi-Fi and
+  on compatible iOS Simulators. Presses, movement and releases are sent as
+  they happen, with held long presses and native screen-edge gestures. An
+  **HID** badge identifies the active live-touch connection.
+- Forward native Mac trackpad scroll, magnification and rotation when the
+  device's gesture service is available, including mouse-wheel and momentum
+  events. Default touchscreen mode uses a held left mouse button for long
+  press; right click is no longer mapped to a separate long-press action.
+- Keep WDA compatibility when HID cannot connect, and prepare WDA on demand
+  for text, buttons, app and accessibility actions. Programmatic pinch and
+  rotate calls with an explicit center still use WDA to preserve that center.
+  A gesture interrupted after input starts is never replayed on a fallback.
+- Share touch ownership and ordered delivery across the native mirror, MCP
+  coordinate actions and Codex preview. Reduce extra waits before automation
+  gestures and simulator input, and release contacts on cancellation,
+  connection loss or display changes.
+- Use the signed WDA/XCTest runner's H.264 / SRT video stream for both USB
+  and wireless iPhones, decoded with VideoToolbox. Video does not require
+  Camera permission and does not acquire the phone's audio output.
+  **Setup change:** USB video now also requires the runner; complete
+  **Set Up This iPhone**, or run **Prepare Again** once over USB to update an
+  existing runner.
+- Bound capture, encoding, transmission and decoding buffers to limit memory
+  growth and accumulated video delay. Recover from a new keyframe after an
+  overloaded or interrupted stream instead of replaying a growing backlog.
+  Improve tunnel startup and reconnect handling during USB re-enumeration.
+- Keep iPhone audio on the phone by default. **Play Device Audio on Mac**
+  opens a separate USB audio input, requiring Camera and Microphone
+  permission; switching back releases that input. Wireless audio stays on
+  the phone. **Known limitation:** changing USB audio playback can
+  re-enumerate the phone's USB network interface and briefly interrupt
+  mirroring while the tunnel reconnects; this switch is not seamless.
+- Add iPhone Duo simulator posture controls for Closed, Partially Open and
+  Open. Change the actual hinge, select the active inner or outer display,
+  and keep capture, orientation and touch coordinates aligned with the
+  confirmed simulator state. Expose posture through `set_device_posture`
+  and device status results.
+- Show device bezels and a folding 3D Duo model in both the native mirror and
+  Codex panel, using resources from the selected local Xcode installation
+  when available. Follow hinge changes without replacing the preview view.
+- Refine the device panel and mirror windows: compact status and posture
+  controls, native menus, minimization and reopening, transparent device
+  outlines, and resizing that preserves the device proportions and the
+  user's chosen size through rotation. Discovery refreshes retain menu and
+  keyboard state.
+- Disable device input on static or stopped dashboard previews and while a
+  simulator posture is changing; resume input on the live display with its
+  current geometry.
+- Codex plugin: send live pointer input and supported browser wheel input
+  over the local WebRTC data channel into the shared touch backend. Cancel
+  input on disconnect, stale geometry or congestion, and keep frame delivery
+  bounded. Browser events lack some native macOS phase and acceleration
+  information, so wheel behavior can differ from the native mirror.
+- Refresh the setup guides and publish the complete changelog history on the
+  website from this file as the shared source.
+
 ## 0.5.1 - 2026-10-23
 
 - Recordings run to the moment `stop_recording` is called. When the screen
@@ -354,6 +412,11 @@
 - Add the same activation-code purchase entry to the GitHub Pages landing page
   and refresh its public download link for this release.
 
+## 0.2.25 - 2026-08-28
+
+- Improve wireless iPhone reconnect handling and keep Android control sessions
+  alive during idle use.
+
 ## 0.2.24 - 2026-08-28
 
 - Add a screenshot button to the standalone mirror window that copies the
@@ -370,6 +433,37 @@
 - Keep iPhone control on the USB path when a wired mirror session retains
   metadata from an earlier wireless connection, instead of reporting that the
   device is unavailable over Wi-Fi.
+
+## 0.2.21 - 2026-08-23
+
+- USB iPhone mirroring still moves sound off the phone speaker, the same way
+  QuickTime does. Turn on Mac Audio to hear it on this Mac.
+- Android keeps the phone speaker when Mac Audio is off. On Android 13+,
+  turning it on plays here and also keeps the phone speaker.
+
+## 0.2.20 - 2026-08-22
+
+- USB iPhone mirroring keeps sound on the phone by default. Turning on Mac
+  playback now uses the muxed screen audio track instead of the iPhone
+  microphone.
+- Wireless iPhone sessions are no longer replaced by USB while the cable is
+  still plugged in, and a failed device poll no longer leaves an unplugged
+  USB session marked connected.
+
+## 0.2.19 - 2026-08-14
+
+- Play USB iPhone audio through the Mac using the matched iPhone audio input,
+  without QuickTime.
+
+## 0.2.18 - 2026-08-14
+
+- Fix iPhone USB mirroring so the phone speaker stays active by disabling the
+  muxed capture source audio input port.
+
+## 0.2.17 - 2026-08-14
+
+- Replace the license purchase QR placeholder with the Xiaohongshu purchase
+  QR code.
 
 ## 0.2.13 - 2026-08-12
 

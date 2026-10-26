@@ -1,18 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { transform } from 'esbuild';
+import { build } from 'esbuild';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-const source=await readFile(new URL('../src/video.ts',import.meta.url),'utf8');
-const {code}=await transform(source,{loader:'ts',format:'cjs',target:'es2022'});
+const bundled=await build({entryPoints:[fileURLToPath(new URL('../src/video.ts',import.meta.url))],bundle:true,write:false,format:'cjs',platform:'browser',target:'es2022'});
+const code=bundled.outputFiles[0].text;
 function setup(reply) {
   const calls=[],connections=[],timers=new Map();let timerId=0;let now=0;let changed=0;const stopped=[];
   class Peer {
     constructor(){connections.push(this);this.iceGatheringState='complete';this.connectionState='new';}
     addTransceiver(kind,settings){assert.equal(kind,'video');assert.equal(settings.direction,'recvonly');}
-    async createOffer(){return {type:'offer',sdp:'browser-offer'};}
+    createDataChannel(label,options){
+      assert.equal(label,'stupidmirror-touch');assert.equal(options.ordered,true);
+      this.channel={readyState:'connecting',bufferedAmount:0,send(){},close(){this.readyState='closed';}};
+      return this.channel;
+    }
+    async createOffer(){assert.ok(this.channel,'Touch must be negotiated in the initial offer');return {type:'offer',sdp:'browser-offer'};}
     async setLocalDescription(value){this.localDescription=value;}
-    async setRemoteDescription(value){this.remoteDescription=value;}
+    async setRemoteDescription(value){this.remoteDescription=value;this.channel.readyState='open';this.channel.onmessage?.({data:JSON.stringify({type:'status',ready:true})});}
     close(){this.connectionState='closed';this.onconnectionstatechange?.();}
   }
   const module={exports:{}};
@@ -24,7 +29,7 @@ function setup(reply) {
   return {controller,calls,connections,video,ready,timers,stopped,get changed(){return changed;},advance(value){now+=value;}};
 }
 const flush=async()=>{for(let i=0;i<10;i++)await Promise.resolve();};
-test('WebRTC sends only a receive-video offer through MCP and accepts a decoded full-size frame',async()=>{
+test('WebRTC negotiates video and ordered touch through MCP signaling and accepts a decoded full-size frame',async()=>{
   const h=setup();await h.controller.connect('phone-a');
   assert.equal(h.calls[0].name,'screen_signal');assert.equal(h.calls[0].arguments.device_id,'phone-a');
   assert.equal(h.controller.active,false);assert.equal(h.controller.pending,true);

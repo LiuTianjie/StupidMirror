@@ -30,7 +30,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="../styles.css?v=20261024-guide" />
+    <link rel="stylesheet" href="../styles.css?v=20261026-changelog" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -96,7 +96,7 @@
                 "name": "No device or no video",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Unlock the phone, check the cable and trust prompt or ADB authorization, and refresh. USB iPhone video needs Camera permission; wireless video needs the iPhone setup guide."
+                  "text": "Unlock the phone, check the cable and trust prompt or ADB authorization, and refresh. Both USB and Wi-Fi iPhone video need the signed screen agent prepared by the setup guide; video needs no Camera permission."
                 }
               },
               {
@@ -104,7 +104,7 @@
                 "name": "Taps do nothing",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Wait for control setup, check Developer Mode and the signed runner on the iPhone, then enable Operate again. Viewing and control are ready independently."
+                  "text": "Wait for control setup. Check Xcode, trust and Developer Mode for system touch, or the signed runner for compatibility control, then enable Operate again. Viewing and control are ready independently."
                 }
               },
               {
@@ -126,6 +126,7 @@
       <nav class="nav-shell" aria-label="Primary navigation">
         <a class="brand" href="../"><img src="../assets/app-icon.webp" alt="" width="28" height="28" /><span>StupidMirror</span></a>
         <div class="nav-actions">
+          <a class="nav-link" href="../changelog/">Changelog</a>
           <a class="nav-link" href="../zh/codex/" hreflang="zh-CN" lang="zh-CN">中文</a>
           <a class="button button-primary button-small" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">Download StupidMirror</a>
         </div>
@@ -143,8 +144,8 @@
         <h2>Connect in four steps</h2>
         <p class="guide-note">No repository clone, Python or Node.js install, or token copying is needed for the installed app.</p>
         <div class="step-grid guide-grid">
-          <article class="card step"><span class="step-number">01</span><h3>Install and connect the phone</h3><p>Move StupidMirror to Applications and open it. Connect and unlock the phone. USB video needs trust and Camera permission; Android needs authorized ADB.</p></article>
-          <article class="card step"><span class="step-number">02</span><h3>Run iPhone setup once</h3><p>For iPhone control or wireless video, complete Set Up This iPhone over USB.</p></article>
+          <article class="card step"><span class="step-number">01</span><h3>Install and connect the phone</h3><p>Move StupidMirror to Applications and open it. Connect, unlock and trust the phone; Android needs authorized ADB.</p></article>
+          <article class="card step"><span class="step-number">02</span><h3>Run iPhone setup once</h3><p>Both USB and Wi-Fi iPhone video need the signed screen agent prepared through Set Up This iPhone over USB. Video needs no Camera permission. System touch on iOS 27+ needs Xcode, trust and Developer Mode.</p></article>
           <article class="card step"><span class="step-number">03</span><h3>Click Connect Codex</h3><p>In Settings → MCP Automation, click Connect Codex. The app enables local MCP and installs its bundled plugin through the Codex desktop app's CLI.</p></article>
           <article class="card step"><span class="step-number">04</span><h3>Ask Codex</h3><p>Open a new Codex chat, select StupidMirror and ask: “Show my phone inside Codex without tapping anything.” The panel opens through show_screen.</p></article>
         </div>
@@ -153,9 +154,11 @@
         <h2>View, operate, annotate</h2>
         <div class="step-grid guide-grid">
           <article class="card step"><span class="step-number">01</span><h3>View</h3><p>Choose a device; pause and resume, refresh, return Home or copy a screenshot. Video plays in the chat without a separate mirror window.</p></article>
-          <article class="card step"><span class="step-number">02</span><h3>Operate</h3><p>Explicitly enable control, then click to tap or drag to swipe. Nothing is sent to the phone until you turn it on.</p></article>
-          <article class="card step"><span class="step-number">03</span><h3>Annotate</h3><p>Freeze the frame and draw up to eight numbered boxes, then send the marked image and your note with Command-Enter. Drawing never taps the phone.</p></article>
-          <article class="card step"><span class="step-number">04</span><h3>Let the agent act</h3><p>The agent works in an observe → act → observe loop with local OCR, element IDs and targeted taps, and checks the result on the device.</p></article>
+          <article class="card step"><span class="step-number">02</span><h3>Operate</h3><p>Enable Operate to send single-finger presses, holds and drags through the same backend as the native mirror. Hold the left mouse button for a long press; right-click does not send one. Compatibility control remains available.</p></article>
+          <article class="card step"><span class="step-number">03</span><h3>Trackpad input</h3><p>Native mirror scrolling, pinch and rotation stream through the system gesture service when available, with phases and scroll momentum. The browser panel can only forward fallback scroll increments from DOM wheel events. On iOS, programmatic pinch or rotate requests keep their specified center through WDA.</p></article>
+          <article class="card step"><span class="step-number">04</span><h3>USB audio</h3><p>Choose Phone to keep sound on the iPhone, or Mac to play it here. Mac audio needs Camera and Microphone permissions for the USB audio source; video itself needs neither.</p></article>
+          <article class="card step"><span class="step-number">05</span><h3>Annotate</h3><p>Freeze the frame and draw up to eight numbered boxes, then send the marked image and your note with Command-Enter. Drawing never taps the phone.</p></article>
+          <article class="card step"><span class="step-number">06</span><h3>Let the agent act</h3><p>The agent works in an observe → act → observe loop with local OCR, element IDs and targeted taps, and checks the result on the device.</p></article>
         </div>
       </section>
       <section class="section-shell guide-section">
@@ -175,11 +178,11 @@
           </details>
           <details class="faq-item">
             <summary><h3>No device or no video</h3></summary>
-            <p>Unlock the phone, check the cable and trust prompt or ADB authorization, and refresh. USB iPhone video needs Camera permission; wireless video needs the iPhone setup guide.</p>
+            <p>Unlock the phone, check the cable and trust prompt or ADB authorization, and refresh. Both USB and Wi-Fi iPhone video need the signed screen agent prepared by the setup guide; video needs no Camera permission.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Taps do nothing</h3></summary>
-            <p>Wait for control setup, check Developer Mode and the signed runner on the iPhone, then enable Operate again. Viewing and control are ready independently.</p>
+            <p>Wait for control setup. Check Xcode, trust and Developer Mode for system touch, or the signed runner for compatibility control, then enable Operate again. Viewing and control are ready independently.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Annotations cannot be sent</h3></summary>
@@ -192,7 +195,7 @@
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="../"><img src="../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
-        <nav class="guide-footer-nav" aria-label="Guides"><a href="../codex/">Codex plugin</a><a href="../mcp/">MCP setup</a></nav>
+        <nav class="guide-footer-nav" aria-label="Guides"><a href="../codex/">Codex plugin</a><a href="../mcp/">MCP setup</a><a href="../changelog/">Changelog</a></nav>
         <span>© 2026 StupidMirror</span>
       </div>
     </footer>

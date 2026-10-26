@@ -72,6 +72,18 @@ struct AutomationDeviceSnapshot: Codable, Equatable, Sendable {
     let controlMessage: String
     let screenWidth: Double?
     let screenHeight: Double?
+    let formFactor: String
+    /// For a foldable: `outer` or `inner`, whichever screen the mirror shows.
+    /// nil for a standard device.
+    let activeScreen: String?
+    let posture: DevicePosture?
+    let hingeAngle: Double?
+    let canSetPosture: Bool
+    var supportsContinuousTouch: Bool = false
+    /// Host-native scroll, magnification and rotation events. This does not
+    /// advertise arbitrary-center, multi-finger semantic gesture synthesis.
+    var supportsNativeGestures: Bool = false
+    var touchGeneration: UInt64 = 0
 
     enum CodingKeys: String, CodingKey {
         case deviceID = "device_id"
@@ -84,6 +96,43 @@ struct AutomationDeviceSnapshot: Codable, Equatable, Sendable {
         case controlMessage = "control_message"
         case screenWidth = "screen_width"
         case screenHeight = "screen_height"
+        case formFactor = "form_factor"
+        case activeScreen = "active_screen"
+        case posture
+        case hingeAngle = "hinge_angle"
+        case canSetPosture = "can_set_posture"
+        case supportsContinuousTouch = "supports_continuous_touch"
+        case supportsNativeGestures = "supports_native_gestures"
+        case touchGeneration = "touch_generation"
+    }
+}
+
+extension AutomationDeviceSnapshot {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            deviceID: try values.decode(String.self, forKey: .deviceID),
+            udid: try values.decodeIfPresent(String.self, forKey: .udid),
+            platform: try values.decode(String.self, forKey: .platform),
+            transport: try values.decode(String.self, forKey: .transport),
+            name: try values.decode(String.self, forKey: .name),
+            productType: try values.decode(String.self, forKey: .productType),
+            osVersion: try values.decodeIfPresent(String.self, forKey: .osVersion),
+            connectionState: try values.decode(String.self, forKey: .connectionState),
+            mirrorState: try values.decode(String.self, forKey: .mirrorState),
+            controlState: try values.decode(String.self, forKey: .controlState),
+            controlMessage: try values.decode(String.self, forKey: .controlMessage),
+            screenWidth: try values.decodeIfPresent(Double.self, forKey: .screenWidth),
+            screenHeight: try values.decodeIfPresent(Double.self, forKey: .screenHeight),
+            formFactor: try values.decode(String.self, forKey: .formFactor),
+            activeScreen: try values.decodeIfPresent(String.self, forKey: .activeScreen),
+            posture: try values.decodeIfPresent(DevicePosture.self, forKey: .posture),
+            hingeAngle: try values.decodeIfPresent(Double.self, forKey: .hingeAngle),
+            canSetPosture: try values.decode(Bool.self, forKey: .canSetPosture),
+            supportsContinuousTouch: try values.decodeIfPresent(Bool.self, forKey: .supportsContinuousTouch) ?? false,
+            supportsNativeGestures: try values.decodeIfPresent(Bool.self, forKey: .supportsNativeGestures) ?? false,
+            touchGeneration: try values.decodeIfPresent(UInt64.self, forKey: .touchGeneration) ?? 0
+        )
     }
 }
 
@@ -259,7 +308,10 @@ final class DeviceAutomationService: @unchecked Sendable {
         return try await screenFrame(deviceID: session.id, afterSequence: 0, includeFrame: false)
     }
 
-    func screenFrame(deviceID: String?, afterSequence: UInt64, includeFrame: Bool = true) async throws -> CodexPreviewState {
+    func screenFrame(
+        deviceID: String?, afterSequence: UInt64, includeFrame: Bool = true,
+        includeShellImages: Bool = false, knownShellID: String? = nil, knownModelID: String? = nil
+    ) async throws -> CodexPreviewState {
         let devices = listDevices()
         guard deviceID != nil || devices.count == 1 else {
             return CodexPreviewState(
@@ -284,13 +336,28 @@ final class DeviceAutomationService: @unchecked Sendable {
                 CodexPreviewFrame(seq: $0.sequence, data: nil, width: $0.width, height: $0.height)
             }
         }.value
+        let bezel = MirrorBezelCatalog.bezel(for: session, aspectRatio: self.store.displayAspectRatio(for: session))
+        let display = session.mirrorSession.simulatorDisplay
         var result = CodexPreviewState(
             streamID: "\(previewInstanceID):\(session.id)", frame: frame,
             frameAvailable: frame != nil && session.mirrorSession.state == .running,
             viewport: frame.map { CodexPreviewSize(width: $0.width, height: $0.height) },
             busy: session.mirrorSession.state == .starting,
             paused: paused, pauseReason: paused ? "user" : nil,
-            device: CodexPreviewDevice(id: session.id, model: session.device.name, platform: session.platform.rawValue),
+            device: CodexPreviewDevice(
+                id: session.id,
+                model: session.device.name,
+                platform: session.platform.rawValue,
+                formFactor: session.device.formFactor.rawValue,
+                activeScreen: display?.activeScreen,
+                posture: display?.posture,
+                hingeAngle: display?.hingeAngle,
+                canSetPosture: session.isIOSSimulator && session.device.formFactor == .foldable,
+                changingPosture: session.mirrorSession.isChangingPosture
+            ),
+            shell: bezel.preview(includeImages: includeShellImages && knownShellID != bezel.id,
+                                 includeModel: includeShellImages && knownModelID != nil && bezel.duo?.modelID != knownModelID,
+                                 postureIconLandscape: display.map { $0.activeScreen == "outer" ? !$0.isLandscape : $0.isLandscape }),
             devices: devices
         )
         if case let .failed(message) = session.mirrorSession.state { result.message = message }
@@ -307,7 +374,56 @@ final class DeviceAutomationService: @unchecked Sendable {
         let session = try selectSession(deviceID: deviceID)
         guard !pausedPreviewIDs.contains(session.id) else { throw DeviceAutomationError.invalidArgument("预览已暂停") }
         _ = try await showScreen(deviceID: session.id)
+        await previewMedia.setTouchHandlers(
+            input: { [weak self] deviceID, ownerID, event in
+                guard let self else { throw DeviceAutomationError.deviceUnavailable }
+                try await self.acceptPreviewTouch(deviceID: deviceID, ownerID: ownerID, event: event)
+            },
+            cancel: { [weak self] deviceID, ownerID in
+                await self?.cancelPreviewTouch(deviceID: deviceID, ownerID: ownerID)
+            }
+        )
         return try await previewMedia.offer(deviceID: session.id, sdp: sdp, store: session.mirrorSession.latestFrameStore)
+    }
+
+    private func acceptPreviewTouch(deviceID: String, ownerID: String, event: CodexPreviewTouchEvent) async throws {
+        guard let session = store.sessions.first(where: { $0.id == deviceID }) else {
+            throw DeviceAutomationError.deviceUnavailable
+        }
+        let source = "plugin:\(ownerID)"
+        // Teardown retains permission to release its own old contact, even if
+        // the screen generation, preview mode, or license changed meanwhile.
+        if event.phase == .cancel {
+            await session.controlSession.cancelTouch(source: source)
+            return
+        }
+        guard session.device.connectionState == .connected,
+              session.controlSession.isReady else { throw DeviceAutomationError.controlNotReady }
+        guard store.canUseControl, !pausedPreviewIDs.contains(session.id) else {
+            await session.controlSession.cancelTouch(source: source)
+            throw DeviceAutomationError.controlNotReady
+        }
+        guard event.geometryID == String(session.controlSession.touchGeneration) else {
+            await session.controlSession.cancelTouch(source: source)
+            throw DeviceAutomationError.invalidArgument("The screen changed. Start a new gesture on the current screen.")
+        }
+        if event.phase == .down || event.phase == .move {
+            guard session.controlSession.supportsContinuousTouch else {
+                throw DeviceAutomationError.controlNotReady
+            }
+            if event.scroll != nil && !session.controlSession.supportsNativeGestures {
+                throw DeviceAutomationError.controlNotReady
+            }
+        }
+        _ = try await session.controlSession.sendTouch(
+            try event.touchEvent(),
+            source: source, geometryGeneration: session.controlSession.touchGeneration
+        )
+    }
+
+    private func cancelPreviewTouch(deviceID: String, ownerID: String) async {
+        guard let session = store.sessions.first(where: { $0.id == deviceID }) else { return }
+        await session.controlSession.cancelTouch(source: "plugin:\(ownerID)")
     }
 
     func shutdownPreview() async { await previewMedia.shutdown() }
@@ -330,7 +446,15 @@ final class DeviceAutomationService: @unchecked Sendable {
         switch action {
         case "connect":
             _ = try await connectControl(deviceID: session.id)
-        case "tap", "swipe":
+        case "closed", "partially_open", "open":
+            _ = try await setDevicePosture(deviceID: session.id, posture: action)
+        case "rotate":
+            try await withDeviceLock(session.id) {
+                _ = try await self.store.rotateSimulatorDisplay(for: session)
+                self.latestObservations.removeValue(forKey: session.id)
+                self.latestNativeElementReferences.removeValue(forKey: session.id)
+            }
+        case "tap", "swipe", "long_press":
             guard let x, let y else { throw DeviceAutomationError.invalidArgument("Gesture coordinates are required") }
             try Self.validatePoint(x: x, y: y)
             if action == "swipe" {
@@ -339,13 +463,19 @@ final class DeviceAutomationService: @unchecked Sendable {
                 }
                 try Self.validatePoint(x: endX, y: endY)
             }
+            if action == "long_press", durationMS.map({ (500...5_000).contains($0) }) != true {
+                throw DeviceAutomationError.invalidArgument("Long press duration must be between 500 and 5000 ms")
+            }
             // Establish control before the user enters operation mode. Never
             // queue a stale tap behind a long first-time WDA installation.
             _ = try readyControlSession(deviceID: session.id)
             if action == "tap" { try await tap(deviceID: session.id, x: x, y: y) }
+            else if action == "long_press" {
+                try await longPress(deviceID: session.id, x: x, y: y, durationSeconds: Double(durationMS!) / 1_000)
+            }
             else { try await swipe(deviceID: session.id, startX: x, startY: y, endX: endX!, endY: endY!, durationMS: durationMS!) }
         case "home":
-            _ = try await connectControl(deviceID: session.id)
+            _ = try await connectControl(deviceID: session.id, resetUncertain: false)
             try await pressButton(deviceID: session.id, name: "home")
         case "screenshot":
             let frameStore = session.mirrorSession.latestFrameStore
@@ -360,6 +490,22 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("Unknown screen action")
         }
         return try await screenFrame(deviceID: session.id, afterSequence: 0, includeFrame: false)
+    }
+
+    func setDevicePosture(deviceID: String?, posture: String) async throws -> AutomationDeviceSnapshot {
+        guard let posture = DevicePosture(rawValue: posture) else {
+            throw DeviceAutomationError.invalidArgument("posture must be closed, partially_open or open")
+        }
+        let session = try selectSession(deviceID: deviceID)
+        guard session.isIOSSimulator, session.device.formFactor == .foldable else {
+            throw DeviceAutomationError.invalidArgument("Posture control requires a foldable iOS Simulator.")
+        }
+        return try await withDeviceLock(session.id) {
+            try await self.store.setPosture(posture, for: session)
+            self.latestObservations.removeValue(forKey: session.id)
+            self.latestNativeElementReferences.removeValue(forKey: session.id)
+            return self.snapshot(for: session)
+        }
     }
 
     func diagnostics() -> AutomationDiagnosticSnapshot {
@@ -629,7 +775,8 @@ final class DeviceAutomationService: @unchecked Sendable {
         )
         await Task.yield()
 
-        if element.source == .accessibility {
+        if element.source == .accessibility,
+           !(session.controlSession.supportsContinuousTouch && (element.normalizedFrame != nil || element.frame != nil)) {
             if let nativeCache = latestNativeElementReferences[session.id],
                nativeCache.observationID == cached.id,
                let reference = nativeCache.referencesByElementID[element.id] {
@@ -929,10 +1076,10 @@ final class DeviceAutomationService: @unchecked Sendable {
         return snapshot(for: session)
     }
 
-    func connectControl(deviceID: String?) async throws -> AutomationDeviceSnapshot {
+    func connectControl(deviceID: String?, resetUncertain: Bool = true) async throws -> AutomationDeviceSnapshot {
         let session = try selectSession(deviceID: deviceID)
         try await withDeviceLock(session.id) {
-            try await self.store.connectControlForAutomation(for: session)
+            try await self.store.connectControlForAutomation(for: session, resetUncertain: resetUncertain)
         }
         return snapshot(for: session)
     }
@@ -1548,7 +1695,15 @@ final class DeviceAutomationService: @unchecked Sendable {
             controlState: controlState,
             controlMessage: session.controlSession.statusMessage,
             screenWidth: session.controlSession.screenSize?.width,
-            screenHeight: session.controlSession.screenSize?.height
+            screenHeight: session.controlSession.screenSize?.height,
+            formFactor: session.device.formFactor.rawValue,
+            activeScreen: session.mirrorSession.simulatorDisplay?.activeScreen,
+            posture: session.mirrorSession.simulatorDisplay?.posture,
+            hingeAngle: session.mirrorSession.simulatorDisplay?.hingeAngle,
+            canSetPosture: session.isIOSSimulator && session.device.formFactor == .foldable,
+            supportsContinuousTouch: session.controlSession.supportsContinuousTouch,
+            supportsNativeGestures: session.controlSession.supportsNativeGestures,
+            touchGeneration: session.controlSession.touchGeneration
         )
     }
 

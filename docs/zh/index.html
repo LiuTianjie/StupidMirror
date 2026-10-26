@@ -89,7 +89,7 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "Device mirroring and automation",
             "operatingSystem": "macOS 15 or later",
-            "softwareVersion": "0.5.1",
+            "softwareVersion": "0.6.0",
             "downloadUrl": "https://github.com/LiuTianjie/StupidMirror/releases/latest",
             "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
             "screenshot": [
@@ -100,6 +100,8 @@
               "iPhone mirroring over USB or Wi-Fi",
               "Android 11+ mirroring and control over ADB",
               "iOS Simulators and Android emulators",
+              "Real-time system touch on iOS 27+ and iOS Simulators",
+              "Duo simulator posture and active-screen controls",
               "Local Apple Vision OCR and accessibility targeting",
               "Localhost MCP server for Codex and Claude Code",
               "Codex plugin with the live phone screen in chat"
@@ -134,10 +136,10 @@
               },
               {
                 "@type": "Question",
-                "name": "为什么要摄像头权限？",
+                "name": "什么时候需要摄像头和麦克风权限？",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "macOS 把通过 USB 连接的 iPhone 屏幕当作一种摄像头式的采集源。StupidMirror 读取的是这个采集源，不会使用 Mac 的摄像头。"
+                  "text": "iPhone 的 USB 和 Wi-Fi 画面都不需要这两项权限。USB 连接时，可选「手机」让声音留在设备上，或选「Mac」在电脑播放。Mac 声音通道需要摄像头和麦克风权限，以访问 USB 音频源。"
                 }
               },
               {
@@ -177,7 +179,7 @@
                 "name": "运行需要什么条件？",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "一台 macOS 15 或更新版本的 Mac。iPhone 无线镜像和控制还需要在手机上开启开发者模式，并在 Mac 上有 Apple Development 签名身份；使用模拟器需要 Xcode。"
+                  "text": "一台 macOS 15 或更新版本的 Mac；iPhone 和 iOS 模拟器支持需要 Xcode。iPhone 真机需信任这台 Mac 并开启开发者模式。USB 和 Wi-Fi 画面都需要先通过 USB「设置这台 iPhone」准备签名的屏幕组件，无障碍自动化与兼容控制也使用该组件。"
                 }
               }
             ]
@@ -211,7 +213,7 @@
       rel="stylesheet"
     />
     <link rel="preload" as="image" href="../assets/site-dashboard.webp" fetchpriority="high" />
-    <link rel="stylesheet" href="../styles.css?v=20261022-041" />
+    <link rel="stylesheet" href="../styles.css?v=20261026-changelog" />
   </head>
   <body>
     <a class="skip-link" href="#main">跳到正文</a>
@@ -240,6 +242,7 @@
           <a href="#codex">Codex</a>
           <a href="#automation">AI 自动化</a>
           <a href="#scenes">使用场景</a>
+          <a href="changelog/">更新日志</a>
           <a class="nav-mobile-link" href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">GitHub</a>
           <a href="../" hreflang="en" lang="en">English</a>
         </div>
@@ -259,8 +262,8 @@
 
         <div class="hero-copy reveal">
           <a class="announce" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
-            <span class="announce-tag">0.5</span>
-            <span class="announce-text">支持 iOS 模拟器与 Android 模拟器，Agent 可以安装应用、录制屏幕。</span>
+            <span class="announce-tag">0.6</span>
+            <span class="announce-text">iPhone 实时触控、Duo 模拟器支持，以及更稳定的无线镜像。</span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg>
           </a>
           <h1>
@@ -282,7 +285,7 @@
             </a>
           </div>
           <div class="hero-meta" aria-label="产品信息">
-            <span>v0.5.1</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
+            <span>v0.6.0</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
           </div>
         </div>
 
@@ -325,7 +328,7 @@
             <p class="eyebrow">真正稳定的镜像体验</p>
             <h2>不用锁屏。<br />不用来回切换。</h2>
             <p>
-              StupidMirror 直接使用 macOS 暴露的 iPhone 屏幕源。即使 iPhone 正在使用摄像头，Mac 上的主窗口与独立镜像窗口也能继续显示。
+              USB 和 Wi-Fi 使用同一套签名的 iPhone 屏幕组件与 H.264/SRT 视频流。先通过 USB 完成一次准备；画面本身不需要摄像头权限。
             </p>
           </div>
           <button class="screenshot-button bento-shot" type="button" data-lightbox="../assets/site-camera.webp" aria-label="放大查看相机镜像截图">
@@ -336,8 +339,8 @@
 
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7ZM12 16v5" /></svg></span>
-          <h3>USB 即连即用</h3>
-          <p>连接并信任 Mac，设备自动发现。</p>
+          <h3>通过 USB 连接</h3>
+          <p>连接并信任 Mac，完成 iPhone 屏幕组件准备后即可镜像。</p>
         </article>
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5" /><path d="M11 18h2" /></svg></span>
@@ -352,7 +355,7 @@
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z" /></svg></span>
           <h3>原生速度</h3>
-          <p>Swift + AVFoundation / CoreMediaIO，不套一层笨重的浏览器壳。</p>
+          <p>在 iOS 27 及以上版本和支持的模拟器上，系统触控实时跟随按下、拖动与抬起。系统手势服务可用时，原生窗口中的触控板滚动、缩放和旋转也会逐事件发送。</p>
         </article>
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7M17 14l3 3-3 3" /></svg></span>
@@ -570,8 +573,8 @@
             <p>不需要。先用 USB 完成一次「设置这台 iPhone」，之后让 iPhone 和 Mac 处在同一网络，就能通过 Wi-Fi 镜像。无线方式暂不支持声音。</p>
           </details>
           <details class="faq-item">
-            <summary><h3>为什么要摄像头权限？</h3></summary>
-            <p>macOS 把通过 USB 连接的 iPhone 屏幕当作一种摄像头式的采集源。StupidMirror 读取的是这个采集源，不会使用 Mac 的摄像头。</p>
+            <summary><h3>什么时候需要摄像头和麦克风权限？</h3></summary>
+            <p>iPhone 的 USB 和 Wi-Fi 画面都不需要这两项权限。USB 连接时，可选「手机」让声音留在设备上，或选「Mac」在电脑播放。Mac 声音通道需要摄像头和麦克风权限，以访问 USB 音频源。</p>
           </details>
           <details class="faq-item">
             <summary><h3>支持 Android 吗？</h3></summary>
@@ -591,7 +594,7 @@
           </details>
           <details class="faq-item">
             <summary><h3>运行需要什么条件？</h3></summary>
-            <p>一台 macOS 15 或更新版本的 Mac。iPhone 无线镜像和控制还需要在手机上开启开发者模式，并在 Mac 上有 Apple Development 签名身份；使用模拟器需要 Xcode。</p>
+            <p>一台 macOS 15 或更新版本的 Mac；iPhone 和 iOS 模拟器支持需要 Xcode。iPhone 真机需信任这台 Mac 并开启开发者模式。USB 和 Wi-Fi 画面都需要先通过 USB「设置这台 iPhone」准备签名的屏幕组件，无障碍自动化与兼容控制也使用该组件。</p>
           </details>
         </div>
       </section>
@@ -615,7 +618,7 @@
       <div class="section-shell footer-inner">
         <a class="brand" href="#top"><img src="../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
         <p>原生 macOS iPhone 镜像与自动化工具。</p>
-        <nav class="guide-footer-nav" aria-label="指南"><a href="codex/">Codex 插件</a><a href="mcp/">MCP 配置</a></nav>
+        <nav class="guide-footer-nav" aria-label="指南"><a href="codex/">Codex 插件</a><a href="mcp/">MCP 配置</a><a href="changelog/">更新日志</a></nav>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
     </footer>

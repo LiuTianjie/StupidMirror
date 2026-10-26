@@ -122,6 +122,8 @@ ditto "$sparkle_source" "${contents_path}/Frameworks/Sparkle.framework"
 sparkle_framework="${contents_path}/Frameworks/Sparkle.framework"
 mkdir -p "${contents_path}/Resources"
 cp Assets/licenses/Sparkle-LICENSE.txt "${contents_path}/Resources/Sparkle-LICENSE.txt"
+cp Assets/licenses/iphone-use-LICENSE.txt "${contents_path}/Resources/iphone-use-LICENSE.txt"
+cp Assets/licenses/idb-LICENSE.txt "${contents_path}/Resources/idb-LICENSE.txt"
 
 # Mach-O files nested under Resources that need their own signature.
 nested_binaries() {
@@ -193,7 +195,7 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <key>LSUIElement</key>
   <true/>
   <key>NSCameraUsageDescription</key>
-  <string>StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.</string>
+  <string>StupidMirror uses camera access to open the combined USB iPhone audio device when you enable Mac Audio. Video uses a separate stream.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>StupidMirror uses microphone access to receive and play the audio track of an iPhone connected over USB.</string>
   <key>NSLocalNetworkUsageDescription</key>
@@ -232,12 +234,12 @@ PLIST
 resources_path="${contents_path}/Resources"
 mkdir -p "${resources_path}/en.lproj" "${resources_path}/zh-Hans.lproj"
 cat > "${resources_path}/en.lproj/InfoPlist.strings" <<'STRINGS'
-"NSCameraUsageDescription" = "StupidMirror uses camera access to receive the video track of an iPhone connected over USB. It does not capture the Mac camera.";
+"NSCameraUsageDescription" = "StupidMirror uses camera access to open the combined USB iPhone audio device when you enable Mac Audio. Video uses a separate stream.";
 "NSMicrophoneUsageDescription" = "StupidMirror uses microphone access to receive and play the audio track of an iPhone connected over USB.";
 "NSLocalNetworkUsageDescription" = "StupidMirror uses the local network to connect to Xcode-paired iPhones when wireless mode is enabled.";
 STRINGS
 cat > "${resources_path}/zh-Hans.lproj/InfoPlist.strings" <<'STRINGS'
-"NSCameraUsageDescription" = "StupidMirror 使用相机权限接收通过 USB 连接的 iPhone 视频画面，不会采集 Mac 摄像头。";
+"NSCameraUsageDescription" = "启用 Mac 声音时，StupidMirror 使用相机权限打开 iPhone 的 USB 音频设备。画面使用独立视频流。";
 "NSMicrophoneUsageDescription" = "StupidMirror 使用麦克风权限接收并播放通过 USB 连接的 iPhone 音轨。";
 "NSLocalNetworkUsageDescription" = "启用无线模式后，StupidMirror 会通过本地网络连接已在 Xcode 配对的 iPhone。";
 STRINGS

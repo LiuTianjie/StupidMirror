@@ -1,5 +1,8 @@
 @testable import StupidMirrorApp
 import XCTest
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 
 final class SimulatorSupportTests: XCTestCase {
     func testBootedIOSSimulatorsAreListedAndOtherRuntimesSkipped() throws {
@@ -65,6 +68,23 @@ final class SimulatorSupportTests: XCTestCase {
     func testContentLengthHeaderIsCaseInsensitive() {
         XCTAssertEqual(MJPEGPartParser.contentLength("--b\r\ncontent-LENGTH: 42"), 42)
         XCTAssertNil(MJPEGPartParser.contentLength("--b\r\nContent-Type: image/jpeg"))
+    }
+
+    func testMJPEGAppliesEXIFRotationBeforePublishingFrameDimensions() throws {
+        let context = try XCTUnwrap(CGContext(
+            data: nil, width: 40, height: 80, bitsPerComponent: 8, bytesPerRow: 160,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        context.setFillColor(CGColor(red: 0.8, green: 0.2, blue: 0.1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 40, height: 80))
+        let pixels = try XCTUnwrap(context.makeImage())
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, pixels, [kCGImagePropertyOrientation: 6] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let frame = try XCTUnwrap(SimulatorMJPEGStream.orientedImage(data as Data))
+        XCTAssertEqual(frame.width, 80)
+        XCTAssertEqual(frame.height, 40)
     }
 
     func testBuildFailureNamesTheRealError() {

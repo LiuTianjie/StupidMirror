@@ -45,26 +45,40 @@ signed/notarized artifact and tag. It never publishes a GitHub Release. The
 website deploys automatically from `main/docs`, so prepare changes on a release
 branch and open a PR; do not push main during preparation.
 
-1. Update `VERSION`, `CHANGELOG.md`, both READMEs, and website copy/translations.
-2. Rebuild and test the widget, test both Go sidecars, and run Swift tests.
-3. Commit all release source on a `codex/` release branch.
-4. Build and notarize (the existing version must match the tag):
+1. Update `VERSION`, add its dated release entry to the root `CHANGELOG.md`, and
+   update both READMEs and website copy/translations. Keep all previous changelog
+   entries: this file is the single source for the website's complete release
+   history. New entries use `## x.y.z - YYYY-MM-DD`.
+2. Regenerate the website history on every release:
+
+   ```sh
+   node scripts/build-site-changelog.mjs
+   ```
+
+   Include `docs/changelog/index.html`, `docs/zh/changelog/index.html`, and
+   `docs/sitemap.xml` in the release commit. Do not edit generated history pages
+   separately. CI and the release script both run the generator with `--check`;
+   a missing entry for the current `VERSION` or outdated generated pages stops
+   the release before the app is built.
+3. Rebuild and test the widget, test both Go sidecars, and run Swift tests.
+4. Commit all release source on a `codex/` release branch.
+5. Build and notarize (the existing version must match the tag):
 
    ```sh
    NOTARY_PROFILE=stupidmirror-notary COMMIT_RELEASE=false PUSH_RELEASE=false \
      bash scripts/build-and-upload-release.sh v0.3.0
    ```
 
-5. Push the release branch and exact tag, create a PR, wait for CI, then create
+6. Push the release branch and exact tag, create a PR, wait for CI, then create
    a **draft** Release and upload the zip and SHA-256 checksums. Alternatively,
    `PUSH_RELEASE=true` on the release branch prepares a draft; published releases
    are protected from artifact replacement. Use a notes file with `gh --notes-file`.
-6. Verify uploaded asset size/digest and complete real-host/device acceptance.
+7. Verify uploaded asset size/digest and complete real-host/device acceptance.
    The script also wrote `dist/releases/appcast-<tag>.xml`, signed with the
    Keychain key for exactly this zip. Do not rebuild or re-zip after that.
-7. The maintainer personally merges the PR (deploying Pages) and publishes the
+8. The maintainer personally merges the PR (deploying Pages) and publishes the
    draft Release. Preparation does not count as either of these actions.
-8. After the Release is public, copy the appcast to `docs/updates/appcast.xml`
+9. After the Release is public, copy the appcast to `docs/updates/appcast.xml`
    and merge it to `main` (a follow-up PR, or the release PR if it is merged
    after publishing). Installed apps read that feed; never publish a feed whose
    enclosure URL is not downloadable yet. Then use **Check for Updates…** in

@@ -488,7 +488,7 @@ final class DeviceDiscoveryTests: XCTestCase {
             connectionState: .connected,
             tunnelRunning: false
         ))
-        // USB sessions follow the capture device, not the tunnel.
+        // Legacy capture-only sessions do not use the agent tunnel.
         XCTAssertFalse(DeviceGalleryStore.shouldKeepLiveWirelessSession(
             isIOSWireless: false,
             connectionState: .connected,
@@ -617,34 +617,94 @@ final class DeviceDiscoveryTests: XCTestCase {
         ))
     }
 
-    func testUSBRetargetTriggersWhenCMIOPublishesNewCaptureDeviceInstanceWithSameUniqueID() {
-        XCTAssertFalse(
-            DeviceSession.needsUSBRetarget(
-                currentTransport: .usb,
-                currentUniqueID: "00008150-001614E40200401C",
-                newUniqueID: "00008150-001614E40200401C",
-                sameCaptureDeviceInstance: true
-            )
+    @MainActor
+    func testUSBDiscoveryRefreshPreservesAgentStartupWithoutCaptureGraph() {
+        let identity = DeviceIdentity(
+            id: "device", udid: "device", name: "iPhone", productType: "iPhone18,4",
+            osVersion: "26.5", connectionState: .connected, trustState: .trusted
         )
-        // After a brief USB blip or Configuration 6 <-> 7 reset, CoreMediaIO
-        // destroys the old AVCaptureDALDevice and publishes a new instance with
-        // the same uniqueID. It must retarget so the dead CMIOGraph is torn down.
-        XCTAssertTrue(
-            DeviceSession.needsUSBRetarget(
-                currentTransport: .usb,
-                currentUniqueID: "00008150-001614E40200401C",
-                newUniqueID: "00008150-001614E40200401C",
-                sameCaptureDeviceInstance: false
-            )
+        var session = DeviceSession(device: identity, captureDevice: nil)
+        let mirror = session.mirrorSession
+        let control = session.controlSession
+        let agent = session.iosAgent
+        defer { mirror.dispose() }
+
+        mirror.setAudioEnabled(false)
+        mirror.setUSBCaptureHold(true)
+        mirror.start()
+        mirror.updateWirelessStartupDetail("Waiting for the screen agent")
+        let beganAt = mirror.wirelessStartupBeganAt
+        session.adoptUSB(identity: identity, captureDevice: nil)
+
+        XCTAssertEqual(session.videoSource, .iosAgent)
+        XCTAssertFalse(session.needsCameraPermission)
+        XCTAssertTrue(session.mirrorSession === mirror)
+        XCTAssertTrue(session.controlSession === control)
+        XCTAssertTrue(session.iosAgent === agent)
+        XCTAssertEqual(mirror.state, .starting)
+        XCTAssertEqual(mirror.wirelessStartupBeganAt, beganAt)
+        XCTAssertEqual(mirror.wirelessStartupDetail, "Waiting for the screen agent")
+        XCTAssertNil(mirror.device)
+        XCTAssertFalse(mirror.captureSession.isRunning)
+        XCTAssertTrue(mirror.captureSession.inputs.isEmpty)
+        XCTAssertTrue(mirror.captureSession.outputs.isEmpty)
+    }
+
+    @MainActor
+    func testPhysicalTransportChangesResetStartupAndKeepAgentOwners() {
+        let identity = DeviceIdentity(
+            id: "device", udid: "device", name: "iPhone", productType: "iPhone18,4",
+            osVersion: "26.5", connectionState: .connected, trustState: .trusted
         )
-        XCTAssertTrue(
-            DeviceSession.needsUSBRetarget(
-                currentTransport: .wireless,
-                currentUniqueID: nil,
-                newUniqueID: "00008150-001614E40200401C",
-                sameCaptureDeviceInstance: false
-            )
+        let wireless = WirelessDeviceMetadata(
+            udid: "device", name: "iPhone", productType: "iPhone18,4", osVersion: "26.5"
         )
+        var session = DeviceSession(device: identity, captureDevice: nil)
+        let mirror = session.mirrorSession
+        let control = session.controlSession
+        let agent = session.iosAgent
+        let usbSourceID = session.sourceID
+        defer { mirror.dispose() }
+
+        mirror.start()
+        mirror.updateWirelessStartupDetail("USB startup")
+        session.adoptWireless(identity: identity, wirelessDevice: wireless)
+        XCTAssertEqual(session.transport, .wireless)
+        XCTAssertNotEqual(session.sourceID, usbSourceID)
+        XCTAssertEqual(session.videoSource, .iosAgent)
+        XCTAssertEqual(mirror.state, .stopped)
+        XCTAssertNil(mirror.wirelessStartupBeganAt)
+        XCTAssertNil(mirror.wirelessStartupDetail)
+
+        mirror.start()
+        mirror.updateWirelessStartupDetail("Wi-Fi startup")
+        session.adoptUSB(identity: identity, captureDevice: nil)
+        XCTAssertEqual(session.transport, .usb)
+        XCTAssertEqual(session.sourceID, usbSourceID)
+        XCTAssertEqual(session.videoSource, .iosAgent)
+        XCTAssertEqual(mirror.state, .stopped)
+        XCTAssertNil(mirror.wirelessStartupBeganAt)
+        XCTAssertNil(mirror.wirelessStartupDetail)
+        XCTAssertTrue(session.mirrorSession === mirror)
+        XCTAssertTrue(session.controlSession === control)
+        XCTAssertTrue(session.iosAgent === agent)
+    }
+
+    @MainActor
+    func testDisposedAgentMirrorCannotRestartWhileTeardownIsQueued() {
+        let mirror = MirrorCaptureSession(iosDeviceUDID: "device", transport: .usb)
+        mirror.start()
+        mirror.updateWirelessStartupDetail("Starting")
+        mirror.dispose()
+
+        // Do not wait for the capture queue to finish disposal before retrying.
+        mirror.retargetToIOSStream(udid: "another-device", transport: .wireless)
+        mirror.start { XCTFail("A disposed mirror must not restart") }
+
+        XCTAssertEqual(mirror.state, .stopped)
+        XCTAssertEqual(mirror.wirelessDeviceUDID, "device")
+        XCTAssertNil(mirror.wirelessStartupBeganAt)
+        XCTAssertNil(mirror.wirelessStartupDetail)
     }
 
     func testShouldResumeAfterAdoptionResumesStoppedMirrorOrReplacedCaptureDevice() {

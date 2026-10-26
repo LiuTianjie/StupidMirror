@@ -89,7 +89,7 @@
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "Device mirroring and automation",
             "operatingSystem": "macOS 15 or later",
-            "softwareVersion": "0.5.1",
+            "softwareVersion": "0.6.0",
             "downloadUrl": "https://github.com/LiuTianjie/StupidMirror/releases/latest",
             "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
             "screenshot": [
@@ -100,6 +100,8 @@
               "iPhone mirroring over USB or Wi-Fi",
               "Android 11+ mirroring and control over ADB",
               "iOS Simulators and Android emulators",
+              "Real-time system touch on iOS 27+ and iOS Simulators",
+              "Duo simulator posture and active-screen controls",
               "Local Apple Vision OCR and accessibility targeting",
               "Localhost MCP server for Codex and Claude Code",
               "Codex plugin with the live phone screen in chat"
@@ -134,10 +136,10 @@
               },
               {
                 "@type": "Question",
-                "name": "Why does it ask for Camera permission?",
+                "name": "When are Camera and Microphone permissions needed?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "macOS exposes a USB-connected iPhone screen as a camera-style capture source. StupidMirror reads that source; it does not use the Mac webcam."
+                  "text": "iPhone video over USB or Wi-Fi needs neither permission. For a USB iPhone, choose Phone to keep sound on the device, or Mac to play it on this computer. Mac audio requires Camera and Microphone permissions for the USB audio source."
                 }
               },
               {
@@ -177,7 +179,7 @@
                 "name": "What do I need to run it?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "A Mac with macOS 15 or newer. Wireless iPhone mirroring and iPhone control also need Developer Mode on the phone and an Apple Development signing identity on the Mac; simulators need Xcode."
+                  "text": "A Mac with macOS 15 or newer and Xcode for iPhone or iOS Simulator support. Real iPhones need trust and Developer Mode. Both USB and Wi-Fi iPhone video require a signed screen agent prepared through Set Up This iPhone over USB; accessibility automation and compatibility control use that agent too."
                 }
               }
             ]
@@ -213,7 +215,7 @@
       rel="stylesheet"
     />
     <link rel="preload" as="image" href="assets/site-dashboard.webp" fetchpriority="high" />
-    <link rel="stylesheet" href="styles.css?v=20261022-041" />
+    <link rel="stylesheet" href="styles.css?v=20261026-changelog" />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -242,6 +244,7 @@
           <a href="#codex">Codex</a>
           <a href="#automation">AI harness</a>
           <a href="#scenes">Use cases</a>
+          <a href="changelog/">Changelog</a>
           <a class="nav-mobile-link" href="https://github.com/LiuTianjie/StupidMirror" target="_blank" rel="noreferrer">GitHub</a>
           <a href="zh/" hreflang="zh-CN" lang="zh-CN">中文</a>
         </div>
@@ -261,8 +264,8 @@
 
         <div class="hero-copy reveal">
           <a class="announce" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
-            <span class="announce-tag">0.5</span>
-            <span class="announce-text">iOS Simulators and Android emulators. App installs and screen recording for agents.</span>
+            <span class="announce-tag">0.6</span>
+            <span class="announce-text">Real-time iPhone touch. Duo simulator support. Smoother wireless mirroring.</span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg>
           </a>
           <h1>
@@ -285,7 +288,7 @@
             </a>
           </div>
           <div class="hero-meta" aria-label="Product information">
-            <span>v0.5.1</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
+            <span>v0.6.0</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
           </div>
         </div>
 
@@ -329,8 +332,8 @@
             <p class="eyebrow">A mirror built to stay live</p>
             <h2>No lock screen.<br />No context switching.</h2>
             <p>
-              StupidMirror uses the iPhone screen source exposed directly by macOS.
-              Even while the iPhone camera is active, the dashboard and standalone mirror keep rendering.
+              USB and Wi-Fi use the same signed iPhone screen agent and H.264/SRT video stream.
+              Prepare the agent once over USB; video needs no Camera permission.
             </p>
           </div>
           <button class="screenshot-button bento-shot" type="button" data-lightbox="assets/site-camera.webp" aria-label="Enlarge the camera mirroring screenshot">
@@ -342,7 +345,7 @@
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 3v4M15 3v4M7 7h10v4a5 5 0 0 1-10 0V7ZM12 16v5" /></svg></span>
           <h3>Plug in over USB</h3>
-          <p>Connect, trust the Mac, and the device appears.</p>
+          <p>Connect, trust the Mac, and prepare the iPhone screen agent to start mirroring.</p>
         </article>
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="2.5" /><path d="M11 18h2" /></svg></span>
@@ -357,7 +360,7 @@
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 3 5 14h6l-1 7 8-11h-6l1-7Z" /></svg></span>
           <h3>Native speed</h3>
-          <p>Swift, AVFoundation, and CoreMediaIO — without a heavyweight browser shell.</p>
+          <p>On iOS 27+ and supported simulators, system touch follows your press, drag and release. Native trackpad scrolling, pinch and rotation also stream when the system gesture service is available.</p>
         </article>
         <article class="card spotlight reveal">
           <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h7M17 14l3 3-3 3" /></svg></span>
@@ -579,8 +582,8 @@
             <p>Yes. Run Set Up This iPhone once over USB, then keep the iPhone and the Mac on the same network and mirror it over Wi-Fi. Wireless audio is not available.</p>
           </details>
           <details class="faq-item">
-            <summary><h3>Why does it ask for Camera permission?</h3></summary>
-            <p>macOS exposes a USB-connected iPhone screen as a camera-style capture source. StupidMirror reads that source; it does not use the Mac webcam.</p>
+            <summary><h3>When are Camera and Microphone permissions needed?</h3></summary>
+            <p>iPhone video over USB or Wi-Fi needs neither permission. For a USB iPhone, choose Phone to keep sound on the device, or Mac to play it on this computer. Mac audio requires Camera and Microphone permissions for the USB audio source.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Does it support Android?</h3></summary>
@@ -600,7 +603,7 @@
           </details>
           <details class="faq-item">
             <summary><h3>What do I need to run it?</h3></summary>
-            <p>A Mac with macOS 15 or newer. Wireless iPhone mirroring and iPhone control also need Developer Mode on the phone and an Apple Development signing identity on the Mac; simulators need Xcode.</p>
+            <p>A Mac with macOS 15 or newer and Xcode for iPhone or iOS Simulator support. Real iPhones need trust and Developer Mode. Both USB and Wi-Fi iPhone video require a signed screen agent prepared through Set Up This iPhone over USB; accessibility automation and compatibility control use that agent too.</p>
           </details>
         </div>
       </section>
@@ -624,7 +627,7 @@
       <div class="section-shell footer-inner">
         <a class="brand" href="#top"><img src="assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
         <p>Native iPhone mirroring &amp; automation harness for macOS.</p>
-        <nav class="guide-footer-nav" aria-label="Guides"><a href="codex/">Codex plugin</a><a href="mcp/">MCP setup</a></nav>
+        <nav class="guide-footer-nav" aria-label="Guides"><a href="codex/">Codex plugin</a><a href="mcp/">MCP setup</a><a href="changelog/">Changelog</a></nav>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
     </footer>

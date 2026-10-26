@@ -126,11 +126,14 @@ struct IOSAgentEndpoint: Equatable, Sendable {
     let controlURL: URL
     let videoHost: String
     let videoPort: Int
+    /// The route the running tunnel actually uses, never `.auto`.
+    let transport: DeviceTunnelTransport
 
-    init(controlURL: URL, videoHost: String, videoPort: Int) {
+    init(controlURL: URL, videoHost: String, videoPort: Int, transport: DeviceTunnelTransport) {
         self.controlURL = controlURL
         self.videoHost = videoHost
         self.videoPort = videoPort
+        self.transport = transport
     }
 }
 
@@ -406,15 +409,15 @@ final class IOSAgentService: @unchecked Sendable {
     // MARK: - Running the agent
 
     /// Starts (or reuses) the agent for a phone and returns where to reach it.
-    /// The transport is whatever usbmuxd offers, preferring the network entry
-    /// so a session survives the cable coming out.
+    /// Explicit transports stay on that route. Automatic selection may reuse
+    /// either established route and otherwise prefers the network entry.
     func ensureRunning(
         udid: String,
         transport: DeviceTunnelTransport = .auto,
         configuration: AppiumControlConfiguration,
         progress: @escaping @Sendable (IOSAgentProgress) async -> Void = { _ in }
     ) async throws -> IOSAgentEndpoint {
-        try await IOSAgentGate.shared.run(udid: udid) {
+        try await IOSAgentGate.shared.run(udid: udid, transport: transport) {
             try await self.ensureRunningUniquely(
                 udid: udid,
                 transport: transport,
@@ -432,6 +435,7 @@ final class IOSAgentService: @unchecked Sendable {
     ) async throws -> IOSAgentEndpoint {
         await progress(.checkingExistingAgent)
         if let running = AgentRegistry.shared.running(udid: udid),
+           transport.accepts(connectionType: running.endpoints.connectionType),
            let endpoint = Self.endpoint(for: running.endpoints),
            await Self.answersStatus(endpoint.controlURL, whileRunning: running) {
             remember(endpoint)
@@ -447,10 +451,19 @@ final class IOSAgentService: @unchecked Sendable {
 
         await progress(.checkingDevice)
         let readiness = try await Self.inspect(udid: udid, configuration: configuration)
+        switch transport {
+        case .usb:
+            guard readiness.isOnUSB else { throw IOSAgentError.deviceUnavailable }
+        case .network:
+            guard readiness.isOnNetwork else { throw IOSAgentError.wifiConnectionsUnavailable }
+        case .auto: break
+        }
         if readiness.runnerInstalled == false { throw IOSAgentError.setupRequired }
         if readiness.developerMode == false { throw IOSAgentError.developerModeDisabled }
 
-        // A tunnel that is up but whose runner stopped answering is replaced.
+        // Replace an unhealthy tunnel or one on a different explicit route.
+        // Verify that the requested connection exists before stopping a healthy
+        // tunnel, so an unavailable USB cable cannot tear down live Wi-Fi.
         // It is stopped before the new one starts so the phone never carries
         // two tunnels, and the new runner launch does not race the old one.
         await AgentRegistry.shared.take(udid: udid)?.stopAndWait()
@@ -520,9 +533,10 @@ final class IOSAgentService: @unchecked Sendable {
     }
 
     nonisolated static func endpoint(for endpoints: DeviceTunnelEndpoints) -> IOSAgentEndpoint? {
-        guard let controlURL = endpoints.localURL(forDeviceTCPPort: controlPort),
+        guard let transport = DeviceTunnelTransport(connectionType: endpoints.connectionType),
+              let controlURL = endpoints.localURL(forDeviceTCPPort: controlPort),
               let videoPort = endpoints.udpPorts[videoPort] else { return nil }
-        return IOSAgentEndpoint(controlURL: controlURL, videoHost: "127.0.0.1", videoPort: videoPort)
+        return IOSAgentEndpoint(controlURL: controlURL, videoHost: "127.0.0.1", videoPort: videoPort, transport: transport)
     }
 
     /// Names the user-facing failure behind a sidecar error.
@@ -712,21 +726,43 @@ final class IOSAgentService: @unchecked Sendable {
     }
 }
 
-private actor IOSAgentGate {
+actor IOSAgentGate {
     static let shared = IOSAgentGate()
 
-    private var inFlight: [String: Task<IOSAgentEndpoint, Error>] = [:]
+    private struct Entry {
+        let id = UUID()
+        let transport: DeviceTunnelTransport
+        let task: Task<IOSAgentEndpoint, Error>
+    }
+    private var inFlight: [String: Entry] = [:]
 
     func run(
         udid: String,
+        transport: DeviceTunnelTransport,
         operation: @escaping @Sendable () async throws -> IOSAgentEndpoint
     ) async throws -> IOSAgentEndpoint {
-        if let existing = inFlight[udid] {
-            return try await existing.value
+        while let existing = inFlight[udid] {
+            if transport == .auto || existing.transport == transport {
+                let endpoint = try await existing.task.value
+                try Task.checkCancellation()
+                return endpoint
+            }
+            // One phone can own only one runner/tunnel. A different route must
+            // wait, then perform its own readiness/reuse decision; never share
+            // the first request's result or start both tunnels concurrently.
+            _ = try? await existing.task.value
+            if inFlight[udid]?.id == existing.id { inFlight[udid] = nil }
+            try Task.checkCancellation()
         }
+        try Task.checkCancellation()
         let task = Task { try await operation() }
-        inFlight[udid] = task
-        defer { inFlight[udid] = nil }
-        return try await task.value
+        let entry = Entry(transport: transport, task: task)
+        inFlight[udid] = entry
+        defer {
+            if inFlight[udid]?.id == entry.id { inFlight[udid] = nil }
+        }
+        let endpoint = try await task.value
+        try Task.checkCancellation()
+        return endpoint
     }
 }

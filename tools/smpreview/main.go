@@ -1,5 +1,6 @@
 // smpreview carries H264 over local DTLS/SRTP. Signaling and video input use
-// the parent app's private stdio pipes; it exposes no HTTP or control endpoint.
+// the parent app's private stdio pipes. Touch uses an ordered data channel;
+// the parent app authorizes every input against the peer's bound device.
 package main
 
 import (
@@ -26,11 +27,15 @@ type command struct {
 	SDP      string  `json:"sdp"`
 	Data     string  `json:"data"`
 	Duration float64 `json:"duration"`
+	TouchID  string  `json:"touch_id"`
+	Accepted bool    `json:"accepted"`
+	Error    string  `json:"error"`
 }
 
 type peer struct {
 	connection *webrtc.PeerConnection
 	device     string
+	touch      *touchPeer
 }
 type bridge struct {
 	output   io.Writer
@@ -78,8 +83,9 @@ func (b *bridge) offer(c command) {
 		b.fail(c.ID, fmt.Errorf("too many preview peers"))
 		return
 	}
-	b.peers[c.Peer] = peer{pc, c.Device}
+	b.peers[c.Peer] = peer{connection: pc, device: c.Device}
 	b.mu.Unlock()
+	pc.OnDataChannel(func(channel *webrtc.DataChannel) { b.bindTouch(c.Peer, channel) })
 	success := false
 	defer func() {
 		if !success {
@@ -170,6 +176,9 @@ func (b *bridge) close(id string) {
 	if ok && !remaining {
 		delete(b.tracks, p.device)
 	}
+	if ok && p.touch != nil && p.touch.timer != nil {
+		p.touch.timer.Stop()
+	}
 	b.mu.Unlock()
 	if ok {
 		_ = p.connection.Close()
@@ -214,6 +223,8 @@ func main() {
 			b.emit(map[string]any{"id": c.ID, "peer_id": c.Peer})
 		case "frame":
 			b.sample(c)
+		case "touch_result":
+			b.touchResult(c)
 		}
 	}
 	b.mu.Lock()

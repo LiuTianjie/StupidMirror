@@ -17,6 +17,8 @@ touch_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && p
 touch_include_path="${wda_root}/WebDriverAgentLib/Commands/FBStupidMirrorTouchCommands.inc"
 h264_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorH264Server.inc"
 h264_include_path="${wda_root}/WebDriverAgentLib/Utilities/FBStupidMirrorH264Server.inc"
+display_include_source="${repo_root:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/scripts/wda/FBStupidMirrorDisplayCommands.inc"
+display_include_path="${wda_root}/WebDriverAgentLib/Commands/FBStupidMirrorDisplayCommands.inc"
 
 patch_icon_script() {
   if [ ! -f "$icon_script_path" ]; then
@@ -206,9 +208,9 @@ patch_h264_stream() {
       next
     }
     /_mainScreenID = \[XCUIScreen.mainScreen displayID\];/ {
-      # Route the MJPEG server through the shared screen resolver (defined in
-      # FBStupidMirrorH264Server.inc) so a foldable can stream a chosen screen.
-      print "    _mainScreenID = FBStupidMirrorResolveScreenID();"
+      # Cache the XCTest fallback once; the shared resolver can still choose a
+      # different active simulator panel for each capture.
+      print "    _mainScreenID = [XCUIScreen.mainScreen displayID];"
       print "    NSString *h264PortValue = NSProcessInfo.processInfo.environment[@\"STUPIDMIRROR_H264_PORT\"];"
       print "    NSInteger h264Port = h264PortValue.length > 0 ? h264PortValue.integerValue : 9200;"
       print "    if (h264Port > 0 && h264Port <= UINT16_MAX) {"
@@ -356,9 +358,33 @@ patch_mjpeg_server_launch_options() {
   echo "Installed WDA MJPEG frame-rate patch: $web_server_path"
 }
 
+patch_display_commands() {
+  if [ ! -f "$custom_commands_path" ] || [ ! -f "$display_include_source" ]; then
+    echo "WDA display patch inputs are unavailable." >&2
+    exit 1
+  fi
+  cp "$display_include_source" "$display_include_path"
+  if ! grep -q 'STUPIDMIRROR_DISPLAY_COMMANDS' "$custom_commands_path"; then
+    printf '\n// STUPIDMIRROR_DISPLAY_COMMANDS\n#include "FBStupidMirrorDisplayCommands.inc"\n' >> "$custom_commands_path"
+  fi
+  # Upgrade existing H.264-patched runtimes too. Resolving only in init pins
+  # MJPEG to a dark panel after the user changes posture in Device Hub.
+  local display_tmp
+  display_tmp="$(mktemp)"
+  sed \
+    -e 's/_mainScreenID = FBStupidMirrorResolveScreenID();/_mainScreenID = [XCUIScreen.mainScreen displayID];/g' \
+    -e 's/takeInOriginalResolutionWithScreenID:FBStupidMirrorResolveScreenID()/takeInOriginalResolutionWithScreenID:FBStupidMirrorResolveScreenID(self.mainScreenID)/g' \
+    -e 's/takeInOriginalResolutionWithScreenID:self.mainScreenID/takeInOriginalResolutionWithScreenID:FBStupidMirrorResolveScreenID(self.mainScreenID)/g' \
+    "$mjpeg_source_path" > "$display_tmp"
+  cat "$display_tmp" > "$mjpeg_source_path"
+  rm -f "$display_tmp"
+  echo "Installed WDA live display and posture support."
+}
+
 patch_icon_script
 patch_local_network_service
 patch_h264_stream
 patch_srt_status
 patch_fast_touch
+patch_display_commands
 patch_mjpeg_server_launch_options

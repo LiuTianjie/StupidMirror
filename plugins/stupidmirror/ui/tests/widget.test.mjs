@@ -18,7 +18,7 @@ const preview = (fields = {}) => ({ server_time: 1000, frame: null, viewport: nu
 // Fixtures exist only in this isolated DOM test, never in the shipped widget.
 const frame = (seq = 1) => ({ seq, data: 'test-image-only', mimeType: 'image/png', width: 900, height: 1800 });
 
-async function harness({ reducedMotion = false, context = { displayMode: 'inline', availableDisplayModes: ['fullscreen'] }, reply, connectReply, messageReply, messageImage = true } = {}) {
+async function harness({ reducedMotion = false, context = { displayMode: 'inline', availableDisplayModes: ['fullscreen'] }, reply, connectReply, messageReply, messageImage = true, rtc } = {}) {
   let now = 0;
   let timerId = 0;
   let instance;
@@ -36,6 +36,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
   let imageWrites = 0;
   const ids = ['app', 'device', 'screen', 'image', 'empty-state', 'empty-state-text', 'cursor', 'stage', 'model', 'live-text', 'toast',
     'empty-hint', 'empty-retry', 'tool-refresh', 'tool-home', 'tool-screenshot', 'tool-pause', 'device-picker', 'device-menu', 'device-switcher', 'pause-label', 'video', 'control-button', 'annotate-button', 'control-label',
+    'shell-artwork', 'mesh-screen', 'tool-rotate', 'posture-divider', 'tool-posture-closed', 'tool-posture-partially-open', 'tool-posture-open',
     'annotation-overlay','annotation-editor','annotation-note','annotation-count','annotation-undo','annotation-delete','annotation-cancel','annotation-send','annotation-hint'];
   const elements = Object.fromEntries(ids.map(id => [id, {
     style: { setProperty(name, value) { this[name] = value; } }, dataset: {},
@@ -47,6 +48,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     setAttribute(name, value) { this[name] = value; },
     getAttribute(name) { return this[name]; },
     focus() { document.activeElement = this; },
+    getContext() { return null; },
     getBoundingClientRect() { return {left:100,top:50,width:400,height:800}; },
     setPointerCapture(id) { this.capturedPointer = id; },
     hasPointerCapture(id) { return this.capturedPointer === id; },
@@ -100,7 +102,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     removeEventListener: name => listeners.delete(name),
   };
   await vm.runInNewContext(code, {
-    MockApp, document, Error, AbortController, Image:class { async decode() {} },
+    MockApp, document, Error, AbortController, RTCPeerConnection:rtc, Image:class { async decode() {} },
     matchMedia: () => ({ matches: reducedMotion }),
     performance: { now: () => now },
     ResizeObserver: class { constructor(callback) { this.callback = callback; resize = this; } observe() {} disconnect() { this.disconnected = true; } },
@@ -111,6 +113,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
   return {
     app: instance, calls, sentMessages, messageOptions, contextUpdates, drawnRegions, lifecycle, elements, document, timers, resize,
     requestOptions, stageSize,
+    advance(ms) { now += ms; },
     get layoutReads() { return layoutReads; },
     get imageWrites() { return imageWrites; },
     visibility(hidden) { document.hidden = hidden; listeners.get('visibilitychange')?.(); },
@@ -131,7 +134,7 @@ test('connects before requesting only fullscreen, then polls only the app frame 
   await h.tick();
   assert.equal(h.calls.length, 1);
   assert.equal(h.calls[0].name, 'screen_frame');
-  assert.equal(JSON.stringify(h.calls[0].arguments), '{"after_seq":0}');
+  assert.equal(JSON.stringify(h.calls[0].arguments), '{"after_seq":0,"model_id":""}');
   assert.equal([...h.timers.values()][0].delay, 250);
   assert.equal(h.requestOptions[0].timeout, 3000);
 });
@@ -221,7 +224,7 @@ test('omitted frames preserve the displayed image and acknowledgements advance o
   assert.equal(h.elements.cursor.animation, animation);
   assert.equal(h.elements.image.src, 'data:image/png;base64,test-image-only');
   await h.tick();
-  assert.equal(JSON.stringify(h.calls[0].arguments), '{"after_seq":7}');
+  assert.equal(JSON.stringify(h.calls[0].arguments), '{"after_seq":7,"model_id":""}');
 });
 
 test('operation state survives tool gaps, hidden panels and temporary missing frames', async () => {
@@ -265,8 +268,6 @@ test('fits the exact image in narrow and landscape panels without a chassis', as
     assert.ok(height <= (panelHeight - 24) + 1e-8);
     assert.ok(Math.abs((width - 2 * bezel) / (height - 2 * bezel) - imageWidth / imageHeight) < 1e-8);
     assert.equal(h.elements.device.dataset.orientation, imageWidth > imageHeight ? 'landscape' : 'portrait');
-    assert.equal(h.elements.screen.style.width, undefined);
-    assert.equal(h.elements.screen.style.height, undefined);
   }
 });
 
@@ -720,13 +721,33 @@ test('shows wireless startup progress and backend failure details', async () => 
 });
 
 
-test('iPhone screen corners scale with the real image while no extra bezel changes its ratio', async () => {
+test('uses and caches the supplied shell while keeping the screen viewport separate', async () => {
   const h = await harness();
-  h.app.ontoolresult({ structuredContent: preview({ device: { id: 'air', model: 'iPhone Air', platform: 'ios' }, frame: { ...frame(1), width: 506, height: 1100 } }) });
-  const width = parseFloat(h.elements.device.style.width);
-  const height = parseFloat(h.elements.device.style.height);
-  assert.ok(Math.abs(width / height - 506 / 1100) < 1e-10);
-  assert.ok(Math.abs(parseFloat(h.elements.device.style['--screen-radius']) - width * .14) < 1e-10);
+  const shell = {id:'phone-shell',width:440,height:880,screen_x:20,screen_y:40,screen_width:400,screen_height:800,artwork:'shell-png',mask:'mask-png'};
+  h.app.ontoolresult({structuredContent:preview({device:{id:'a',platform:'ios'},frame:frame(),shell})});
+  assert.equal(h.elements['shell-artwork'].src, 'data:image/png;base64,shell-png');
+  assert.match(h.elements.screen.style.maskImage, /mask-png/);
+  assert.ok(parseFloat(h.elements.screen.style.left) > 0);
+  assert.ok(parseFloat(h.elements.screen.style.width) < parseFloat(h.elements.device.style.width));
+  await h.tick();
+  assert.equal(h.calls[0].arguments.shell_id, 'phone-shell');
+  h.app.ontoolresult({structuredContent:preview({device:{id:'b',platform:'ios'},frame:frame(2)})});
+  assert.equal(h.elements['shell-artwork'].hidden, true);
+  assert.equal(h.elements.screen.style.maskImage, 'none');
+});
+
+test('posture selection follows the confirmed system state and cannot act during annotation', async () => {
+  const h = await harness({reply: () => Promise.resolve({structuredContent:preview({device:{id:'duo',can_set_posture:true,posture:'partially_open'}})})});
+  h.app.ontoolresult({structuredContent:preview({device:{id:'duo',platform:'ios',can_set_posture:true,posture:'closed'},frame:frame(),frame_available:true})});
+  h.elements['tool-posture-open'].click(); await flush();
+  assert.equal(h.calls[0].arguments.action, 'open');
+  assert.equal(h.elements['tool-posture-partially-open']['aria-pressed'], 'true');
+  assert.equal(h.elements['tool-posture-open']['aria-pressed'], 'false');
+  h.elements['annotate-button'].click(); await flush();
+  assert.equal(h.elements['tool-posture-open'].disabled, true);
+  const count = h.calls.length;
+  h.elements['tool-posture-open'].click(); await flush();
+  assert.equal(h.calls.length, count);
 });
 
 
@@ -1036,4 +1057,102 @@ test('Command Enter sends once while Enter, IME composition, key repeat and empt
   assert.equal(h.sentMessages[0].content[0].text,'请调整这里的间距');
   assert.equal(h.elements['annotation-note'].disabled,true);
   finish({}); await flush(); assert.equal(h.elements['annotation-editor'].hidden,true);
+});
+
+
+test('continuous touch reads the selected AutomationDeviceSnapshot and cancels its old generation', async () => {
+  const channels = [];
+  class Peer {
+    iceGatheringState = 'complete'; connectionState = 'connected';
+    addTransceiver() {}
+    createDataChannel(label, options) {
+      assert.equal(label,'stupidmirror-touch'); assert.equal(options.ordered,true);
+      const channel = {readyState:'connecting',bufferedAmount:0,sent:[],send(value){this.sent.push(JSON.parse(value));},close(){this.readyState='closed';}};
+      channels.push(channel); this.channel=channel; return channel;
+    }
+    async createOffer() { assert.equal(channels.length,1); return {type:'offer',sdp:'test-offer'}; }
+    async setLocalDescription(value) { this.localDescription=value; }
+    async setRemoteDescription() {
+      this.channel.readyState='open'; this.channel.onmessage({data:JSON.stringify({type:'status',ready:true})});
+    }
+    close() { this.connectionState='closed'; }
+  }
+  const state = generation => ({...readyPreview(),devices:[
+    {device_id:'other-phone',name:'Other',connection_state:'ready',supports_continuous_touch:false,touch_generation:99},
+    {device_id:'phone-a',name:'Phone',connection_state:'ready',supports_continuous_touch:true,touch_generation:generation},
+  ]});
+  const h=await harness({rtc:Peer,reply:params=>Promise.resolve({structuredContent:params.name==='screen_signal'
+    ? {peer_id:'trusted-peer',type:'answer',sdp:'test-answer'} : state(7)})});
+  h.app.ontoolresult({structuredContent:state(7)}); await flush();
+  h.elements['control-button'].click(); await flush();
+  pointerDispatch(h,'pointerdown',200,250); pointerDispatch(h,'pointermove',240,290);
+  assert.deepEqual(channels[0].sent.map(value=>[value.phase,value.geometry_id]),[['down','7'],['move','7']]);
+  h.app.ontoolresult({structuredContent:state(8)}); await flush();
+  pointerDispatch(h,'pointerup',240,290);
+  assert.deepEqual(channels[0].sent.map(value=>value.phase),['down','move','cancel']);
+  assert.equal(channels[0].sent.at(-1).geometry_id,'7');
+  assert.equal(h.calls.some(call=>['tap','swipe','long_press'].includes(call.arguments?.action)),false);
+  await h.app.onteardown();
+});
+
+test('compatibility hold stays a bounded long press instead of becoming a tap', async () => {
+  const h=await harness(); h.app.ontoolresult({structuredContent:readyPreview()});
+  h.elements['control-button'].click(); await flush();
+  pointerDispatch(h,'pointerdown',200,250); h.advance(8000); pointerDispatch(h,'pointerup',200,250); await flush();
+  assert.equal(h.calls.at(-1).arguments.action,'long_press');
+  assert.equal(h.calls.at(-1).arguments.duration_ms,5000);
+  await h.app.onteardown();
+});
+
+test('native browser wheel preserves deltas, releases before a pointer, and cancels stale geometry', async () => {
+  const sent = [];
+  class Peer {
+    iceGatheringState = 'complete'; connectionState = 'connected';
+    addTransceiver() {}
+    createDataChannel() {
+      this.channel={readyState:'connecting',bufferedAmount:0,send(value){sent.push(JSON.parse(value));},close(){this.readyState='closed';}};
+      return this.channel;
+    }
+    async createOffer() { return {type:'offer',sdp:'test-offer'}; }
+    async setLocalDescription(value) { this.localDescription=value; }
+    async setRemoteDescription() {
+      this.channel.readyState='open'; this.channel.onmessage({data:JSON.stringify({type:'status',ready:true})});
+    }
+    close() { this.connectionState='closed'; }
+  }
+  const state = generation=>({...readyPreview(),devices:[{device_id:'phone-a',name:'Phone',connection_state:'ready',
+    supports_continuous_touch:true,supports_native_gestures:true,touch_generation:generation}]});
+  const h=await harness({rtc:Peer,reply:params=>Promise.resolve({structuredContent:params.name==='screen_signal'
+    ? {peer_id:'trusted-peer',type:'answer',sdp:'test-answer'} : state(7)})});
+  h.app.ontoolresult({structuredContent:state(7)}); await flush();
+  h.elements['control-button'].click(); await flush();
+  let prevented=0;
+  const wheel=(fields={})=>h.elements.screen.handlers.get('wheel')({clientX:200,clientY:250,deltaX:0,deltaY:4,
+    deltaMode:0,ctrlKey:false,preventDefault(){prevented++;},...fields});
+  wheel(); wheel({deltaX:2,deltaY:7});
+  assert.deepEqual(sent.map(value=>[value.phase,value.scroll]),[
+    ['down',{delta_x:0,delta_y:-4}],['move',{delta_x:-2,delta_y:-7}],
+  ]);
+  wheel({ctrlKey:true}); wheel({deltaMode:1});
+  assert.equal(prevented,2); assert.equal(sent.length,2);
+  pointerDispatch(h,'pointerdown',200,250); pointerDispatch(h,'pointerup',200,250);
+  assert.deepEqual(sent.slice(2).map(value=>value.phase),['up','down','up']);
+  assert.deepEqual(sent[2].scroll,{delta_x:0,delta_y:0});
+  assert.equal(sent[3].scroll,undefined);
+  wheel(); h.app.ontoolresult({structuredContent:state(8)}); await flush();
+  assert.equal(sent.at(-1).phase,'cancel'); assert.equal(sent.at(-1).geometry_id,'7');
+  assert.equal(h.calls.some(call=>['tap','swipe','long_press'].includes(call.arguments?.action)),false);
+  await h.app.onteardown();
+});
+
+test('wheel without native gesture capability does not manufacture a finger fallback', async () => {
+  const h=await harness(); h.app.ontoolresult({structuredContent:readyPreview()});
+  h.elements['control-button'].click(); await flush();
+  let prevented=false;
+  const before=h.calls.length;
+  h.elements.screen.handlers.get('wheel')({clientX:200,clientY:250,deltaX:0,deltaY:20,deltaMode:0,
+    preventDefault(){prevented=true;}});
+  await flush();
+  assert.equal(h.calls.length,before); assert.equal(prevented,false);
+  await h.app.onteardown();
 });

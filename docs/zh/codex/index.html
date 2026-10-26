@@ -30,7 +30,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="../../assets/apple-touch-icon.png" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="../../styles.css?v=20261024-guide" />
+    <link rel="stylesheet" href="../../styles.css?v=20261026-changelog" />
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
@@ -96,7 +96,7 @@
                 "name": "找不到设备或没有画面",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "解锁手机，检查数据线和信任提示或 ADB 授权，然后刷新。USB 连接的 iPhone 需要摄像头权限；无线画面需要先完成 iPhone 设置向导。"
+                  "text": "解锁手机，检查数据线和信任提示或 ADB 授权，然后刷新。USB 和 Wi-Fi 的 iPhone 画面都需要通过设置向导准备签名的屏幕组件；视频不需要摄像头权限。"
                 }
               },
               {
@@ -104,7 +104,7 @@
                 "name": "点击没有反应",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "等待控制连接完成，确认 iPhone 已开启开发者模式并安装了签名的运行组件，然后重新开启「操作」。查看和控制是分别就绪的。"
+                  "text": "等待控制连接完成。系统触控需检查 Xcode、信任配对和开发者模式；兼容控制需检查签名的运行组件，然后重新开启「操作」。查看和控制是分别就绪的。"
                 }
               },
               {
@@ -126,6 +126,7 @@
       <nav class="nav-shell" aria-label="主导航">
         <a class="brand" href="../../zh/"><img src="../../assets/app-icon.webp" alt="" width="28" height="28" /><span>StupidMirror</span></a>
         <div class="nav-actions">
+          <a class="nav-link" href="../../zh/changelog/">更新日志</a>
           <a class="nav-link" href="../../codex/" hreflang="en" lang="en">English</a>
           <a class="button button-primary button-small" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">下载 StupidMirror</a>
         </div>
@@ -143,8 +144,8 @@
         <h2>四步连接</h2>
         <p class="guide-note">使用已安装的应用时，不需要克隆仓库、安装 Python / Node.js 或复制令牌。</p>
         <div class="step-grid guide-grid">
-          <article class="card step"><span class="step-number">01</span><h3>安装应用并连接手机</h3><p>将 StupidMirror 放入「应用程序」并打开，连接并解锁手机。USB 画面需要信任这台 Mac 并授予摄像头权限；Android 需要授权 ADB。</p></article>
-          <article class="card step"><span class="step-number">02</span><h3>完成一次 iPhone 设置</h3><p>首次控制 iPhone 或使用无线画面前，先用 USB 完成「设置这台 iPhone」。</p></article>
+          <article class="card step"><span class="step-number">01</span><h3>安装应用并连接手机</h3><p>将 StupidMirror 放入「应用程序」并打开，连接、解锁手机并信任这台 Mac；Android 需要授权 ADB。</p></article>
+          <article class="card step"><span class="step-number">02</span><h3>完成一次 iPhone 设置</h3><p>USB 和 Wi-Fi 的 iPhone 画面都需要先通过 USB「设置这台 iPhone」准备签名的屏幕组件，视频不需要摄像头权限。iOS 27 及以上版本的系统触控需要 Xcode、信任配对和开发者模式。</p></article>
           <article class="card step"><span class="step-number">03</span><h3>点击「连接 Codex」</h3><p>在「设置 → MCP 自动化」点击「连接 Codex」。应用会开启本机 MCP，并通过 Codex 桌面应用的 CLI 安装内置插件。</p></article>
           <article class="card step"><span class="step-number">04</span><h3>向 Codex 提问</h3><p>新建 Codex 聊天，选中 StupidMirror，发送：「在 Codex 里显示我的手机，先不要点击。」面板会通过 show_screen 打开。</p></article>
         </div>
@@ -153,9 +154,11 @@
         <h2>查看、操作、标注</h2>
         <div class="step-grid guide-grid">
           <article class="card step"><span class="step-number">01</span><h3>查看</h3><p>选择设备，暂停或继续、刷新、回到主屏幕、复制截图。画面直接显示在聊天里，不会另开镜像窗口。</p></article>
-          <article class="card step"><span class="step-number">02</span><h3>操作</h3><p>手动开启「操作」后，单击即点击、拖动即滑动。开启之前不会向手机发送任何操作。</p></article>
-          <article class="card step"><span class="step-number">03</span><h3>标注</h3><p>冻结当前画面，最多画八个编号框，用 ⌘＋回车把标注截图和说明一起发送。画框不会误触手机。</p></article>
-          <article class="card step"><span class="step-number">04</span><h3>让 Agent 动手</h3><p>Agent 按「观察 → 操作 → 观察」的循环工作，用本地 OCR、元素 ID 和定点点击完成任务，并在真机上确认结果。</p></article>
+          <article class="card step"><span class="step-number">02</span><h3>操作</h3><p>开启「操作」后，单指按下、长按与拖动会使用原生镜像的同一触控后端。长按需按住鼠标左键，右键不再映射为长按；兼容控制仍然保留。</p></article>
+          <article class="card step"><span class="step-number">03</span><h3>触控板输入</h3><p>系统手势服务可用时，原生镜像的滚动、缩放和旋转会逐事件发送，并保留手势相位与滚动惯性。浏览器面板只能从 DOM 滚轮事件发送降级滚动增量；iOS 上程序化指定中心点的缩放与旋转仍通过 WDA 保留目标位置。</p></article>
+          <article class="card step"><span class="step-number">04</span><h3>USB 声音</h3><p>选择「手机」让声音留在 iPhone 上，或选择「Mac」在电脑播放。Mac 声音需要摄像头和麦克风权限来访问 USB 音频源，视频本身不需要这两项权限。</p></article>
+          <article class="card step"><span class="step-number">05</span><h3>标注</h3><p>冻结当前画面，最多画八个编号框，用 ⌘＋回车把标注截图和说明一起发送。画框不会误触手机。</p></article>
+          <article class="card step"><span class="step-number">06</span><h3>让 Agent 动手</h3><p>Agent 按「观察 → 操作 → 观察」的循环工作，用本地 OCR、元素 ID 和定点点击完成任务，并在真机上确认结果。</p></article>
         </div>
       </section>
       <section class="section-shell guide-section">
@@ -175,11 +178,11 @@
           </details>
           <details class="faq-item">
             <summary><h3>找不到设备或没有画面</h3></summary>
-            <p>解锁手机，检查数据线和信任提示或 ADB 授权，然后刷新。USB 连接的 iPhone 需要摄像头权限；无线画面需要先完成 iPhone 设置向导。</p>
+            <p>解锁手机，检查数据线和信任提示或 ADB 授权，然后刷新。USB 和 Wi-Fi 的 iPhone 画面都需要通过设置向导准备签名的屏幕组件；视频不需要摄像头权限。</p>
           </details>
           <details class="faq-item">
             <summary><h3>点击没有反应</h3></summary>
-            <p>等待控制连接完成，确认 iPhone 已开启开发者模式并安装了签名的运行组件，然后重新开启「操作」。查看和控制是分别就绪的。</p>
+            <p>等待控制连接完成。系统触控需检查 Xcode、信任配对和开发者模式；兼容控制需检查签名的运行组件，然后重新开启「操作」。查看和控制是分别就绪的。</p>
           </details>
           <details class="faq-item">
             <summary><h3>标注发不出去</h3></summary>
@@ -192,7 +195,7 @@
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="../../zh/"><img src="../../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
-        <nav class="guide-footer-nav" aria-label="指南"><a href="../../zh/codex/">Codex 插件</a><a href="../../zh/mcp/">MCP 配置</a></nav>
+        <nav class="guide-footer-nav" aria-label="指南"><a href="../../zh/codex/">Codex 插件</a><a href="../../zh/mcp/">MCP 配置</a><a href="../../zh/changelog/">更新日志</a></nav>
         <span>© 2026 StupidMirror</span>
       </div>
     </footer>

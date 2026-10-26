@@ -52,8 +52,8 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 ## 核心能力
 
 - **原生设备工作台。** 使用 SwiftUI 与 AppKit 构建，提供菜单栏入口、设备面板、实时缩略图与独立镜像窗口。
-- **真机与模拟器。** USB iPhone 使用 AVFoundation；无线 iPhone 通过局域网传输 H.264；Android 使用固定版本的 scrcpy server 传输画面与声音；本机启动的 iOS 模拟器和 Android 模拟器同样可用。
-- **按需连接真机控制。** iPhone 直接连接 WDA，Android 通过 Appium / UiAutomator2，实现点击、滑动、输入、按键和 App 启停。打开 USB 或 Android 镜像不会自动建立控制会话。
+- **真机与模拟器。** iPhone 通过 USB 或 Wi-Fi 传输 H.264 视频；Android 使用固定版本的 scrcpy server 传输画面与声音；本机启动的 iOS 模拟器和 Android 模拟器同样可用。
+- **按需连接设备控制。** iOS 默认优先使用系统 HID 实时触控，WDA 提供兼容控制和语义自动化；Android 使用 Appium / UiAutomator2。支持点击、拖动、长按、输入、按键和 App 启停。打开 USB 或 Android 镜像不会自动建立控制会话。
 - **Agent 可以观察操作对象。** 实时帧、Apple Vision OCR、按需无障碍树、语义定位、等待与断言都围绕同一台真机工作。
 - **自动化过程可见。** Agent 的点击、滑动路径和目标高亮显示在 Mac 镜像上，不改变手机画面，也不写入编码后的视频。
 - **接入已有 AI 客户端。** 内置 Codex 与 Claude Code 配置向导；StupidMirror 本身无需模型 API Key，也不内置模型。
@@ -64,52 +64,68 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 
 | 连接方式 | 准备工作 | 画面与声音 |
 | --- | --- | --- |
-| **iPhone · USB** | 信任当前 Mac；按提示授予相机权限 | AVFoundation 捕获；可选将设备声音播放到 Mac |
-| **iPhone · Wi-Fi** | 通过 USB 完成一次“设置这台 iPhone”（会在手机上开启 Wi‑Fi 连接）；两端保持同一局域网 | H.264 / SRT 经 CoreDevice 隧道传输，VideoToolbox 解码；暂不支持无线音频 |
+| **iPhone · USB** | 通过 USB 完成一次“设置这台 iPhone”；信任当前 Mac 并开启开发者模式 | 签名 Runner 提供 H.264 / SRT 纯视频；声音默认留在手机，可开启 Mac 播放 |
+| **iPhone · Wi-Fi** | 通过 USB 完成一次“设置这台 iPhone”（会在手机上开启 Wi‑Fi 连接）；两端保持同一局域网 | 同一套 H.264 / SRT 视频经 CoreDevice 隧道传输；声音留在手机 |
 | **Android · ADB** | Android 11+；Mac 安装 Android SDK Platform-Tools；开启 USB 调试并授权当前 Mac | scrcpy 提供 H.264 画面与可选设备音频 |
 | **iOS 模拟器** | 安装 Xcode；启动模拟器 | 首次为模拟器构建屏幕代理（无需签名）并传输画面；所有端口只监听本机 |
 | **Android 模拟器** | 同 Android · ADB；启动模拟器 | 同 Android · ADB；按 AVD 名称显示 |
 
 模拟器启动后会自动出现在设备列表中，与真机一样计入同时使用的设备数。模拟器不会被自动镜像，正在跑 UI 测试的模拟器在你主动打开之前不受影响。
 
+使用兼容的 Xcode 运行时时，iPhone Duo 模拟器支持**合上**、**部分展开**和**展开**姿态。操作会改变模拟器的实际铰链和活动屏幕，原生镜像与 Codex 面板按确认后的状态同步显示。3D 设备外观会在可用时读取当前选中的本地 Xcode 资源。
+
 **需要 macOS 15 或更高版本。** 兼容性受系统版本、信任状态和自动化运行时影响，项目仍处于实验阶段。
 
 ### USB 连接 iPhone
 
 1. 连接并解锁 iPhone，接受“信任此电脑”。
-2. 打开 StupidMirror，通过应用中的权限按钮授予相机访问权限。
-3. 选择发现的设备并打开镜像。
+2. 打开**设置这台 iPhone**，开启开发者模式，由向导使用当前 Mac 上的 Apple Development 身份签名并安装屏幕 Runner。
+3. 选择发现的设备并打开镜像。视频无需相机权限。
 
-macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权限；这个权限用于读取手机屏幕，并非调用 Mac 摄像头。默认关闭**在 Mac 上播放设备声音**，声音保留在 iPhone。开启后，USB 设备音频会转到 Mac，并需要额外授予麦克风权限。
+USB 与 Wi-Fi 都由 WDA/XCTest Runner 提供 H.264 / SRT 纯视频，在 Mac 上使用 VideoToolbox 解码。因此，USB 视频也需要像无线视频一样先准备一次 Runner。
+
+默认关闭**在 Mac 上播放设备声音**，声音留在 iPhone。开启后会单独打开 USB 音频输入，需要相机和麦克风两项权限；关闭后会释放该输入。这些权限只用于可选的 USB 音频，不是视频流的要求。无线会话的声音始终留在手机。
+
+**已知限制：** 切换 USB 音频播放可能让手机的 USB 网络接口重新枚举，隧道重连期间镜像可能短暂中断；音频切换还不是无缝的。
 
 ### Wi-Fi 连接 iPhone
 
 保持 USB 连接，打开**设置这台 iPhone**。向导会检查设备和 Apple Development 签名身份，构建并安装屏幕 Runner，试启动一次，然后在手机上开启 Wi‑Fi 连接（与 Xcode 的“通过网络连接”是同一个开关），之后再拔线。
 
-后续会话由内置的 `smtunnel` 侧车连接手机：它在局域网上用进程内网络协议栈建立 Apple 的 CoreDevice 隧道，并通过 testmanagerd 启动 Runner，不依赖 Xcode 的启动器，不需要管理员密码、本地网络授权或在手机上点任何东西。无线镜像无需相机权限或 ReplayKit Broadcast Extension，但需要这个签名后的设备端 Runner 和手机上的开发者模式；准备无线画面不会自动连接控制。
+后续会话由内置的 `smtunnel` 侧车连接手机：它在局域网上用进程内网络协议栈建立 Apple 的 CoreDevice 隧道，并通过 testmanagerd 启动 Runner，不依赖 Xcode 的启动器，不需要管理员密码、本地网络授权或在手机上点任何东西。与 USB 视频一样，无线镜像无需相机权限或 ReplayKit Broadcast Extension；两者都需要签名后的设备端 Runner 和手机上的开发者模式，准备画面不会自动连接控制。
 
 应用也按同一路径发现手机：只要 usbmuxd 在局域网上列出这台 iPhone，它就显示为已连接，可直接在应用里或通过 MCP 开始镜像。无线镜像或控制进行中插上数据线，当前会话会继续走 Wi‑Fi。
+
+采集、编码、发送和解码都限制了在途缓冲，减少内存增长和延迟积累。画面处理落后时会从新的关键帧恢复，避免持续回放积压帧。HID 触控使用独立于视频 Runner 的输入通道。
 
 ### 连接 Android
 
 安装 `adb`，开启 USB 调试，连接设备并在手机上授权当前 Mac，然后选择发现的设备开始镜像。画面与音频独立运行，不依赖可选的 Appium 控制连接。
 
-## 真机控制
+## 设备控制
 
 点击**连接控制**开始操作。
 
-| 平台 | 控制后端 | 首次连接 |
+| 平台 | 优先触控后端 | 准备工作 |
 | --- | --- | --- |
-| iOS | 经 `smtunnel` 隧道直连 WebDriverAgent（USB 与 Wi‑Fi 同一条路径） | 在 iPhone 设置向导中用 USB 准备一次：信任 Mac、开启开发者模式、用 Apple Development 身份签名并安装屏幕代理 |
+| iPhone 真机 · iOS 27+ | USB 或 Wi‑Fi 系统 HID | Mac 安装兼容的 Xcode；手机与当前 Mac 配对，开启开发者模式并解锁 |
+| iOS 模拟器 | 模拟器系统 HID，支持 WDA 兼容控制 | 兼容的 Xcode 运行时；启动模拟器；代理无需签名 |
+| iPhone 真机 · 其他 iOS 版本，或 HID 不可用 | WebDriverAgent / XCTest 兼容控制 | 在 iPhone 设置向导中用 USB 准备一次：信任 Mac、开启开发者模式、用 Apple Development 身份签名并安装 Runner |
 | Android | Appium + UiAutomator2（发布包内置 Node / Appium 运行时） | 按需安装 Appium settings / server 辅助 APK |
 
-镜像上的手势会尽量还原鼠标的动作：慢速拖动按记录的路径与节奏回放，快速拨动保留起点、方向和速度，由手机自然惯性滑动；按住不动是长按（右键也是），双击是双击，鼠标滚轮和触控板都能滚动，触控板捏合与旋转对应手机上的捏合与旋转，返回是系统的边缘滑动。iPhone 上的触控通过代理中的 StupidMirror 专用接口直接交给 XCTest 事件合成，省去 WebDriverAgent 每次查询前台 App 的开销；0.4.0 之前准备过的手机会自动退回原有接口，用 USB 连接后在 iPhone 设置中点一次“重新准备”即可启用。XCTest 只能在鼠标抬起后整体回放一个手势，所以按住期间“手指跟随”目前做不到。“诊断”里可以看到每台设备最近手势的往返耗时。界面默认跟随系统浅色/深色，也可以在“设置 → 界面”或菜单栏中固定。高级设置允许为 Android 配置自定义 Appium 地址，默认是 `http://127.0.0.1:4723`。
+**可用时默认使用 HID。** 控制就绪旁的 **HID** 标记表示当前已连接实时触控。单指按下、移动和抬起会随操作持续发送：按住鼠标左键拖动或停住长按，也可以从屏幕边缘发起系统手势；静止触点会保持到实际抬手。默认触屏模式不把右键映射成长按。原生镜像、Codex 预览与 MCP 坐标手势共用同一套触控后端。设备面板中的静态或已停止预览不接受设备输入，请先打开实时镜像再操作。
+
+设备提供原生手势服务时，Mac 镜像会将触控板滚动、缩放和旋转作为系统手势逐事件转发，鼠标滚轮和惯性阶段的事件也逐条发送。服务不可用时仍保留兼容手势路径。程序化调用中指定中心点的捏合/旋转继续使用 WDA，以保留指定中心点的语义，不能将它们与原生触控板手势等同。
+
+HID 无法连接时，自动使用 WDA 兼容路径。兼容模式会记录鼠标轨迹，在抬手后回放，无法实时跟随；中途断开的手势不会换通道重放。HID 触控本身不安装或启动 WDA，但 USB 和 Wi-Fi 的 iPhone 视频都需要签名后的 Runner。文字输入、硬件式按键、App 操作、原生无障碍自动化和指定中心点的捏合/旋转也会按需准备 WDA；在 iPhone 真机上，这些能力需要完成上面的设置。
+
+鼠标双击对应设备双击。界面默认跟随系统浅色/深色，也可以在“设置 → 界面”或菜单栏中固定。高级设置允许为 Android 配置自定义 Appium 地址，默认是 `http://127.0.0.1:4723`。
 
 ## 连接 AI Agent
 
 ### Codex 插件：从应用内一键接入
 
-1. 将包含 Codex 插件的新构建安装到 Applications，打开 StupidMirror。首次使用 iPhone，先通过 USB 连接并完成应用内的 **iPhone 连接引导**；Android 需开启 USB 调试并授权此 Mac。
+1. 将包含 Codex 插件的新构建安装到 Applications，打开 StupidMirror。使用 USB 或 Wi-Fi iPhone 视频，以及 WDA 能力时，先通过 USB 连接并完成应用内的 **iPhone 连接引导**；系统 HID 触控需满足上面的配对、Xcode 和开发者模式要求。Android 需开启 USB 调试并授权此 Mac。
 2. 打开 **设置 → MCP 自动化**，点击 **接入 Codex**。应用会启用本地 MCP、安装随 App 附带的插件，并复用 Codex / ChatGPT 桌面端内置的 CLI；无需克隆仓库、安装 Python / Node.js 或复制 Token。
 3. 在 Codex 新建聊天，选择 **StupidMirror** 插件，发送：
 
@@ -117,7 +133,9 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 
 4. Codex 会按需在后台启动 StupidMirror。实时手机画面通过本机 WebRTC 直接显示在 Codex 插件面板内，支持选择设备、刷新、暂停/继续、返回主屏幕和复制截图；不会自动打开原生镜像窗口。保持手机已连接并解锁。
 
-**直接操作和标注：** 点击预览工具栏的 **操作**，控制连接就绪后可点按、拖动手机画面；AI 仍可通过 MCP 点击、滑动、输入和读取页面。点击 **标注** 会冻结当前画面：空白处拖动框选，框内拖动移动，拖动边缘或角点缩放，支持删除和撤销。细输入栏位于画面下方，只发送标注截图和说明；**⌘＋回车**（或 **Ctrl＋回车**）发送，普通回车换行。标注模式不会把拖动发送给手机。
+**直接操作和标注：** 点击预览工具栏的 **操作**，控制连接就绪后可点按、长按、拖动手机画面，与原生镜像一样优先使用 HID 并支持兼容降级；AI 仍可通过 MCP 点击、滑动、输入和读取页面。点击 **标注** 会冻结当前画面：空白处拖动框选，框内拖动移动，拖动边缘或角点缩放，支持删除和撤销。细输入栏位于画面下方，只发送标注截图和说明；**⌘＋回车**（或 **Ctrl＋回车**）发送，普通回车换行。标注模式不会把拖动发送给手机。
+
+浏览器滚轮也接入共用的手势后端，但浏览器事件不包含完整的 macOS 原生相位和加速度信息，不能视为与 Mac 原生镜像完全一致的输入。
 
 视频在本机通过加密 WebRTC 传输，不使用云端中转。宿主没有 WebRTC API 时使用原分辨率 PNG；WebRTC 连接失败会显示原因和重试按钮，不会悄悄改用截图轮询；正式聊天的标注发送取决于宿主的图片消息能力。
 
@@ -154,6 +172,7 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 | 验证 | `wait_for`、`assert_screen`、`observe_screen` | 检查操作后的状态 |
 | 引导 | `highlight_clickable_elements`、`highlight_elements`、`clear_highlights` | 只在 Mac 镜像上标记目标，不发送输入 |
 | 应用 | `list_apps`、`install_app`、`uninstall_app`、`open_url`、`activate_app`、`terminate_app` | 安装构建产物（.app/.ipa/.apk）、打开深链接、启动或结束 App |
+| 模拟器姿态 | `set_device_posture` | 改变受支持的折叠模拟器的实际铰链和活动屏幕 |
 | 录屏 | `start_recording`、`stop_recording` | 把实时镜像保存为 `~/Movies/StupidMirror` 下的 .mp4（最长 10 分钟） |
 
 <details>
@@ -176,11 +195,13 @@ macOS 将 iPhone 屏幕暴露为 AVFoundation 捕获源，因此需要相机权�
 ## 架构与隐私
 
 ```text
-iPhone USB → AVFoundation ─┐
-iPhone LAN → H.264 / SRT ──┼→ 采集 → 原生镜像 / Vision OCR
-Android → ADB / scrcpy ────┘    └→ H.264 → 本机 WebRTC → Codex 面板
+iPhone USB / Wi-Fi → WDA/XCTest H.264 / SRT ─┐
+Android → ADB / scrcpy ───────────────────────┴→ 采集 → 原生镜像 / Vision OCR
+                                                   └→ H.264 → 本机 WebRTC → Codex 面板
+iPhone USB 音频 → 可选的独立音频输入 → Mac 播放
 Codex → 内置 stdio 桥接 → 本机鉴权 MCP → 观察 / 操作
-iOS 操作 → smtunnel / WDA；Android 操作 → Appium / UiAutomator2
+iOS 触控 / 受支持的原生手势 → 系统 HID；兼容 / 语义操作 → WDA
+Android 操作 → Appium / UiAutomator2
 ```
 
 采集、播放和 OCR 均在本地完成。StupidMirror 不会自行将镜像内容上传到模型服务商。**外部 AI 客户端可以通过 MCP 获取截图和工具结果**；后续如何处理这些信息，取决于该客户端的账号、模型服务商和数据设置。
