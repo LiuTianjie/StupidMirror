@@ -74,7 +74,7 @@ final class MCPServerTests: XCTestCase {
     func testToolCatalogContainsTheApprovedSurfaceAndStrictSchemas() {
         let expected = Set([
             "list_devices", "refresh_devices", "get_device_status", "get_diagnostics",
-            "show_screen", "screen_frame", "screen_action", "screen_signal",
+            "show_screen", "open_viewer", "screen_frame", "screen_action", "screen_signal",
             "start_mirror", "stop_mirror", "set_mirror_floating",
             "connect_control", "disconnect_control", "screenshot", "get_ui_tree", "set_device_posture",
             "observe_screen", "find_element", "find_any_element", "tap_text",

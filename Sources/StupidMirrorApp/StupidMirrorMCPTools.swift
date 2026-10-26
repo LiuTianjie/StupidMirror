@@ -18,6 +18,10 @@ enum StupidMirrorMCPToolCatalog {
             ])
         ),
         tool(
+            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code, when the user wants to watch or operate the phone. Show the url to the user as a clickable link; in the Claude desktop app they can open it in the Browser pane. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
+            deviceProperties
+        ),
+        tool(
             "screen_frame", "App-only cached preview frame. Never captures through WDA, queries accessibility or acquires the device action lock.",
             deviceProperties.merging([
                 "after_seq": integer("Last displayed frame sequence.", minimum: 0, maximum: Int.max, defaultValue: 0),
@@ -458,6 +462,8 @@ enum StupidMirrorMCPToolCatalog {
 @MainActor
 final class StupidMirrorMCPToolRouter: @unchecked Sendable {
     private let automation: DeviceAutomationService
+    /// Mints viewer links. Weak: the gateway's tool caller retains this router.
+    weak var viewer: MCPViewerGateway?
 
     init(automation: DeviceAutomationService) {
         self.automation = automation
@@ -484,6 +490,23 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     content: [.text(preview.message ?? "The embedded phone preview is ready.")],
                     structuredContent: Optional.some(try Value(preview)), isError: false,
                     _meta: Metadata(additionalFields: ["openai/widgetSessionId": "stupidmirror-screen"])
+                )
+            case "open_viewer":
+                guard let viewer else { throw DeviceAutomationError.controlFailed("The viewer is unavailable while the MCP server is stopped.") }
+                let preview = try await automation.showScreen(deviceID: optionalString("device_id", args), action: "open")
+                let link = try viewer.makeLink(deviceID: preview.device?.id)
+                var structured: [String: Value] = [
+                    "url": .string(link.url.absoluteString),
+                    "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt))
+                ]
+                if let device = preview.device {
+                    structured["device_id"] = .string(device.id)
+                    structured["device_name"] = .string(device.model)
+                }
+                if let message = preview.message { structured["message"] = .string(message) }
+                return CallTool.Result(
+                    content: [.text("Live phone viewer: \(link.url.absoluteString)\nShow this link to the user. It opens one viewer and expires in 10 minutes if unused.")],
+                    structuredContent: .object(structured), isError: false
                 )
             case "screen_frame":
                 let afterSequence = args["after_seq"]?.intValue ?? 0

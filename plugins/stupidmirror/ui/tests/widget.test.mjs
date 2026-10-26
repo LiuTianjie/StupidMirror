@@ -18,7 +18,7 @@ const preview = (fields = {}) => ({ server_time: 1000, frame: null, viewport: nu
 // Fixtures exist only in this isolated DOM test, never in the shipped widget.
 const frame = (seq = 1) => ({ seq, data: 'test-image-only', mimeType: 'image/png', width: 900, height: 1800 });
 
-async function harness({ reducedMotion = false, context = { displayMode: 'inline', availableDisplayModes: ['fullscreen'] }, reply, connectReply, messageReply, messageImage = true, rtc } = {}) {
+async function harness({ reducedMotion = false, context = { displayMode: 'inline', availableDisplayModes: ['fullscreen'] }, reply, connectReply, messageReply, messageImage = true, rtc, hostCapabilities, standalone } = {}) {
   let now = 0;
   let timerId = 0;
   let instance;
@@ -79,7 +79,7 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     async connect() { lifecycle.push('connect'); if (connectReply) await connectReply(); }
     async close() { this.onclose?.(); }
     getHostContext() { return context; }
-    getHostCapabilities() { return {message:{text:{},...(messageImage ? {image:{}} : {})},updateModelContext:{image:{}}}; }
+    getHostCapabilities() { return hostCapabilities ?? {message:{text:{},...(messageImage ? {image:{}} : {})},updateModelContext:{image:{}}}; }
     async sendMessage(params, options) { sentMessages.push(params); messageOptions.push(options); return messageReply ? messageReply(params) : {}; }
     async updateModelContext(params) { contextUpdates.push(params); return {}; }
     async requestDisplayMode(params) { lifecycle.push(params.mode); return { mode: params.mode }; }
@@ -100,8 +100,10 @@ async function harness({ reducedMotion = false, context = { displayMode: 'inline
     createElementNS: () => ({ ...elements.model, style: { ...elements.model.style }, dataset: {}, handlers: new Map(), children: [] }),
     addEventListener: (name, fn) => listeners.set(name, fn),
     removeEventListener: name => listeners.delete(name),
+    ...(standalone ? { querySelector: selector => selector === 'meta[name="stupidmirror-viewer"]' ? {} : null } : {}),
   };
   await vm.runInNewContext(code, {
+    ...(standalone?.globals ?? {}),
     MockApp, document, Error, AbortController, RTCPeerConnection:rtc, Image:class { async decode() {} },
     matchMedia: () => ({ matches: reducedMotion }),
     performance: { now: () => now },
@@ -1155,4 +1157,90 @@ test('wheel without native gesture capability does not manufacture a finger fall
   await flush();
   assert.equal(h.calls.length,before); assert.equal(prevented,false);
   await h.app.onteardown();
+});
+
+test('annotation is offered only when the host can receive a message', async () => {
+  const codex = await harness();
+  assert.equal(codex.elements['annotate-button'].hidden, false);
+  const plain = await harness({ hostCapabilities: {} });
+  assert.equal(plain.elements['annotate-button'].hidden, true);
+});
+
+// The app serves this widget at /viewer for Claude Code's Browser pane.
+function viewerPage({ hash = '', stored, session = { session: 'viewer-session', device_id: 'phone-1' }, call } = {}) {
+  const requests = [];
+  const replaced = [];
+  const storage = new Map(stored ? [['stupidmirror.viewer', JSON.stringify(stored)]] : []);
+  const response = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+  const globals = {
+    URLSearchParams, location: { hash, pathname: '/viewer', search: '' },
+    history: { replaceState: (_state, _title, url) => replaced.push(url) },
+    sessionStorage: {
+      getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key),
+    },
+    fetch: async (path, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ path, body, headers: init.headers, credentials: init.credentials });
+      if (path === '/viewer/api/session') return typeof session === 'number' ? response(session, {}) : response(200, session);
+      return call ? call(body) : response(200, { structuredContent: preview(), isError: false });
+    },
+  };
+  return { globals, requests, replaced, storage, response };
+}
+
+test('viewer page trades its one-time ticket for a tab session and opens the bound phone', async () => {
+  const page = viewerPage({ hash: '#ticket=one-time' });
+  const h = await harness({ standalone: page }); await flush();
+  assert.equal(h.app, undefined, 'no MCP Apps bridge is created');
+  assert.deepEqual(page.replaced, ['/viewer']);
+  // Objects from the page realm compare by value, not prototype.
+  assert.equal(JSON.stringify(page.requests[0]), JSON.stringify({ path: '/viewer/api/session', body: { ticket: 'one-time' },
+    headers: { 'Content-Type': 'application/json' }, credentials: 'omit' }));
+  assert.equal(JSON.parse(page.storage.get('stupidmirror.viewer')).session, 'viewer-session');
+  const open = page.requests[1];
+  assert.equal(open.path, '/viewer/api/call');
+  assert.deepEqual(open.body, { name: 'show_screen', arguments: { device_id: 'phone-1' } });
+  assert.equal(open.headers['X-StupidMirror-Viewer'], 'viewer-session');
+  assert.equal(h.elements['annotate-button'].hidden, true);
+  await h.tick(); await flush();
+  assert.equal(page.requests.at(-1).body.name, 'screen_frame');
+});
+
+test('viewer page reuses its tab session after a reload', async () => {
+  const page = viewerPage({ stored: { session: 'kept' } });
+  const h = await harness({ standalone: page }); await flush();
+  assert.equal(page.requests.some(request => request.path === '/viewer/api/session'), false);
+  assert.deepEqual(page.requests[0].body, { name: 'show_screen', arguments: {} });
+  assert.equal(page.requests[0].headers['X-StupidMirror-Viewer'], 'kept');
+  assert.equal(h.elements['empty-retry'].hidden, true);
+});
+
+test('viewer page explains a used or missing link without retrying', async () => {
+  for (const [options, text] of [
+    [{ hash: '#ticket=used', session: 401 }, '这个查看链接已使用或已过期'],
+    [{}, '请通过 Claude 提供的链接打开手机画面'],
+  ]) {
+    const page = viewerPage(options);
+    const h = await harness({ standalone: page }); await flush();
+    assert.equal(h.elements['empty-state-text'].textContent, text);
+    assert.match(h.elements['empty-hint'].textContent, /open_viewer/);
+    assert.equal(h.elements['empty-retry'].hidden, true);
+    const sent = page.requests.length;
+    for (let i = 0; i < 5; i++) await h.tick();
+    assert.equal(page.requests.length, sent, 'no polling after a link error');
+  }
+});
+
+test('viewer page stops and forgets its session when the app ends it', async () => {
+  let ended = false;
+  const page = viewerPage({ stored: { session: 'old' }, call: body => ended || body.name === 'screen_frame'
+    ? (ended = true, page.response(401, { error: { code: 'viewer_session_expired' } }))
+    : page.response(200, { structuredContent: preview() }) });
+  const h = await harness({ standalone: page }); await flush();
+  await h.tick(); await flush();
+  assert.equal(page.storage.has('stupidmirror.viewer'), false);
+  assert.equal(h.elements['empty-state-text'].textContent, '查看会话已结束');
+  const sent = page.requests.length;
+  for (let i = 0; i < 5; i++) await h.tick();
+  assert.equal(page.requests.length, sent);
 });

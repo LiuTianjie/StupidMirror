@@ -27,6 +27,7 @@ import type { TouchPhase } from './touch';
 import { createAnnotations, type Point as NormalizedPoint } from './annotations';
 import { validMesh, type ScreenMesh } from './mesh';
 import { createDuoPreview, validDuoPose, type DuoPose, type DuoAsset } from './duo';
+import { createStandaloneHost, isStandaloneViewer, ViewerLinkError } from './standalone';
 
 type Size = { width: number; height: number };
 type Point = { x: number; y: number };
@@ -123,7 +124,7 @@ let canSetPosture = false;
 let changingPosture = false;
 let shell: Shell | undefined;
 const shellCache = new Map<string, Shell>();
-const app = new App(
+const app = isStandaloneViewer() ? createStandaloneHost() : new App(
   { name: 'StupidMirror', version: '0.2.7' },
   { availableDisplayModes: ['fullscreen'] },
   { autoResize: false },
@@ -245,6 +246,17 @@ function showConnectionError(reason: string, retrying = false) {
   emptyText.textContent = reason;
   emptyHint.textContent = retrying ? '正在自动重新连接…' : '点击重试，重新建立预览连接';
   retryButton.hidden = false;
+}
+
+// Only a new link from the agent repairs this, so offer no retry.
+function showViewerLinkError(error: ViewerLinkError) {
+  pollBlocked = true;
+  retainFrame(); setLive('offline');
+  emptyState.hidden = false; device.hidden = screen.hidden = true;
+  showEmpty('unavailable');
+  emptyText.textContent = error.message;
+  emptyHint.textContent = '请让 Claude 重新打开手机画面（open_viewer），再点击新链接';
+  retryButton.hidden = true;
 }
 
 function setLive(state: LiveState) {
@@ -663,6 +675,7 @@ async function poll() {
       ? 1000 : Math.max(0, FRAME_INTERVAL - (performance.now() - started));
   } catch (error) {
     if (controller.signal.aborted) return;
+    if (error instanceof ViewerLinkError) { showViewerLinkError(error); return; }
     failures += 1;
     pollBlocked = failures >= 3;
     nextDelay = Math.min(2000, 500 * failures);
@@ -1052,6 +1065,8 @@ async function initialize() {
   await app.connect(undefined, { timeout: REQUEST_TIMEOUT });
   if (disposed) { await app.close(); return; }
   ready = true;
+  // Annotations are sent into the host's chat; a plain page has none.
+  annotateButton.hidden = !app.getHostCapabilities()?.message;
   const context = app.getHostContext();
   applyTheme(context?.theme);
   if (!requestedFullscreen && context?.displayMode !== 'fullscreen'
@@ -1068,5 +1083,8 @@ emptyState.hidden = false;
 showEmpty('connecting');
 fitFrame();
 syncTools();
-try { await connect(); } catch { retainFrame(); setLive('offline'); }
+try { await connect(); } catch (error) {
+  if (error instanceof ViewerLinkError) showViewerLinkError(error);
+  else { retainFrame(); setLive('offline'); }
+}
 schedule(ready ? 0 : 1000);

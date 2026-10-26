@@ -208,6 +208,7 @@ final class MCPServerManager: ObservableObject {
     private let automation: DeviceAutomationService
     private let tokenStore: MCPTokenStore
     private var tokenBox: MCPTokenBox?
+    private var viewer: MCPViewerGateway?
     private var application: MCPHTTPApplication?
     private var serverTask: Task<Void, Never>?
     private var generation: UInt64 = 0
@@ -276,6 +277,30 @@ final class MCPServerManager: ObservableObject {
             ])
             let router = StupidMirrorMCPToolRouter(automation: automation)
             let eventSink = MCPServerEventSink(manager: self)
+            let callTool: MCPViewerGateway.ToolCaller = { name, arguments in
+                let startedAt = ContinuousClock.now
+                let result = await router.call(name: name, arguments: arguments)
+                let duration = startedAt.duration(to: .now)
+                let milliseconds = Int(duration.components.seconds * 1_000)
+                    + Int(duration.components.attoseconds / 1_000_000_000_000_000)
+                let errorCode = result.structuredContent?
+                    .objectValue?["error"]?
+                    .objectValue?["code"]?
+                    .stringValue
+                if name != "screen_frame" {
+                    await eventSink.recordCall(
+                        tool: name,
+                        deviceID: arguments?["device_id"]?.stringValue,
+                        durationMilliseconds: max(0, milliseconds),
+                        succeeded: result.isError != true,
+                        errorCode: result.isError == true ? (errorCode ?? "tool_error") : nil
+                    )
+                }
+                return result
+            }
+            let viewer = MCPViewerGateway(port: port, callTool: callTool)
+            router.viewer = viewer
+            self.viewer = viewer
             connectionInstanceID = UUID()
             let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
                 ?? "development"
@@ -302,25 +327,7 @@ final class MCPServerManager: ObservableObject {
                         ListTools.Result(tools: StupidMirrorMCPToolCatalog.tools)
                     }
                     await server.withMethodHandler(CallTool.self) { request in
-                        let startedAt = ContinuousClock.now
-                        let result = await router.call(name: request.name, arguments: request.arguments)
-                        let duration = startedAt.duration(to: .now)
-                        let milliseconds = Int(duration.components.seconds * 1_000)
-                            + Int(duration.components.attoseconds / 1_000_000_000_000_000)
-                        let errorCode = result.structuredContent?
-                            .objectValue?["error"]?
-                            .objectValue?["code"]?
-                            .stringValue
-                        if request.name != "screen_frame" {
-                        await eventSink.recordCall(
-                            tool: request.name,
-                            deviceID: request.arguments?["device_id"]?.stringValue,
-                            durationMilliseconds: max(0, milliseconds),
-                            succeeded: result.isError != true,
-                            errorCode: result.isError == true ? (errorCode ?? "tool_error") : nil
-                        )
-                        }
-                        return result
+                        await callTool(request.name, request.arguments)
                     }
                     return server
                 },
@@ -329,7 +336,8 @@ final class MCPServerManager: ObservableObject {
                 },
                 startedHandler: {
                     try await eventSink.markRunning(generation: currentGeneration)
-                }
+                },
+                viewer: viewer
             )
             application = app
             serverTask = Task { [weak self] in
@@ -351,6 +359,8 @@ final class MCPServerManager: ObservableObject {
         removeConnectionFile()
         let app = application
         application = nil
+        viewer?.revokeAll()
+        viewer = nil
         await app?.stop()
         await serverTask?.value
         serverTask = nil
@@ -368,6 +378,7 @@ final class MCPServerManager: ObservableObject {
         let token = try tokenStore.rotate()
         bearerToken = token
         tokenBox?.replace(with: token)
+        viewer?.revokeAll()
         if status.isRunning, let instanceID = connectionInstanceID {
             // Remove the old credentials before writing so a failure cannot leave a stale token.
             connectionFile.remove(ifOwnedBy: instanceID)
@@ -410,6 +421,8 @@ final class MCPServerManager: ObservableObject {
     private func serverExited(generation: UInt64, error: Error?) {
         guard generation == self.generation else { return }
         removeConnectionFile()
+        viewer?.revokeAll()
+        viewer = nil
         application = nil
         serverTask = nil
         connectedClientCount = 0
@@ -447,6 +460,6 @@ final class MCPServerManager: ObservableObject {
     }
 
     nonisolated private static let instructions = """
-    Automate iOS and Android devices through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror and control one device at a time; activation unlocks simultaneous devices. Call show_screen before reading the screen: it starts capture without a native mirror window, and in Codex it also shows a live embedded preview. Use start_mirror only when the user explicitly requests a separate Mac mirror. Connect control for native accessibility and actions. For routine navigation use tap_text with all candidate labels in one call; use find_any_element when inspection is needed before tapping. With include_ocr=true these tools inspect the live frame with local Apple Vision first, then fetch at most one native hierarchy when pixels do not expose a label. Never probe synonyms with repeated find_element calls. observe_screen defaults to an image plus compact OCR, without a native hierarchy. Keep the image when the task is visual or unclear; set include_image=false only for clearly text-only reads. observe_screen, find_element and find_any_element default to response_format=compact; use full only for raw geometry/hierarchy diagnostics. Compact element ids and observation ids remain usable with tap_element; center is only a rounded normalized hint. Request the native hierarchy only for missing or ambiguous semantics. Do not send full screenshots after every action; verify the relevant text or state. Use observe_screen with include_image=true when neither OCR nor accessibility describes an icon, canvas, or custom control; inspect the screenshot and use a targeted normalized coordinate. Request include_accessibility=true for switch values, selection and other missing native state; use get_ui_tree for hierarchy debugging. Native source snapshots can take seconds; on iOS they may also disturb a focused text field. Once a field is focused, use replace_text to overwrite it or clear_text to empty it without an intermediate accessibility query; use type_text only to append. When a native mirror was explicitly opened, highlight_clickable_elements can number clickable targets and highlight_elements can mark selected targets; these native overlays never tap the device. In the embedded preview, users can freeze the screen and send their own screenshot annotations. Treat annotated coordinates as a frozen reference and reobserve before acting. Fast OCR reads Latin scripts; requests that include Chinese or other scripts are read in accurate mode automatically. Request accurate mode for small or ambiguous Latin text. The Codex preview shows the live device; native mirror windows also show action highlights when explicitly opened. Perform one targeted observation after actions that need verification.
+    Automate iOS and Android devices through StupidMirror. Start with list_devices. With multiple devices always pass device_id. Unactivated installations can mirror and control one device at a time; activation unlocks simultaneous devices. Call show_screen before reading the screen: it starts capture without a native mirror window, and in Codex it also shows a live embedded preview. In hosts without embedded panels, such as Claude Code, call open_viewer when the user wants to watch or operate the phone and show them its link. Use start_mirror only when the user explicitly requests a separate Mac mirror. Connect control for native accessibility and actions. For routine navigation use tap_text with all candidate labels in one call; use find_any_element when inspection is needed before tapping. With include_ocr=true these tools inspect the live frame with local Apple Vision first, then fetch at most one native hierarchy when pixels do not expose a label. Never probe synonyms with repeated find_element calls. observe_screen defaults to an image plus compact OCR, without a native hierarchy. Keep the image when the task is visual or unclear; set include_image=false only for clearly text-only reads. observe_screen, find_element and find_any_element default to response_format=compact; use full only for raw geometry/hierarchy diagnostics. Compact element ids and observation ids remain usable with tap_element; center is only a rounded normalized hint. Request the native hierarchy only for missing or ambiguous semantics. Do not send full screenshots after every action; verify the relevant text or state. Use observe_screen with include_image=true when neither OCR nor accessibility describes an icon, canvas, or custom control; inspect the screenshot and use a targeted normalized coordinate. Request include_accessibility=true for switch values, selection and other missing native state; use get_ui_tree for hierarchy debugging. Native source snapshots can take seconds; on iOS they may also disturb a focused text field. Once a field is focused, use replace_text to overwrite it or clear_text to empty it without an intermediate accessibility query; use type_text only to append. When a native mirror was explicitly opened, highlight_clickable_elements can number clickable targets and highlight_elements can mark selected targets; these native overlays never tap the device. In the embedded preview, users can freeze the screen and send their own screenshot annotations. Treat annotated coordinates as a frozen reference and reobserve before acting. Fast OCR reads Latin scripts; requests that include Chinese or other scripts are read in accurate mode automatically. Request accurate mode for small or ambiguous Latin text. The Codex preview shows the live device; native mirror windows also show action highlights when explicitly opened. Perform one targeted observation after actions that need verification.
     """
 }

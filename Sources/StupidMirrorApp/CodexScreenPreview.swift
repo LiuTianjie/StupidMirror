@@ -88,7 +88,7 @@ struct CodexPreviewState: Codable, Sendable {
 
 enum StupidMirrorScreenResource {
     static let displayName = "StupidMirror"
-    private static var pageURL: URL? {
+    static var pageURL: URL? {
         Bundle.main.resourceURL?.appendingPathComponent("CodexPlugin/plugins/stupidmirror/assets/phone-screen.html")
     }
     // Codex may retain an opened MCP App by resource URI across app upgrades.

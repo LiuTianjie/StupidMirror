@@ -23,6 +23,7 @@ actor MCPHTTPApplication {
     private let serverFactory: ServerFactory
     private let sessionCountHandler: SessionCountHandler
     private let startedHandler: StartedHandler
+    nonisolated let viewer: MCPViewerGateway?
     private var channel: Channel?
     private var eventLoopGroup: MultiThreadedEventLoopGroup?
     private var sessions: [String: SessionContext] = [:]
@@ -35,7 +36,8 @@ actor MCPHTTPApplication {
         validationPipeline: any HTTPRequestValidationPipeline,
         serverFactory: @escaping ServerFactory,
         sessionCountHandler: @escaping SessionCountHandler,
-        startedHandler: @escaping StartedHandler
+        startedHandler: @escaping StartedHandler,
+        viewer: MCPViewerGateway? = nil
     ) {
         self.host = host
         self.port = port
@@ -44,6 +46,7 @@ actor MCPHTTPApplication {
         self.serverFactory = serverFactory
         self.sessionCountHandler = sessionCountHandler
         self.startedHandler = startedHandler
+        self.viewer = viewer
     }
 
     func start() async throws {
@@ -251,6 +254,18 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
         }
         let path = state.head.uri.split(separator: "?").first.map(String.init) ?? state.head.uri
         let endpointPath = await app.endpointPath()
+        if path != endpointPath, let viewer = app.viewer, MCPViewerGateway.handles(path: path) {
+            var headers: [String: String] = [:]
+            for (name, value) in state.head.headers { headers[name.lowercased()] = value }
+            let bytes = state.body.getBytes(at: 0, length: state.body.readableBytes) ?? []
+            let response = await viewer.handle(
+                method: state.head.method.rawValue, path: path, headers: headers,
+                body: bytes.isEmpty ? nil : Data(bytes)
+            )
+            writeBody(response.body, statusCode: response.statusCode, headers: response.headers,
+                      version: state.head.version, context: context)
+            return
+        }
         guard path == endpointPath else {
             await write(
                 .error(statusCode: 404, .invalidRequest("Not Found")),
@@ -309,22 +324,33 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
                 safeContext.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
             }
         default:
-            let body = response.bodyData ?? Data()
-            safeContext.eventLoop.execute {
-                var head = HTTPResponseHead(
-                    version: version,
-                    status: HTTPResponseStatus(statusCode: response.statusCode)
-                )
-                for (name, value) in response.headers { head.headers.add(name: name, value: value) }
-                head.headers.replaceOrAdd(name: "Content-Length", value: String(body.count))
-                safeContext.write(self.wrapOutboundOut(.head(head)), promise: nil)
-                if !body.isEmpty {
-                    var buffer = safeContext.channel.allocator.buffer(capacity: body.count)
-                    buffer.writeBytes(body)
-                    safeContext.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
-                }
-                safeContext.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
+            writeBody(response.bodyData ?? Data(), statusCode: response.statusCode, headers: response.headers,
+                      version: version, context: context)
+        }
+    }
+
+    private func writeBody(
+        _ body: Data,
+        statusCode: Int,
+        headers: [String: String],
+        version: HTTPVersion,
+        context: ChannelHandlerContext
+    ) {
+        nonisolated(unsafe) let safeContext = context
+        safeContext.eventLoop.execute {
+            var head = HTTPResponseHead(
+                version: version,
+                status: HTTPResponseStatus(statusCode: statusCode)
+            )
+            for (name, value) in headers { head.headers.add(name: name, value: value) }
+            head.headers.replaceOrAdd(name: "Content-Length", value: String(body.count))
+            safeContext.write(self.wrapOutboundOut(.head(head)), promise: nil)
+            if !body.isEmpty {
+                var buffer = safeContext.channel.allocator.buffer(capacity: body.count)
+                buffer.writeBytes(body)
+                safeContext.write(self.wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
             }
+            safeContext.writeAndFlush(self.wrapOutboundOut(.end(nil)), promise: nil)
         }
     }
 }
