@@ -56,7 +56,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 - **按需连接设备控制。** iOS 默认优先使用系统 HID 实时触控，WDA 提供兼容控制和语义自动化；Android 使用 Appium / UiAutomator2。支持点击、拖动、长按、输入、按键和 App 启停。打开 USB 或 Android 镜像不会自动建立控制会话。
 - **Agent 可以观察操作对象。** 实时帧、Apple Vision OCR、按需无障碍树、语义定位、等待与断言都围绕同一台真机工作。
 - **自动化过程可见。** Agent 的点击、滑动路径和目标高亮显示在 Mac 镜像上，不改变手机画面，也不写入编码后的视频。
-- **接入已有 AI 客户端。** 内置 Codex 与 Claude Code 配置向导；StupidMirror 本身无需模型 API Key，也不内置模型。
+- **接入已有 AI 客户端。** Codex 与 Claude Code 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端可按配置向导接入；StupidMirror 本身无需模型 API Key，也不内置模型。
 
 ## 从一台设备开始
 
@@ -147,12 +147,20 @@ HID 无法连接时，自动使用 WDA 兼容路径。兼容模式会记录鼠�
 
 如果已有手动配置的 `stupidmirror` MCP，安装器仅在其 URL 与当前应用端点一致时迁移这一条配置，并在本机保留私有恢复副本；其他配置保持不变。不匹配的同名连接会显示提示，避免覆盖。
 
-### 手动 MCP 接入 / Claude Code
+### Claude Code：在应用内一键接入
+
+在**设置 → MCP 自动化**中，点击 Codex 卡片旁边的**接入 Claude Code**。一次点击会为当前用户注册 MCP Server，并安装 StupidMirror 插件（设置与设备操作两个 Skill）；已经装好的部分会跳过。之后在终端或 Claude 桌面版的 Code 标签里新开一个 Claude Code 会话，发送：
+
+> 用 StupidMirror 列出我的设备，读取当前屏幕，先不要点击。
+
+MCP 配置通过 stdio 运行应用自带的签名辅助程序，Claude Code 配置里不会写入 Token，端口或 Token 变化后也无需重新接入。指向本应用端点的旧 `stupidmirror` HTTP 配置会被替换；同名但无关的配置会保留。插件直接从已安装的应用中读取，应用更新后插件随之更新。Claude Code 没有内嵌画面面板，想看手机时让它打开原生镜像窗口即可。只有本地会话能连到应用。
+
+### 手动 MCP 接入 / 其他客户端
 
 展开 **高级连接设置 · 其他 AI 客户端**：
 
 1. 打开**设置 → MCP**，启用本地 MCP Server。
-2. 在连接向导中选择 **Codex** 或 **Claude Code**。
+2. 在连接向导中选择 **Codex** 或 **Claude Code**；其他 MCP 客户端使用同样的地址和 Bearer 认证头。
 3. 将生成的配置或命令复制到客户端，其中包含地址、Bearer 认证和准备超时。
 4. 保持 StupidMirror 打开，让 Agent 调用 `list_devices`。
 

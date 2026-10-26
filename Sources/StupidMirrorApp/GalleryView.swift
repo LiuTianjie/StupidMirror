@@ -1253,6 +1253,91 @@ struct LabeledField: View {
     }
 }
 
+/// One AI client's connection: who it is, where it stands, one primary
+/// action, and a starter prompt to paste into a new chat.
+private struct ClientCard<Actions: View>: View {
+    let icon: String
+    let name: String
+    let tagline: String
+    let glyph: StatusGlyph.Kind
+    let detail: String
+    let failure: String?
+    let prompt: String
+    let copyPromptTitle: String
+    @ViewBuilder var actions: () -> Actions
+    let onCopyPrompt: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                IconDisc(systemName: icon, size: 32, tint: Theme.Ink.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.Ink.primary)
+                    Text(tagline)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                StatusGlyph(kind: glyph)
+            }
+            .padding(14)
+
+            RowDivider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let failure {
+                    Text(failure)
+                        .font(Theme.mono(11))
+                        .foregroundStyle(Theme.Ink.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            Spacer(minLength: 12)
+
+            HStack(spacing: 6, content: actions)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
+
+            Button(action: onCopyPrompt) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("“\(prompt)”")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.Surface.raised.opacity(0.5))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(copyPromptTitle)
+            .accessibilityLabel("\(copyPromptTitle): \(prompt)")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.well, style: .continuous))
+        .wellSurface()
+    }
+}
+
 private enum MCPTutorialClient: String, CaseIterable, Identifiable {
     case codex
     case claude
@@ -1263,6 +1348,7 @@ struct MCPAutomationSettingsView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject var manager: MCPServerManager
     @StateObject private var codexInstaller = CodexPluginInstaller()
+    @StateObject private var claudeConnector = ClaudeCodeConnector()
     @State private var portDraft = ""
     @State private var tutorialClient: MCPTutorialClient = .codex
     @State private var showToken = false
@@ -1272,7 +1358,7 @@ struct MCPAutomationSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                codexSetup
+                clientSetup
 
                 VStack(alignment: .leading, spacing: 8) {
                     GroupLabel(title: store.t("mcp.advanced"))
@@ -1305,7 +1391,10 @@ struct MCPAutomationSettingsView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
         }
-        .onAppear { portDraft = String(manager.port) }
+        .onAppear {
+            portDraft = String(manager.port)
+            claudeConnector.refresh(endpoint: manager.endpoint)
+        }
         .confirmationDialog(store.t("mcp.rotateConfirm"), isPresented: $confirmRotation) {
             Button(store.t("mcp.rotateToken"), role: .destructive) {
                 do { try manager.rotateToken() } catch { errorMessage = error.localizedDescription }
@@ -1487,86 +1576,120 @@ struct MCPAutomationSettingsView: View {
         tutorialClient == .codex ? manager.codexConfiguration : manager.claudeCommand
     }
 
-    private var codexSetup: some View {
-        SettingsGroup(title: store.t("mcp.codex.title")) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(store.t("mcp.codex.intro"))
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.Ink.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(14)
-
-                RowDivider()
-
-                codexStep(
-                    glyph: store.sessions.isEmpty ? .idle : .done,
-                    title: store.t("mcp.codex.step1"),
-                    detail: store.sessions.isEmpty
-                        ? store.t("mcp.codex.noDevice")
-                        : String(format: store.t("mcp.codex.devices"), store.sessions.count)
-                ) {
-                    Button(store.t("mcp.codex.phoneSetup")) { store.presentIPhoneSetup() }
-                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-                }
-
-                RowDivider()
-
-                codexStep(
-                    glyph: codexInstallGlyph,
-                    title: store.t("mcp.codex.step2"),
-                    detail: codexInstallDetail
-                ) {
-                    Button {
-                        Task {
-                            await manager.setEnabled(true)
-                            await codexInstaller.install()
-                        }
-                    } label: {
-                        Label(
-                            store.t(codexInstaller.installedThisSession ? "mcp.codex.reinstall" : "mcp.codex.install"),
-                            systemImage: "puzzlepiece.extension"
-                        )
-                    }
-                    .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
-                    .disabled(codexInstaller.isInstalling)
-                }
-                if let error = codexInstaller.error {
-                    Text(error)
-                        .font(Theme.mono(11.5))
+    private var clientSetup: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            SettingsGroup(title: store.t("mcp.clients.title")) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(store.t("mcp.clients.intro"))
+                        .font(.system(size: 12.5))
                         .foregroundStyle(Theme.Ink.secondary)
-                        .textSelection(.enabled)
-                        .padding(.leading, 48)
-                        .padding(.trailing, 14)
-                        .padding(.bottom, 11)
-                }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(14)
 
-                RowDivider()
+                    RowDivider()
 
-                codexStep(
-                    glyph: manager.connectedClientCount > 0 ? .done : .idle,
-                    title: store.t("mcp.codex.step3"),
-                    detail: store.t("mcp.codex.newChat")
-                ) {
-                    HStack(spacing: 6) {
-                        Button(store.t("mcp.codex.copyPrompt")) { copy(store.t("mcp.codex.prompt")) }
-                            .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
-                        Button(store.t("mcp.codex.open")) { codexInstaller.openCodex() }
+                    codexStep(
+                        glyph: store.sessions.isEmpty ? .idle : .done,
+                        title: store.t("mcp.codex.step1"),
+                        detail: store.sessions.isEmpty
+                            ? store.t("mcp.codex.noDevice")
+                            : String(format: store.t("mcp.codex.devices"), store.sessions.count)
+                    ) {
+                        Button(store.t("mcp.codex.phoneSetup")) { store.presentIPhoneSetup() }
                             .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     }
                 }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("“\(store.t("mcp.codex.prompt"))”")
-                        .font(.system(size: 12.5))
-                        .textSelection(.enabled)
-                    Text(store.t("mcp.codex.screen"))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.Ink.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.leading, 48)
-                .padding(.trailing, 14)
-                .padding(.bottom, 12)
             }
+
+            VStack(alignment: .leading, spacing: 8) {
+                GroupLabel(title: store.t("mcp.clients.step2"))
+                HStack(alignment: .top, spacing: 12) {
+                    ClientCard(
+                        icon: "chevron.left.forwardslash.chevron.right",
+                        name: "Codex",
+                        tagline: store.t("mcp.codex.tagline"),
+                        glyph: codexInstallGlyph,
+                        detail: codexInstallDetail,
+                        failure: codexInstaller.error,
+                        prompt: store.t("mcp.codex.prompt"),
+                        copyPromptTitle: store.t("mcp.clients.copyPrompt")
+                    ) {
+                        Button {
+                            Task {
+                                await manager.setEnabled(true)
+                                await codexInstaller.install()
+                            }
+                        } label: {
+                            Label(
+                                store.t(codexInstaller.installedThisSession ? "mcp.codex.reinstall" : "mcp.codex.install"),
+                                systemImage: "puzzlepiece.extension"
+                            )
+                        }
+                        .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
+                        .disabled(codexInstaller.isInstalling)
+                        Spacer(minLength: 8)
+                        Button(store.t("mcp.codex.open")) { codexInstaller.openCodex() }
+                            .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                    } onCopyPrompt: {
+                        copy(store.t("mcp.codex.prompt"))
+                    }
+
+                    ClientCard(
+                        icon: "asterisk",
+                        name: "Claude Code",
+                        tagline: store.t("mcp.claude.tagline"),
+                        glyph: claudeGlyph,
+                        detail: claudeDetail,
+                        failure: claudeConnector.failure.map(claudeFailureText),
+                        prompt: store.t("mcp.claude.prompt"),
+                        copyPromptTitle: store.t("mcp.clients.copyPrompt")
+                    ) {
+                        Button {
+                            Task {
+                                await manager.setEnabled(true)
+                                await claudeConnector.connect(endpoint: manager.endpoint)
+                            }
+                        } label: {
+                            Label(
+                                store.t(claudeConnector.isConnected ? "mcp.claude.reconnect" : "mcp.claude.connect"),
+                                systemImage: "puzzlepiece.extension"
+                            )
+                        }
+                        .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
+                        .disabled(claudeConnector.isConnecting)
+                        Spacer(minLength: 8)
+                        Button(store.t("mcp.claude.open")) { claudeConnector.openClaude() }
+                            .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                    } onCopyPrompt: {
+                        copy(store.t("mcp.claude.prompt"))
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var claudeGlyph: StatusGlyph.Kind {
+        if claudeConnector.isConnecting { return .working }
+        if claudeConnector.failure != nil { return .failed }
+        return claudeConnector.isConnected ? .done : .idle
+    }
+
+    private var claudeDetail: String {
+        if claudeConnector.isConnecting { return store.t("mcp.claude.connecting") }
+        if claudeConnector.failure != nil { return store.t("mcp.codex.failed") }
+        guard claudeConnector.isConnected else { return store.t("mcp.claude.intro") }
+        return claudeConnector.keptExistingServer
+            ? store.t("mcp.claude.connected") + " " + store.t("mcp.claude.keptServer")
+            : store.t("mcp.claude.connected")
+    }
+
+    private func claudeFailureText(_ failure: ClaudeCodeConnector.Failure) -> String {
+        switch failure {
+        case .cliMissing: store.t("mcp.claude.cliMissing")
+        case .helperMissing: store.t("mcp.claude.helperMissing")
+        case .pluginMissing: store.t("mcp.claude.pluginMissing")
+        case let .commandFailed(output): output
         }
     }
 
@@ -1605,10 +1728,10 @@ struct MCPAutomationSettingsView: View {
         if codexInstaller.error != nil { return store.t("mcp.codex.failed") }
         if codexInstaller.installedThisSession {
             return manager.connectedClientCount > 0
-                ? store.t("mcp.codex.installed") + " · " + store.t("mcp.codex.connected")
+                ? store.t("mcp.codex.installed") + " " + store.t("mcp.codex.connected")
                 : store.t("mcp.codex.installed")
         }
-        return manager.connectedClientCount > 0 ? store.t("mcp.codex.connected") : store.t("mcp.codex.intro.short")
+        return store.t("mcp.codex.cardIntro")
     }
 
     private var statusTitle: String {

@@ -56,7 +56,7 @@ The app installs its bundled plugin through the Codex desktop app's CLI; no repo
 - **Control when you ask for it.** iOS prefers live system HID touch, with WebDriverAgent for compatibility and semantic automation; Android uses Appium. Tap, drag, hold, type, press device buttons, and switch apps. Opening a USB or Android mirror does not start a control session.
 - **An agent can see what it is doing.** Live frames, Apple Vision OCR, optional accessibility trees, semantic targeting, waits, and assertions share the same device workspace.
 - **Automation stays visible.** Agent taps, swipe paths, and selected targets appear on the Mac mirror. These overlays do not alter the phone screen or encoded video.
-- **Bring your own AI client.** Built-in connection guides for Codex and Claude Code. StupidMirror itself needs no model API key and runs no embedded model.
+- **Bring your own AI client.** One-click setup for Codex and Claude Code, each installing its plugin and MCP tools; a connection guide covers other MCP clients. StupidMirror itself needs no model API key and runs no embedded model.
 
 ## Start with one device
 
@@ -147,12 +147,20 @@ The plugin reuses the app's device engine and automatically reads port and token
 
 The installer migrates an existing manual `stupidmirror` MCP entry only when its URL matches this app's current endpoint, retaining a private local recovery copy. Other MCP entries are untouched; a conflicting connection produces an actionable error.
 
-### Manual MCP setup / Claude Code
+### Claude Code: connect from the app
+
+In **Settings → MCP Automation**, click **Connect Claude Code**, beside the Codex card. One click registers the MCP server and installs the StupidMirror plugin (setup and device-use skills) for your user account; parts that are already in place are skipped. Then start a new Claude Code session, in the terminal or in the Claude desktop app's Code tab, and ask:
+
+> Use StupidMirror to list my devices and read the current screen without tapping anything.
+
+The MCP entry runs the app's signed helper over stdio, so no token is written to Claude Code's configuration and port or token changes need no reconnection. An older `stupidmirror` HTTP entry for this app's endpoint is replaced; an unrelated entry with that name is kept. The plugin is read in place from the installed app, so app updates refresh it. Claude Code shows no embedded panel: ask it to open the native mirror window when you want to watch the phone. Only local sessions can reach the app.
+
+### Manual MCP setup / other clients
 
 Expand **Advanced connection settings · Other AI clients**:
 
 1. Open **Settings → MCP** and enable the local MCP server.
-2. Choose **Codex** or **Claude Code** in the connection guide.
+2. Choose **Codex** or **Claude Code** in the connection guide; other MCP clients take the same endpoint and bearer header.
 3. Copy the generated configuration or command into that client. It includes the endpoint, bearer authentication, and setup timeout.
 4. Keep StupidMirror open and ask the agent to call `list_devices`.
 

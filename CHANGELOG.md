@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1 - 2026-10-26
+
+- Add one-click **Connect Claude Code** in **Settings → MCP Automation**,
+  beside Codex. It registers the user-scope `stupidmirror` MCP server and
+  installs a StupidMirror plugin with setup and device-use skills written for
+  Claude Code; parts already in place are skipped. It works in the terminal
+  and in the Claude desktop app's Code tab.
+- The Claude Code MCP entry runs the app's signed helper over stdio, so no
+  token is written to Claude Code's configuration and port or token changes
+  need no reconnection. An older `stupidmirror` HTTP entry for this app's
+  endpoint is replaced; an unrelated entry with that name is kept.
+- The plugin is read in place from the installed app, so app updates refresh
+  it. Clicking again after moving the app points Claude Code at the new copy.
+- Redesign the AI client setup as side-by-side Codex and Claude Code cards,
+  each with its status, one install action and a starter prompt to copy.
+
 ## 0.6.0 - 2026-10-26
 
 - Prefer system HID touch on supported iOS 27+ iPhones over USB or Wi-Fi and
