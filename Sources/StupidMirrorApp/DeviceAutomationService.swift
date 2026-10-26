@@ -582,7 +582,7 @@ final class DeviceAutomationService: @unchecked Sendable {
                     ocrError = error.localizedDescription
                 }
             } else {
-                ocrError = "No live mirror frame is available. Call start_mirror first."
+                ocrError = "No live mirror frame is available. Call show_screen to capture in the background, or start_mirror to open the Mac mirror window."
             }
         }
         let elements = ScreenElementFusion.merge(
@@ -1345,7 +1345,7 @@ final class DeviceAutomationService: @unchecked Sendable {
             throw DeviceAutomationError.invalidArgument("This device is already recording. Call stop_recording first.")
         }
         guard session.mirrorSession.state == .running else {
-            throw DeviceAutomationError.mirrorFailed("The mirror is not live. Call start_mirror first.")
+            throw DeviceAutomationError.mirrorFailed("The mirror is not live. Call show_screen to capture in the background, or start_mirror to open the Mac mirror window.")
         }
         let url = Self.recordingURL(
             deviceName: session.device.name,

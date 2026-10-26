@@ -20,6 +20,17 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AutomationDeviceSnapshot.self, from: encoded), snapshot)
     }
 
+    func testListResultsAreWrappedInAnObjectForStrictClients() {
+        // Claude Code rejects a tools/call result whose structuredContent is not an object.
+        let devices: Value = .array([.object(["device_id": "phone"])])
+        XCTAssertEqual(
+            StupidMirrorMCPToolRouter.structuredContent(devices, key: "devices"),
+            .object(["devices": devices])
+        )
+        let snapshot: Value = .object(["device_id": "phone"])
+        XCTAssertEqual(StupidMirrorMCPToolRouter.structuredContent(snapshot, key: "devices"), snapshot)
+    }
+
     func testHTTPInitializationAcceptsCodexCapabilitiesAndStillRequiresAuthentication() async throws {
         let application = MCPHTTPApplication(
             host: "127.0.0.1", port: 17_373, endpoint: "/mcp",

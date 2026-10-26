@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.2 - 2026-10-27
+
+- Fix `list_devices`, `refresh_devices` and `list_apps` in Claude Code, which
+  rejected their results because the device or app list was returned as a
+  bare array. Structured results now wrap the list as `devices` or `apps`;
+  the text result is unchanged.
+- Tell Claude Code to call `show_screen` before reading the screen. It starts
+  background capture without opening a Mac window, so `observe_screen` has a
+  frame. Screen errors now name `show_screen` alongside `start_mirror`, and the
+  tool's description no longer reads as Codex-only.
+
 ## 0.6.1 - 2026-10-26
 
 - Add one-click **Connect Claude Code** in **Settings → MCP Automation**,

@@ -5,9 +5,11 @@ description: Observe and operate real iPhone or Android devices using StupidMirr
 
 # Operate a device through StupidMirror
 
-Use the StupidMirror MCP tools (`mcp__stupidmirror__*`). Start with `list_devices`; select the intended device and consistently pass `device_id` when multiple devices exist. Call `connect_control` before actions. The app captures in the background.
+Use the StupidMirror MCP tools (`mcp__stupidmirror__*`). Start with `list_devices`; select the intended device and consistently pass `device_id` when multiple devices exist (the call fails otherwise).
 
-Claude Code shows no embedded phone panel, so `show_screen` adds nothing here; read the screen with `observe_screen`. If the user wants to watch the phone while you work, call `start_mirror` to open the native Mac mirror window, where your taps and swipe paths are also drawn. Do not open it unasked.
+Before the first `observe_screen`, call `show_screen` with that `device_id`. It starts capture in the background without opening any window; without it `observe_screen` has no frame and reports "No live mirror frame is available". Claude Code shows no embedded panel, so ignore the preview fields in its result. Call `connect_control` only before actions or a native hierarchy read.
+
+If the user wants to watch the phone while you work, call `start_mirror` to open the native Mac mirror window, where your taps and swipe paths are also drawn. Do not open it unasked.
 
 - When the intended target is known, call `tap_text` directly with candidate labels in `queries`; avoid a separate read/find/tap chain. Use `find_any_element` when you need to inspect or disambiguate a target before tapping. These share one local OCR pass and at most one native hierarchy fallback; do not query synonyms separately.
 - `observe_screen` defaults to an image plus compact OCR, without a native hierarchy. Keep the image for visual tasks or when the needed information is unclear; for clearly text-only reads, explicitly set `include_image=false`. `observe_screen`, `find_element` and `find_any_element` default to `response_format="compact"`. Keep that format for routine work; do not request full output and then filter it in model context.
