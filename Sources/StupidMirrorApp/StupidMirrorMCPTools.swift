@@ -18,7 +18,7 @@ enum StupidMirrorMCPToolCatalog {
             ])
         ),
         tool(
-            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane origin; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
+            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code: in the Claude desktop app, open it by default when you start working with a device; elsewhere, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane origin; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
             deviceProperties
         ),
         tool(

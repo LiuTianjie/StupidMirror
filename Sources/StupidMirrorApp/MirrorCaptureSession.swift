@@ -82,7 +82,12 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
     /// While set, stopping the USB mirror keeps the capture graph running
     /// instead of releasing it. See `setUSBCaptureHold`.
     @MainActor private var usbHoldRequested = false
-    private var lastWirelessPreviewUpdate = Date.distantPast
+    /// Preview frames are rendered to bitmaps here, never on the main thread.
+    private let previewRenderQueue = DispatchQueue(label: "stupidmirror.capture.preview", qos: .utility)
+    /// Guarded by `videoPublicationLock`.
+    private var previewRenderInFlight = false
+    /// Guarded by `videoPublicationLock`.
+    private var lastPreviewRenderAt: CFAbsoluteTime = 0
     private var automationActionClearTask: Task<Void, Never>?
 
     init(device: AVCaptureDevice) {
@@ -1413,17 +1418,25 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
         let consumers = Array(videoSampleBufferConsumers.values)
         sampleBufferConsumerLock.unlock()
         for consumer in consumers { consumer(sampleBuffer) }
+        let now = CFAbsoluteTimeGetCurrent()
+        let rendersPreview = !previewRenderInFlight
+            && now - lastPreviewRenderAt >= Self.previewFrameInterval
+        if rendersPreview {
+            previewRenderInFlight = true
+            lastPreviewRenderAt = now
+        }
         videoPublicationLock.unlock()
+
+        if rendersPreview {
+            renderPreviewFrame(WirelessPreviewSource(sampleBuffer: sampleBuffer), generation: generation, streamID: streamID)
+        }
 
         guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer) else { return }
         let dimensions = CMVideoFormatDescriptionGetDimensions(formatDescription)
         guard dimensions.height > 0 else { return }
         let ratio = Double(dimensions.width) / Double(dimensions.height)
 
-        let previewSource = WirelessPreviewSource(
-            sampleBuffer: sampleBuffer
-        )
-        Task { @MainActor [weak self, previewSource] in
+        Task { @MainActor [weak self] in
             guard let self,
                   generation == self.wirelessGeneration,
                   self.isCurrentVideoStream(streamID),
@@ -1441,23 +1454,49 @@ final class MirrorCaptureSession: NSObject, ObservableObject, AVCaptureVideoData
             if self.frameAspectRatio == nil || abs((self.frameAspectRatio ?? ratio) - ratio) >= 0.01 {
                 self.frameAspectRatio = ratio
             }
-            let now = Date()
-            if now.timeIntervalSince(self.lastWirelessPreviewUpdate) >= 0.5,
-               let image = Self.previewImage(previewSource) {
-                self.lastWirelessPreviewUpdate = now
-                self.latestWirelessFrame = image
+        }
+    }
+
+    nonisolated static let previewFrameInterval: CFAbsoluteTime = 0.5
+    nonisolated private static let previewContext = CIContext(options: [.cacheIntermediates: false])
+    /// Core Animation converts an image that is not already in the display's
+    /// color space pixel by pixel on the main thread when it commits (about
+    /// 11 ms for one simulator frame). Mac displays are Display P3, so render
+    /// previews in it; on an sRGB display this costs what sRGB costs on P3.
+    nonisolated private static let previewColorSpace = CGColorSpace(name: CGColorSpace.displayP3)!
+
+    private func renderPreviewFrame(_ source: WirelessPreviewSource, generation: UInt64, streamID: UUID) {
+        previewRenderQueue.async { [weak self] in
+            let image = autoreleasepool {
+                CMSampleBufferGetImageBuffer(source.sampleBuffer).flatMap { Self.previewImage(from: $0) }
+            }
+            guard let self else { return }
+            self.videoPublicationLock.withLock { self.previewRenderInFlight = false }
+            guard let image else { return }
+            let preview = PreviewImage(image: image)
+            Task { @MainActor [weak self] in
+                guard let self,
+                      generation == self.wirelessGeneration,
+                      self.isCurrentVideoStream(streamID),
+                      self.state == .starting || self.state == .running else { return }
+                self.latestWirelessFrame = preview.image
             }
         }
     }
 
-    @MainActor
-    private static func previewImage(_ source: WirelessPreviewSource) -> NSImage? {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(source.sampleBuffer) else { return nil }
+    /// A bitmap-backed copy of a stream frame. An NSImage holding an
+    /// NSCIImageRep makes AppKit run Core Image, including a blocking GPU
+    /// readback, on the main thread every time a view draws it; with several
+    /// devices streaming that stalled the dashboard and the MainActor tool
+    /// router behind it. Render once here, off the main thread, instead.
+    nonisolated static func previewImage(from pixelBuffer: CVPixelBuffer) -> NSImage? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let representation = NSCIImageRep(ciImage: ciImage)
-        let image = NSImage(size: representation.size)
-        image.addRepresentation(representation)
-        return image
+        let extent = ciImage.extent.integral
+        guard extent.width > 0, extent.height > 0,
+              let cgImage = previewContext.createCGImage(
+                  ciImage, from: extent, format: .BGRA8, colorSpace: previewColorSpace
+              ) else { return nil }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     @MainActor
@@ -1720,6 +1759,11 @@ final class LiveCaptureAudioPlayer: @unchecked Sendable {
 
 private struct WirelessPreviewSource: @unchecked Sendable {
     let sampleBuffer: CMSampleBuffer
+}
+
+/// A freshly rendered, never-mutated image handed to the main actor.
+private struct PreviewImage: @unchecked Sendable {
+    let image: NSImage
 }
 
 enum MirrorError: LocalizedError {

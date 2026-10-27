@@ -2815,22 +2815,25 @@ final class DeviceGalleryStore: ObservableObject {
         }
     }
 
+    /// Copies the live frame into a bitmap off the main thread. Encoding and
+    /// decoding a full-size PNG here used to hold the main thread for over
+    /// 100 ms per USB iPhone, behind any PNG encode already running for MCP.
     private func applyLiveUSBThumbnail(from session: DeviceSession) {
-        guard let snapshot = session.mirrorSession.latestFrameStore.pngSnapshot(),
-              let data = snapshot.pngData,
-              let image = NSImage(data: data) else { return }
-        withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-            thumbnails[session.id] = image
-            thumbnailAspectRatios[session.id] = max(
-                Double(image.size.width / max(image.size.height, 1)),
-                0.1
-            )
-            thumbnailErrors[session.id] = nil
+        guard wirelessThumbnailTasks[session.id] == nil else { return }
+        let sessionID = session.id
+        let frameStore = session.mirrorSession.latestFrameStore
+        wirelessThumbnailTasks[sessionID] = Task { @MainActor [weak self] in
+            defer { self?.wirelessThumbnailTasks[sessionID] = nil }
+            let rendered = await Task.detached(priority: .utility) { () -> RenderedThumbnail? in
+                guard let snapshot = frameStore.snapshot(includePNG: false),
+                      let pixelBuffer = CMSampleBufferGetImageBuffer(snapshot.sampleBuffer),
+                      let image = MirrorCaptureSession.previewImage(from: pixelBuffer) else { return nil }
+                return RenderedThumbnail(image: image)
+            }.value
+            guard let self, !Task.isCancelled, let image = rendered?.image,
+                  let session = self.sessions.first(where: { $0.id == sessionID }) else { return }
+            self.applyWirelessImageThumbnail(image, for: session)
         }
-        MirrorWindowRegistry.shared.updateAspectRatio(
-            for: session,
-            aspectRatio: displayAspectRatio(for: session)
-        )
     }
 
     /// A thumbnail from a host tool that screenshots the device directly:
@@ -2909,6 +2912,10 @@ final class DeviceGalleryStore: ObservableObject {
             }
         }
     }
+}
+
+private struct RenderedThumbnail: @unchecked Sendable {
+    let image: NSImage
 }
 
 private enum WirelessThumbnailError: LocalizedError {
