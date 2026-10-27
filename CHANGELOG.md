@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.1 - 2026-10-27
+
+- Keep the dashboard and MCP responsive while devices stream. Stream
+  previews were drawn through Core Image on the main thread, waiting on the
+  GPU every time a thumbnail redrew, and the tools that answer the Codex
+  panel and the Claude Code viewer queued behind them. Previews are now
+  rendered to bitmaps in the display's color space off the main thread.
+- Build the live USB thumbnail from the frame buffer in the background
+  instead of encoding and decoding a full-size PNG on the main thread.
+- Stop redrawing the menu bar item on every app state change.
+
 ## 0.7.0 - 2026-10-27
 
 - Watch and operate the phone from Claude Code. The new `open_viewer` tool
