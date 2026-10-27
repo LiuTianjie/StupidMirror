@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Generated from CHANGELOG.md; sha256 175a8fdcd45e4d41663acc913bfc8bd7f26380b9f28bb7ec39c552f3e28b7100. Do not edit this page directly. -->
+<!-- Generated from CHANGELOG.md; sha256 45b697367a29441a3a93dd3e94eacfd69ec485ba66a3f4d53d8534b0f8d90167. Do not edit this page directly. -->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -53,7 +53,7 @@
             <div><h2 id="title-0.7.1"><a href="#v0.7.1">v0.7.1</a></h2><span class="release-badge">最新版本</span></div>
             <time datetime="2026-10-27">2026-10-27</time>
           </header>
-          <div class="release-body" lang="en"><ul><li><p>Keep the dashboard and MCP responsive while devices stream. Stream previews were drawn through Core Image on the main thread, waiting on the GPU every time a thumbnail redrew, and the tools that answer the Codex panel and the Claude Code viewer queued behind them. Previews are now rendered to bitmaps in the display's color space off the main thread.</p></li><li><p>Build the live USB thumbnail from the frame buffer in the background instead of encoding and decoding a full-size PNG on the main thread.</p></li><li><p>Stop redrawing the menu bar item on every app state change.</p></li></ul></div>
+          <div class="release-body" lang="en"><ul><li><p>Keep the dashboard and MCP responsive while devices stream. Stream previews were drawn through Core Image on the main thread, waiting on the GPU every time a thumbnail redrew, and the tools that answer the Codex panel and the Claude Code viewer queued behind them. Previews are now rendered to bitmaps in the display's color space off the main thread.</p></li><li><p>Build the live USB thumbnail from the frame buffer in the background instead of encoding and decoding a full-size PNG on the main thread.</p></li><li><p>Stop redrawing the menu bar item on every app state change.</p></li><li><p>In the Claude desktop app, Claude now opens the live phone viewer in the Browser pane by default when it starts working with a device, as Codex shows its panel, instead of waiting to be asked. In the terminal it offers the link instead. If the desktop app refuses the Browser tools, Claude shows the link once and carries on.</p></li></ul></div>
         </article>
         <article class="release-entry" id="v0.7.0" aria-labelledby="title-0.7.0">
           <header class="release-heading">

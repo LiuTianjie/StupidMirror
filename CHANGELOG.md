@@ -10,6 +10,11 @@
 - Build the live USB thumbnail from the frame buffer in the background
   instead of encoding and decoding a full-size PNG on the main thread.
 - Stop redrawing the menu bar item on every app state change.
+- In the Claude desktop app, Claude now opens the live phone viewer in the
+  Browser pane by default when it starts working with a device, as Codex
+  shows its panel, instead of waiting to be asked. In the terminal it offers
+  the link instead. If the desktop app refuses the Browser tools, Claude
+  shows the link once and carries on.
 
 ## 0.7.0 - 2026-10-27
 

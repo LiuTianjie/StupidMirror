@@ -9,14 +9,14 @@ Use the StupidMirror MCP tools (`mcp__stupidmirror__*`). Start with `list_device
 
 Before the first `observe_screen`, call `show_screen` with that `device_id`. It starts capture in the background without opening any window; without it `observe_screen` has no frame and reports "No live mirror frame is available". Claude Code shows no embedded panel, so ignore the preview fields in its result. Call `connect_control` only before actions or a native hierarchy read.
 
-If the user wants to watch or operate the phone themselves, call `open_viewer` (with `device_id` when several devices exist). It returns `url`, a live viewer page on their Mac with the same video, device picker, refresh and manual control as the Codex panel, and `browser_pane` with a `launch_name` and an `origin`.
+Show the user the phone by default, as Codex shows its panel. In the Claude desktop app (the Claude Browser tools such as `preview_start` are available), the first time this conversation works with a device, call `open_viewer` (with that `device_id`) right after `show_screen` and open it in the Browser pane without being asked. Do it again only when the user switches device, closes the pane, or asks. In the terminal CLI or another host without those tools, do not open anything unasked; mention once that the user can ask for the live viewer.
 
-In the Claude desktop app, open the viewer in its Browser pane yourself so the user never leaves Claude:
+`open_viewer` returns `url`, a live viewer page on their Mac with the same video, device picker, refresh and manual control as the Codex panel, and `browser_pane` with a `launch_name` and an `origin`. To open it in the Browser pane:
 1. In the project's `.claude/launch.json`, make sure a configuration named `browser_pane.launch_name` exists with `"url"` set to `browser_pane.origin` and no command. Create the file as `{"version": "0.0.1", "configurations": [...]}` if it is missing; otherwise add or update only that entry and leave every other configuration as it is. Mention the change in one line the first time.
 2. Call the Browser tool `preview_start` with that name. It opens a "Waiting for a StupidMirror viewer link" page.
 3. Navigate the pane to the full `url` with `preview_eval` (`location.assign(<url>)`); the page then reads its ticket. Show the pane with `show_pane` (`preview`) when available.
 
-If the Browser tools are missing or fail (the terminal CLI, or another host), give `url` as a clickable Markdown link instead. Each link opens one viewer and expires after 10 minutes; call `open_viewer` again rather than reusing one. Never put the link in files or commits; `.claude/launch.json` holds only the origin. Do not open the viewer unasked. The viewer cannot send annotations into the chat; ask the user to describe what they see instead.
+If a Browser tool call fails (for example the desktop app's safety check refuses it), give `url` as a clickable Markdown link instead, once, and carry on with the task; the user can open it in the Browser pane from there. Each link opens one viewer and expires after 10 minutes; call `open_viewer` again rather than reusing one. Never put the link in files or commits; `.claude/launch.json` holds only the origin. The viewer cannot send annotations into the chat; ask the user to describe what they see instead.
 
 If the user asks for a separate Mac window instead, call `start_mirror` to open the native mirror, where your taps and swipe paths are also drawn.
 
