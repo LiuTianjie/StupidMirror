@@ -32,9 +32,11 @@ enum CameraPermissionPresentation: Equatable {
     case banner
 }
 
-enum DashboardSettingsTab: Hashable, Sendable {
+enum DashboardSettingsTab: Hashable, Sendable, CaseIterable {
     case general
+    case mirroring
     case mcp
+    case license
 }
 
 @MainActor

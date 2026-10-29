@@ -47,6 +47,16 @@ enum Theme {
         static let hairline = Theme.adaptiveGray(light: 0.885, dark: 0.155)
         /// Outlines on things that can be clicked: one step stronger.
         static let controlStroke = Theme.adaptiveGray(light: 0.80, dark: 0.24)
+        /// Sidebar rows sit on the window ground, so they step against it.
+        static let sidebarSelection = Theme.adaptiveGray(light: 0.865, dark: 0.19)
+        static let sidebarHover = Theme.adaptiveGray(light: 0.895, dark: 0.15)
+        static let sidebarTile = Theme.adaptiveGray(light: 0.975, dark: 0.16)
+        static let sidebarDivider = Theme.adaptiveGray(light: 0.865, dark: 0.16)
+        /// Contact shadow under panels; stronger in dark, where it barely shows.
+        static let shadow = Theme.adaptiveColor(
+            light: NSColor(white: 0, alpha: 0.06),
+            dark: NSColor(white: 0, alpha: 0.35)
+        )
     }
 
     enum Ink {
@@ -158,21 +168,29 @@ enum Theme {
 // MARK: - Surfaces
 
 extension View {
-    /// A top-level panel: one step darker than the window, hairline edge.
+    /// A top-level panel: one step away from the window, hairline edge and a
+    /// soft contact shadow so it sits on the ground instead of being drawn on it.
     func panelSurface(radius: CGFloat = Theme.Radius.panel) -> some View {
-        background(Theme.Surface.panel, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Theme.Surface.hairline, lineWidth: 1)
-            }
+        background {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(Theme.Surface.panel)
+                .shadow(color: Theme.Surface.shadow, radius: 10, y: 3)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(Theme.Surface.hairline, lineWidth: 1)
+        }
     }
 
-    /// Content set into a panel.
-    func wellSurface(radius: CGFloat = Theme.Radius.well) -> some View {
+    /// Content set into a panel. Unoutlined wells read as a recess rather
+    /// than another box; keep the outline for wells holding rows of controls.
+    func wellSurface(radius: CGFloat = Theme.Radius.well, outlined: Bool = true) -> some View {
         background(Theme.Surface.well, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .strokeBorder(Theme.Surface.hairline, lineWidth: 1)
+                if outlined {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(Theme.Surface.hairline, lineWidth: 1)
+                }
             }
     }
 
@@ -255,7 +273,7 @@ struct PanelHeader<Trailing: View>: View {
                     .lineLimit(1)
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(size: 12.5))
+                        .font(.system(size: 12))
                         .foregroundStyle(Theme.Ink.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -286,9 +304,9 @@ struct SheetHeader: View {
             .help(closeHelp)
             .accessibilityLabel(closeHelp)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 14)
+        .padding(.horizontal, 24)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
     }
 }
 
@@ -328,7 +346,7 @@ struct SettingRow<Control: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.Ink.primary)
@@ -342,8 +360,9 @@ struct SettingRow<Control: View>: View {
             Spacer(minLength: 12)
             control()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .frame(minHeight: 48)
     }
 }
 
@@ -352,7 +371,7 @@ struct RowDivider: View {
         Rectangle()
             .fill(Theme.Surface.hairline)
             .frame(height: 1)
-            .padding(.leading, 14)
+            .padding(.leading, 16)
     }
 }
 
@@ -437,6 +456,7 @@ private struct PillLabelStyle: LabelStyle {
 }
 
 /// A round icon-only control, 30pt, used for close, Back, Home and the like.
+/// It has no fill until hovered, pressed or on.
 struct IconButtonStyle: ButtonStyle {
     var size: CGFloat = 30
     var isOn = false
@@ -459,20 +479,19 @@ private struct IconButtonBody: View {
             .font(.system(size: size * 0.42, weight: .medium))
             .foregroundStyle(isOn || isHovered ? Theme.Ink.primary : Theme.Ink.secondary)
             .frame(width: size, height: size)
-            .background(
-                Circle().fill(
-                    configuration.isPressed || isOn || isHovered ? Theme.Surface.selected : Theme.Surface.raised
-                )
-            )
-            .overlay {
-                Circle().strokeBorder(Theme.Surface.hairline, lineWidth: 1)
-            }
+            .background(Circle().fill(fill))
             .contentShape(Circle())
             .opacity(isEnabled ? 1 : 0.35)
             .scaleEffect(configuration.isPressed ? 0.94 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .animation(.easeOut(duration: 0.12), value: isHovered)
             .onHover { isHovered = $0 && isEnabled }
+    }
+
+    /// Borderless at rest, like a toolbar item; the disc appears on hover.
+    private var fill: Color {
+        if configuration.isPressed || isOn { return Theme.Surface.selected }
+        return isHovered ? Theme.Surface.raised : .clear
     }
 }
 
@@ -520,6 +539,57 @@ struct SegmentedPills<Value: Hashable>: View {
         .padding(3)
         .outlinedCapsule(fill: Theme.Surface.well, stroke: Theme.Surface.hairline)
         .animation(.easeOut(duration: 0.15), value: selection)
+    }
+}
+
+// MARK: - Brand
+
+/// The app icon's two mirror surfaces drawn in a 100-unit square; the second
+/// surface is a half-turn of the first.
+struct BrandMarkShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for reflected in [false, true] {
+            func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                let x = reflected ? 100 - x : x
+                let y = reflected ? 100 - y : y
+                return CGPoint(x: rect.minX + x / 100 * rect.width, y: rect.minY + y / 100 * rect.height)
+            }
+            path.move(to: p(15, 5))
+            path.addCurve(to: p(46, 24), control1: p(25, 0), control2: p(41, 12))
+            path.addCurve(to: p(40, 44), control1: p(52, 32), control2: p(45, 38))
+            path.addCurve(to: p(35, 68), control1: p(31, 53), control2: p(31, 59))
+            path.addCurve(to: p(45, 86), control1: p(37, 76), control2: p(48, 81))
+            path.addCurve(to: p(16, 94), control1: p(40, 97), control2: p(24, 101))
+            path.addCurve(to: p(5, 61), control1: p(7, 88), control2: p(5, 75))
+            path.addCurve(to: p(7, 23), control1: p(3, 47), control2: p(4, 30))
+            path.addCurve(to: p(15, 5), control1: p(8, 14), control2: p(10, 8))
+            path.closeSubpath()
+        }
+        return path
+    }
+}
+
+/// The product mark with the app icon's gradient, for the window's top bar.
+struct BrandMark: View {
+    var size: CGFloat = 16
+
+    var body: some View {
+        BrandMarkShape()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        Color(red: 1.0, green: 0.62, blue: 0.22),
+                        Color(red: 0.98, green: 0.30, blue: 0.52),
+                        Color(red: 0.55, green: 0.32, blue: 0.98),
+                        Color(red: 0.22, green: 0.55, blue: 1.0),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 
@@ -581,6 +651,36 @@ struct StatusGlyph: View {
     }
 }
 
+/// A 6pt state dot for inline status text; motion only while working.
+struct StateDot: View {
+    let kind: StatusGlyph.Kind
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+            .opacity(kind == .working && pulse ? 0.35 : 1)
+            .animation(kind == .working && !reduceMotion
+                       ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
+                       value: pulse)
+            .onAppear { pulse = kind == .working }
+            .onChange(of: kind) { _, new in pulse = new == .working }
+            .accessibilityHidden(true)
+    }
+
+    private var color: Color {
+        switch kind {
+        case .done: Theme.Palette.live
+        case .control: Theme.Palette.control
+        case .failed: Theme.Palette.danger
+        case .warning, .working: Theme.Palette.pending
+        case .idle: Theme.Surface.controlStroke
+        }
+    }
+}
+
 /// Eight short spokes turning in steps, like the reference's busy mark.
 struct SpokeSpinner: View {
     var color: Color = Theme.Ink.secondary
@@ -630,12 +730,12 @@ struct CheckLine: View {
                 .padding(.trailing, 12)
             (Text(lead + " ").foregroundStyle(Theme.Ink.secondary)
                 + Text(object).foregroundStyle(Theme.Ink.primary))
-                .font(.system(size: 13.5))
+                .font(.system(size: 13))
                 .lineLimit(1)
                 .layoutPriority(1)
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(Theme.mono(12.5))
+                    .font(Theme.mono(12))
                     .foregroundStyle(detailColor)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -657,7 +757,7 @@ struct StatusPill: View {
                 .fill(color)
                 .frame(width: 6, height: 6)
             Text(title)
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
         }
         .foregroundStyle(color)

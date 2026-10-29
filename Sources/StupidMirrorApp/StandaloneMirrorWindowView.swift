@@ -329,7 +329,7 @@ private struct MirrorWindowChromeBar: View {
         HStack(spacing: 11) {
             WindowDot(color: .systemRed) { _ in store.stop(session) }
             WindowDot(color: .systemYellow) { $0?.miniaturize(nil) }
-            WindowDot(color: .systemGray) { $0?.zoom(nil) }
+            WindowDot(color: .systemGreen) { $0?.zoom(nil) }
         }
     }
 
