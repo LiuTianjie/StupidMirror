@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.7.1</title>
-      <pubDate>Tue, 27 Oct 2026 02:59:50 +0000</pubDate>
-      <sparkle:version>202610271044</sparkle:version>
-      <sparkle:shortVersionString>0.7.1</sparkle:shortVersionString>
+      <title>StupidMirror 0.7.2</title>
+      <pubDate>Thu, 29 Oct 2026 15:21:11 +0000</pubDate>
+      <sparkle:version>202610292255</sparkle:version>
+      <sparkle:shortVersionString>0.7.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>Keep the dashboard and MCP responsive while devices stream. Stream previews were drawn through Core Image on the main thread, waiting on the GPU every time a thumbnail redrew, and the tools that answer the Codex panel and the Claude Code viewer queued behind them. Previews are now rendered to bitmaps in the display&#x27;s color space off the main thread.</li><li>Build the live USB thumbnail from the frame buffer in the background instead of encoding and decoding a full-size PNG on the main thread.</li><li>Stop redrawing the menu bar item on every app state change.</li><li>In the Claude desktop app, Claude now opens the live phone viewer in the Browser pane by default when it starts working with a device, as Codex shows its panel, instead of waiting to be asked. In the terminal it offers the link instead. If the desktop app refuses the Browser tools, Claude shows the link once and carries on.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.1/StupidMirror-v0.7.1-macos.zip" type="application/octet-stream" sparkle:edSignature="NPqZXcdxkgHSFY/2xyNniIpijxTFhm7l7BE5PnAOZzAQxJXV5LqEEw9sqMcpHjRVVDx2oeyB/D681K9HgEKdDA==" length="164170746" />
+      <description><![CDATA[<ul><li>Refresh the dashboard look: a brand mark beside the app name in the top bar, quieter status pills and a hairline divider instead of heavy chrome.</li><li>Redesign Settings as a sidebar with General, Mirroring, AI Clients and License pages, with more room between groups and clearer icons.</li><li>Activate a license inline on the License page instead of in a separate pop-up. Choosing &quot;Not activated&quot; or starting a mirror without a license opens Settings on that page.</li><li>The AI client cards show the installed Codex and Claude app icons, falling back to a symbol when the app is not installed.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.2/StupidMirror-v0.7.2-macos.zip" type="application/octet-stream" sparkle:edSignature="BqLJybzJrrk5APmEFcUoMZbma/lIb0OKjEWDFI/huwQqelfmT+rjYNppZkXoixdREc4SDjTpTx+5fK5gnJVlBA==" length="164232388" />
     </item>
   </channel>
 </rss>
