@@ -4,6 +4,7 @@ import SwiftUI
 struct LicenseActivationView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject var licenseManager: LicenseManager
+    var embedded = false
 
     @State private var code = ""
     @State private var email = ""
@@ -13,6 +14,73 @@ struct LicenseActivationView: View {
     private var isBusy: Bool { licenseManager.isActivating || licenseManager.isSigningIn }
 
     var body: some View {
+        if embedded {
+            embeddedBody
+        } else {
+            sheetBody
+        }
+    }
+
+    private var embeddedBody: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            licenseStatus
+
+            SettingsGroup(title: store.t("license.code")) {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        TextField(store.t("license.code.placeholder"), text: $code)
+                            .fieldSurface(monospaced: true)
+                            .disabled(isBusy)
+                            .onSubmit(submit)
+                        redeemButton
+                    }
+                    Text(store.t("license.code.help"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .padding(.horizontal, 4)
+                    if let errorMessage {
+                        errorLine(errorMessage)
+                    }
+                }
+            }
+
+            purchaseLinks
+
+            SettingsGroup(title: store.t("license.account.optional")) {
+                VStack(alignment: .leading, spacing: 12) {
+                    accountSection
+                    if licenseManager.needsClaim {
+                        claimBanner
+                    }
+                }
+            }
+        }
+    }
+
+    private var redeemButton: some View {
+        Button(action: submit) {
+            if licenseManager.isActivating {
+                Label(store.t("license.redeeming"), systemImage: "hourglass")
+            } else {
+                Label(store.t("license.redeem"), systemImage: "key")
+            }
+        }
+        .buttonStyle(PillButtonStyle(kind: .primary))
+        .keyboardShortcut(.defaultAction)
+        .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isBusy)
+    }
+
+    private func errorLine(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            StatusGlyph(kind: .failed, size: 18)
+            Text(message)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.Palette.danger)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var sheetBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             SheetHeader(
                 icon: "key",
@@ -340,9 +408,10 @@ struct LicenseActivationView: View {
 struct LicenseSettingsSection: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject var licenseManager: LicenseManager
+    var showsTitle = true
 
     var body: some View {
-        SettingsGroup(title: store.t("license.section")) {
+        SettingsGroup(title: showsTitle ? store.t("license.section") : "") {
             HStack(spacing: 12) {
                 StatusGlyph(kind: statusGlyph)
                 VStack(alignment: .leading, spacing: 2) {

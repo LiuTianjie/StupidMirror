@@ -36,7 +36,7 @@ struct DeviceRowView: View {
                         .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
                         .lineLimit(1)
                     Text(statusLabel)
-                        .font(.system(size: 11.5))
+                        .font(.system(size: 11))
                         .foregroundStyle(Theme.Ink.tertiary)
                         .lineLimit(1)
                 }
@@ -50,17 +50,19 @@ struct DeviceRowView: View {
                         .help(store.controlStateLabel(controlSession.state))
                 }
 
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 7, height: 7)
+                if let statusColor {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                }
             }
             .padding(.horizontal, 10)
-            .frame(height: 48)
+            .frame(height: 46)
             .background {
-                RoundedRectangle(cornerRadius: Theme.Radius.control + 2, style: .continuous)
-                    .fill(isSelected ? Theme.Surface.selected : (isHovered ? Theme.Surface.raised.opacity(0.6) : .clear))
+                RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                    .fill(isSelected ? Theme.Surface.sidebarSelection : (isHovered ? Theme.Surface.sidebarHover : .clear))
             }
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control + 2, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
         }
         .buttonStyle(.plain)
         .opacity(isConnected ? 1 : 0.6)
@@ -99,12 +101,14 @@ struct DeviceRowView: View {
         return "\(state) · \(session.transportLabel(store))"
     }
 
-    private var statusColor: Color {
+    /// Only states worth a glance get a dot; a stopped, connected device
+    /// is the resting case and the label already says so.
+    private var statusColor: Color? {
         switch mirrorSession.state {
         case .running: isConnected ? Theme.Palette.live : Theme.Palette.pending
         case .starting: Theme.Palette.pending
         case .failed: Theme.Palette.danger
-        case .stopped: isConnected ? Theme.Ink.tertiary.opacity(0.6) : Theme.Palette.pending
+        case .stopped: isConnected ? nil : Theme.Palette.pending
         }
     }
 }
@@ -134,6 +138,9 @@ struct DeviceDetailView: View {
 
     private var isConnected: Bool { session.device.connectionState == .connected }
 
+    /// The well's corner follows the panel's: panel radius minus this inset.
+    private static let wellInset: CGFloat = 10
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             compactHeader
@@ -141,8 +148,8 @@ struct DeviceDetailView: View {
             preview
                 .padding(Theme.Spacing.lg)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .wellSurface()
-                .padding(.horizontal, 10)
+                .wellSurface(radius: Theme.Radius.panel - Self.wellInset, outlined: false)
+                .padding(.horizontal, Self.wellInset)
 
             DeviceActionDock(session: session)
                 .padding(.horizontal, 16)
@@ -153,14 +160,10 @@ struct DeviceDetailView: View {
 
     private var compactHeader: some View {
         HStack(spacing: 12) {
-            Image(systemName: session.platform.systemImage)
-                .font(.system(size: 18))
-                .foregroundStyle(Theme.Ink.secondary)
-                .frame(width: 32, height: 36)
-            VStack(alignment: .leading, spacing: 5) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(session.device.name)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .lineLimit(1)
                     Text(session.transportLabel(store))
                         .font(.system(size: 11))
@@ -168,14 +171,14 @@ struct DeviceDetailView: View {
                         .fixedSize()
                 }
                 .help(headerSubtitle)
-                HStack(spacing: 12) {
-                    HStack(spacing: 4) {
-                        StatusGlyph(kind: mirrorGlyph, size: 12)
+                HStack(spacing: 14) {
+                    HStack(spacing: 6) {
+                        StateDot(kind: mirrorGlyph)
                         Text("\(store.t("diagnostic.mirror")) \(mirrorStatusLabel)")
                     }
                     .help([mirrorStatusLabel, mirrorDetail].compactMap { $0 }.joined(separator: " · "))
-                    HStack(spacing: 4) {
-                        StatusGlyph(kind: controlGlyph, size: 12)
+                    HStack(spacing: 6) {
+                        StateDot(kind: controlGlyph)
                         Text("\(store.t("diagnostic.control")) \(controlStatusLabel)")
                         if isConnected && store.canUseControl && controlSession.supportsContinuousTouch {
                             Text("HID")
@@ -191,7 +194,7 @@ struct DeviceDetailView: View {
                     }
                     .help([controlStatusLabel, controlDetail].compactMap { $0 }.joined(separator: " · "))
                 }
-                .font(.system(size: 11))
+                .font(.system(size: 12))
                 .foregroundStyle(Theme.Ink.secondary)
                 .lineLimit(1)
             }
@@ -203,8 +206,9 @@ struct DeviceDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 20)
+        .padding(.top, 16)
+        .padding(.bottom, 14)
     }
 
     /// "iPhone18,4 · iOS 27.0 · 00008150", one separator throughout.
@@ -262,14 +266,6 @@ struct DeviceDetailView: View {
         }
     }
 
-    private var mirrorDetailColor: Color {
-        switch mirrorSession.state {
-        case .running: Theme.Palette.live
-        case .failed: Theme.Palette.danger
-        default: Theme.Ink.tertiary
-        }
-    }
-
     private var controlGlyph: StatusGlyph.Kind {
         if !store.canUseControl { return .warning }
         switch controlSession.state {
@@ -303,10 +299,6 @@ struct DeviceDetailView: View {
         case .unavailable: return store.t("dashboard.control.optional")
         default: return nil
         }
-    }
-
-    private var controlDetailColor: Color {
-        controlSession.isReady ? Theme.Palette.control : Theme.Ink.tertiary
     }
 
     private func aspectLabel(_ ratio: Double) -> String {
@@ -374,10 +366,12 @@ struct DeviceDetailView: View {
         }
     }
 
+    /// An unlit phone screen: always dark, whatever the window appearance,
+    /// so the bezel reads as a device rather than a grey card.
     private var placeholder: some View {
         ZStack {
-            Theme.Surface.panel
-            VStack(spacing: 10) {
+            Color(white: 0.07)
+            VStack(spacing: 12) {
                 if case let .failed(message) = mirrorSession.state {
                     StatusGlyph(kind: .failed, size: 30)
                     Text(message)
@@ -410,7 +404,19 @@ struct DeviceDetailView: View {
                         .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     }
                 } else if session.usesIOSAgentVideo && mirrorSession.state == .stopped {
-                    StatusGlyph(kind: .idle, size: 30)
+                    Button {
+                        store.start(session)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                            .background(.white.opacity(0.14), in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!store.canAttemptConnection(session))
+                    .accessibilityLabel(store.t("detail.openMirror"))
                     Text(store.t("detail.wirelessStopped"))
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.Ink.secondary)
@@ -430,23 +436,13 @@ struct DeviceDetailView: View {
                 }
             }
         }
+        .environment(\.colorScheme, .dark)
     }
 
     private func wirelessStartupElapsed(at date: Date) -> Int {
         guard let beganAt = mirrorSession.wirelessStartupBeganAt else { return 0 }
         return max(0, Int(date.timeIntervalSince(beganAt)))
     }
-
-    private func fittedSize(in container: CGSize, aspect: Double) -> CGSize {
-        let ratio = CGFloat(max(aspect, 0.1))
-        let w = container.width
-        let h = container.height
-        if w / h > ratio {
-            return CGSize(width: h * ratio, height: h)
-        }
-        return CGSize(width: w, height: w / ratio)
-    }
-
 }
 
 struct ControlConnectionLoadingView: View {
@@ -643,26 +639,20 @@ struct DeviceActionDock: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                store.refreshThumbnail(for: session)
-            } label: {
-                Label(store.t("card.refreshThumbnail"), systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(IconButtonStyle())
-            .disabled(!isConnected)
-            .help(store.t("card.refreshThumbnail"))
-
             Menu {
+                Button(store.t("card.refreshThumbnail")) {
+                    store.refreshThumbnail(for: session)
+                }
+                .disabled(!isConnected)
+                Divider()
                 Button(store.t("device.remove"), role: .destructive) {
                     confirmsRemoval = true
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.Ink.secondary)
                     .frame(width: 30, height: 30)
-                    .background(Theme.Surface.raised, in: Circle())
-                    .overlay { Circle().strokeBorder(Theme.Surface.hairline, lineWidth: 1) }
                     .contentShape(Circle())
             }
             .menuStyle(.button)

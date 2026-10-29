@@ -47,7 +47,7 @@ private struct SpecimenTopBar: View {
                 .foregroundStyle(Theme.Ink.secondary)
             Spacer()
             Button {} label: { Label("Not activated", systemImage: "key") }
-                .buttonStyle(TintedPillStyle(color: Theme.Palette.pending))
+                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
             Button {} label: {
                 HStack(spacing: 7) {
                     Circle().fill(Theme.Palette.live).frame(width: 6, height: 6)

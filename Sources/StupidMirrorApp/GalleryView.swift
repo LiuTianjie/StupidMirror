@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 // The dashboard: a top strip on the window ground carrying the app's global
@@ -46,11 +47,11 @@ struct GalleryView: View {
                 case .settings:
                     SettingsView(initialTab: store.settingsTab)
                         .environmentObject(store)
-                        .frame(width: 720, height: 660)
+                        .frame(width: 800, height: 600)
                 case .activation:
-                    LicenseActivationView(licenseManager: store.licenseManager)
+                    SettingsView(initialTab: .license)
                         .environmentObject(store)
-                        .frame(width: 540)
+                        .frame(width: 800, height: 600)
                 case .iphoneSetup:
                     IPhoneSetupGuideView()
                         .environmentObject(store)
@@ -155,10 +156,13 @@ private struct DashboardTopBar: View {
             WindowDragArea()
 
             HStack(spacing: 8) {
-                Text("StupidMirror")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Ink.secondary)
-                    .allowsHitTesting(false)
+                HStack(spacing: 7) {
+                    BrandMark(size: 15)
+                    Text("StupidMirror")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.Ink.primary)
+                }
+                .allowsHitTesting(false)
 
                 Spacer(minLength: 12)
 
@@ -168,11 +172,16 @@ private struct DashboardTopBar: View {
                     } label: {
                         Label(store.t("license.badge.unactivated"), systemImage: licenseBadgeIcon)
                     }
-                    .buttonStyle(TintedPillStyle(color: licenseBadgeColor))
+                    .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
                     .help(store.t("license.badge.help"))
                 }
 
                 MCPStatusButton(manager: store.mcpServer)
+
+                Rectangle()
+                    .fill(Theme.Surface.hairline)
+                    .frame(width: 1, height: 16)
+                    .padding(.horizontal, 6)
 
                 Button {
                     store.discoverWirelessDevices()
@@ -190,6 +199,7 @@ private struct DashboardTopBar: View {
                 .buttonStyle(IconButtonStyle())
                 .keyboardShortcut("r", modifiers: [.command])
                 .help(store.t("toolbar.refresh"))
+                .padding(.trailing, 6)
 
                 Button {
                     store.toggleDiagnostics()
@@ -210,17 +220,6 @@ private struct DashboardTopBar: View {
             // Clear the traffic lights on the leading edge.
             .padding(.leading, 84)
             .padding(.trailing, DashboardWindowLayout.gutter + 4)
-        }
-    }
-
-    private var licenseBadgeColor: Color {
-        switch store.licenseManager.state {
-        case .unavailable:
-            Theme.Palette.danger
-        case .unlicensed:
-            Theme.Palette.pending
-        case .checking, .licensed:
-            Theme.Ink.secondary
         }
     }
 
@@ -249,7 +248,6 @@ private struct MCPStatusButton: View {
                     .frame(width: 6, height: 6)
                 Text("MCP")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.Ink.primary)
                 if manager.status.isRunning {
                     Text(":\(String(manager.port))")
                         .font(Theme.mono(11.5))
@@ -257,7 +255,7 @@ private struct MCPStatusButton: View {
                 }
             }
         }
-        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+        .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
         .help(store.t("toolbar.mcp"))
     }
 
@@ -271,34 +269,6 @@ private struct MCPStatusButton: View {
     }
 }
 
-/// A compact pill in a state's hue on its own dark tint.
-struct TintedPillStyle: ButtonStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .medium))
-            .labelStyle(TintedPillLabelStyle())
-            .foregroundStyle(color)
-            .padding(.horizontal, 11)
-            .frame(height: 26)
-            .background(
-                Capsule()
-                    .fill(color.opacity(configuration.isPressed ? 0.26 : 0.16))
-            )
-            .contentShape(Capsule())
-    }
-}
-
-private struct TintedPillLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 6) {
-            configuration.icon.font(.system(size: 11, weight: .semibold))
-            configuration.title
-        }
-    }
-}
-
 // MARK: - Sidebar
 
 private struct DeviceSidebar: View {
@@ -306,22 +276,28 @@ private struct DeviceSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PanelHeader(
-                icon: "iphone.gen3.radiowaves.left.and.right",
-                title: store.t("menu.devices"),
-                subtitle: String(format: store.t("dashboard.sidebar.connected"), store.connectedSessions.count)
-            ) {
-                QuietChip(title: "\(store.sessions.count)")
+            HStack(alignment: .firstTextBaseline) {
+                Text(store.t("menu.devices"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.Ink.tertiary)
+                Spacer(minLength: 8)
+                if !store.connectedSessions.isEmpty {
+                    Text(String(store.connectedSessions.count))
+                        .font(Theme.mono(11, weight: .medium))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .help(String(format: store.t("dashboard.sidebar.connected"), store.connectedSessions.count))
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 18)
+            .padding(.top, 6)
+            .padding(.bottom, 8)
+            .accessibilityElement(children: .combine)
 
             ScrollView {
                 LazyVStack(spacing: 2) {
                     if store.sessions.isEmpty {
                         Text(store.t("menu.noDevices"))
-                            .font(.system(size: 12.5))
+                            .font(.system(size: 12))
                             .foregroundStyle(Theme.Ink.tertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 12)
@@ -349,39 +325,66 @@ private struct DeviceSidebar: View {
 
             VStack(spacing: 0) {
                 Rectangle()
-                    .fill(Theme.Surface.hairline)
+                    .fill(Theme.Surface.sidebarDivider)
                     .frame(height: 1)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 4)
 
                 SidebarSwitchRow(
                     title: store.t("toolbar.autoStart"),
-                    systemImage: "bolt",
+                    systemImage: store.autoStartMirrors ? "bolt.fill" : "bolt",
                     isOn: $store.autoStartMirrors
                 )
                 .help(store.t("settings.autoOpen"))
 
                 SidebarSwitchRow(
                     title: store.t("toolbar.audioPlayback"),
-                    systemImage: store.audioPlaybackEnabled ? "speaker.wave.2" : "speaker.slash",
+                    systemImage: store.audioPlaybackEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill",
                     isOn: store.audioPlaybackToggle
                 )
                 .disabled((store.isRequestingMicrophonePermission || store.isRequestingCameraPermission) || !store.canPlayDeviceAudioOnMac)
                 .help(store.t("settings.audioPlaybackHelp"))
 
-                Button {
-                    store.stopAll()
-                } label: {
-                    Label(store.t("menu.stopAll"), systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
+                if hasActiveWork {
+                    Button {
+                        store.stopAll()
+                    } label: {
+                        Label(store.t("menu.stopAll"), systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                    .padding(.horizontal, 14)
+                    .padding(.top, 6)
+                    .help(store.t("menu.stopAll"))
+                    .transition(.opacity)
                 }
-                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
-                .padding(.bottom, 12)
-                .help(store.t("menu.stopAll"))
             }
+            .padding(.bottom, 8)
+            .animation(.easeOut(duration: 0.15), value: hasActiveWork)
         }
+        // The sidebar is part of the window, not a card on it: only the
+        // device panel is raised, so the selection reads as feeding it.
         .frame(maxHeight: .infinity, alignment: .top)
-        .panelSurface()
+        .onReceive(activityChanges) { _ in updateActiveWork() }
+        .onAppear(perform: updateActiveWork)
+    }
+
+    /// "Stop all" only means something while a mirror or control session is
+    /// up; the same command stays in the app menu as ⌘. at all times.
+    @State private var hasActiveWork = false
+
+    private var activityChanges: AnyPublisher<Void, Never> {
+        let mirrors = store.sessions.map { $0.mirrorSession.$state.map { _ in () }.eraseToAnyPublisher() }
+        let controls = store.sessions.map { $0.controlSession.$state.map { _ in () }.eraseToAnyPublisher() }
+        return Publishers.MergeMany(mirrors + controls + [store.$sessions.map { _ in () }.eraseToAnyPublisher()])
+            .receive(on: RunLoop.main)
+            .eraseToAnyPublisher()
+    }
+
+    private func updateActiveWork() {
+        hasActiveWork = store.sessions.contains { session in
+            session.mirrorSession.state != .stopped || session.controlSession.state != .unavailable
+        }
     }
 }
 
@@ -393,17 +396,25 @@ private struct SidebarSwitchRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: systemImage)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(Theme.Ink.tertiary)
-                .frame(width: 18)
+                .symbolRenderingMode(.hierarchical)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(isOn ? Theme.Ink.primary : Theme.Ink.tertiary)
+                .frame(width: 24, height: 24)
+                .background(
+                    Theme.Surface.sidebarTile,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.chip + 1, style: .continuous)
+                )
+                .contentTransition(.symbolEffect(.replace))
+                .animation(.easeOut(duration: 0.15), value: isOn)
+                .accessibilityHidden(true)
             Text(title)
-                .font(.system(size: 12.5))
-                .foregroundStyle(Theme.Ink.secondary)
+                .font(.system(size: 13))
+                .foregroundStyle(isOn ? Theme.Ink.primary : Theme.Ink.secondary)
             Spacer(minLength: 8)
             SettingSwitch(isOn: $isOn, label: title)
         }
-        .padding(.horizontal, 16)
-        .frame(height: 36)
+        .padding(.horizontal, 14)
+        .frame(height: 40)
     }
 }
 
@@ -822,7 +833,7 @@ struct DiagnosticsView: View {
             }
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 24) {
                     VStack(alignment: .leading, spacing: 8) {
                         GroupLabel(title: store.t("diagnostics.runtime"))
                         VStack(spacing: 0) {
@@ -876,8 +887,8 @@ struct DiagnosticsView: View {
                             .wellSurface()
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
             }
 
             SheetFooter {
@@ -951,7 +962,7 @@ struct SheetFooter<Content: View>: View {
             HStack(spacing: 8) {
                 content()
             }
-            .padding(.horizontal, 20)
+            .padding(.horizontal, 24)
             .padding(.vertical, 14)
         }
     }
@@ -1052,16 +1063,29 @@ struct StartupAndUpdatesSection: View {
 struct SettingsGroup<Content: View>: View {
     let title: String
     var trailing: String?
+    /// A sentence under the group, outside the well, for context that
+    /// would otherwise crowd a row.
+    var footer: String?
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            GroupLabel(title: title, trailing: trailing)
+        VStack(alignment: .leading, spacing: 10) {
+            if !title.isEmpty {
+                GroupLabel(title: title, trailing: trailing)
+            }
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .wellSurface()
+            if let footer, !footer.isEmpty {
+                Text(footer)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.Ink.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 2)
+            }
         }
     }
 }
@@ -1076,144 +1100,146 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SheetHeader(
-                icon: "gearshape",
-                title: store.t("toolbar.settings"),
-                subtitle: store.t("settings.subtitle"),
-                closeHelp: store.t("common.close")
-            ) {
-                dismiss()
+        HStack(spacing: 0) {
+            SettingsSidebar(selection: $selectedTab)
+                .frame(width: 208)
+            Rectangle()
+                .fill(Theme.Surface.hairline)
+                .frame(width: 1)
+            page
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .overlay(alignment: .topTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(IconButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                    .help(store.t("common.close"))
+                    .accessibilityLabel(store.t("common.close"))
+                    .padding(14)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        switch selectedTab {
+        case .general:
+            SettingsPage(title: store.t("settings.tab.general"), subtitle: store.t("settings.page.general")) {
+                generalContent
             }
-
-            SegmentedPills(
-                selection: $selectedTab,
-                items: [
-                    .init(value: .general, title: store.t("settings.general")),
-                    .init(value: .mcp, title: store.t("mcp.title")),
-                ]
-            )
-            .padding(.horizontal, 20)
-            .padding(.bottom, 14)
-
-            switch selectedTab {
-            case .general:
-                generalTab
-            case .mcp:
-                MCPAutomationSettingsView(manager: store.mcpServer)
-                    .environmentObject(store)
+        case .mirroring:
+            SettingsPage(title: store.t("settings.tab.mirroring"), subtitle: store.t("settings.page.mirroring")) {
+                mirroringContent
+            }
+        case .mcp:
+            MCPAutomationSettingsView(manager: store.mcpServer)
+                .environmentObject(store)
+        case .license:
+            SettingsPage(title: store.t("settings.tab.license"), subtitle: store.t("license.activation.subtitle")) {
+                LicenseActivationView(licenseManager: store.licenseManager, embedded: true)
             }
         }
     }
 
-    private var generalTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                LicenseSettingsSection(licenseManager: store.licenseManager)
+    @ViewBuilder
+    private var generalContent: some View {
+        SettingsGroup(title: store.t("settings.interface")) {
+            SettingRow(store.t("settings.appearance")) {
+                SegmentedPills(
+                    selection: $store.appearance,
+                    items: AppAppearance.allCases.map { .init(value: $0, title: store.t($0.titleKey)) }
+                )
+            }
+            RowDivider()
+            SettingRow(store.t("settings.language")) {
+                SegmentedPills(
+                    selection: $store.language,
+                    items: AppLanguage.allCases.map { .init(value: $0, title: $0.displayName) }
+                )
+            }
+        }
 
-                SettingsGroup(title: store.t("settings.interface")) {
-                    SettingRow(store.t("settings.appearance")) {
-                        SegmentedPills(
-                            selection: $store.appearance,
-                            items: AppAppearance.allCases.map { .init(value: $0, title: store.t($0.titleKey)) }
-                        )
-                    }
-                    RowDivider()
-                    SettingRow(store.t("settings.language")) {
-                        SegmentedPills(
-                            selection: $store.language,
-                            items: AppLanguage.allCases.map { .init(value: $0, title: $0.displayName) }
-                        )
-                    }
+        StartupAndUpdatesSection()
+    }
+
+    @ViewBuilder
+    private var mirroringContent: some View {
+        SettingsGroup(title: store.t("settings.mirroring")) {
+            SettingRow(store.t("settings.autoOpen")) {
+                SettingSwitch(isOn: $store.autoStartMirrors, label: store.t("settings.autoOpen"))
+            }
+            RowDivider()
+            SettingRow(store.t("settings.wirelessMirroring"), help: store.t("settings.wirelessMirroringHelp")) {
+                SettingSwitch(isOn: $store.wirelessMirroringEnabled, label: store.t("settings.wirelessMirroring"))
+            }
+            RowDivider()
+            SettingRow(store.t("iphone.setup.title"), help: store.t("iphone.setup.subtitle")) {
+                Button(store.t("iphone.setup.open")) {
+                    store.presentIPhoneSetup()
                 }
+                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+            }
+            RowDivider()
+            SettingRow(store.t("settings.audioPlayback"), help: store.t("settings.audioPlaybackHelp")) {
+                SettingSwitch(isOn: store.audioPlaybackToggle, label: store.t("settings.audioPlayback"))
+                    .disabled((store.isRequestingMicrophonePermission || store.isRequestingCameraPermission) || !store.canPlayDeviceAudioOnMac)
+            }
+        }
 
-                StartupAndUpdatesSection()
-
-                SettingsGroup(title: store.t("settings.mirroring")) {
-                    SettingRow(store.t("settings.autoOpen")) {
-                        SettingSwitch(isOn: $store.autoStartMirrors, label: store.t("settings.autoOpen"))
-                    }
-                    RowDivider()
-                    SettingRow(store.t("settings.wirelessMirroring"), help: store.t("settings.wirelessMirroringHelp")) {
-                        SettingSwitch(isOn: $store.wirelessMirroringEnabled, label: store.t("settings.wirelessMirroring"))
-                    }
-                    RowDivider()
-                    SettingRow(store.t("iphone.setup.title"), help: store.t("iphone.setup.subtitle")) {
-                        Button(store.t("iphone.setup.open")) {
-                            store.presentIPhoneSetup()
-                        }
-                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-                    }
-                    RowDivider()
-                    SettingRow(store.t("settings.audioPlayback"), help: store.t("settings.audioPlaybackHelp")) {
-                        SettingSwitch(isOn: store.audioPlaybackToggle, label: store.t("settings.audioPlayback"))
-                            .disabled((store.isRequestingMicrophonePermission || store.isRequestingCameraPermission) || !store.canPlayDeviceAudioOnMac)
-                    }
-                }
-
-                SettingsGroup(title: store.t("settings.control")) {
-                    HStack(spacing: 10) {
+            SettingsGroup(title: store.t("settings.control"), footer: store.t("settings.appiumHelp")) {
+                SettingRow("Appium", help: store.appiumService.message) {
+                    HStack(spacing: 8) {
                         StatusPill(
                             title: store.appiumServiceStateLabel(store.appiumService.state),
                             color: appiumServiceColor
                         )
-                        Text(store.appiumService.message)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.Ink.secondary)
-                            .lineLimit(2)
-                        Spacer(minLength: 8)
                         Button {
                             store.appiumService.check(serverURL: store.appiumServerURL)
                         } label: {
                             Label(store.t("settings.check"), systemImage: "waveform.path.ecg")
                         }
                         .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
-                        Button {
-                            store.appiumService.stop()
-                        } label: {
-                            Label(store.t("settings.stop"), systemImage: "stop.fill")
+                        if store.appiumService.state == .running {
+                            Button {
+                                store.appiumService.stop()
+                            } label: {
+                                Label(store.t("settings.stop"), systemImage: "stop.fill")
+                            }
+                            .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                        } else {
+                            Button {
+                                store.appiumService.start(serverURL: store.appiumServerURL)
+                            } label: {
+                                Label(store.t("settings.startAppium"), systemImage: "play.fill")
+                            }
+                            .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                         }
-                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-                        Button {
-                            store.appiumService.start(serverURL: store.appiumServerURL)
-                        } label: {
-                            Label(store.t("settings.startAppium"), systemImage: "play.fill")
-                        }
-                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
-
-                    Text(store.t("settings.appiumHelp"))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.Ink.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 14)
-                        .padding(.bottom, 11)
-
-                    RowDivider()
-
-                    DisclosureGroup {
-                        VStack(alignment: .leading, spacing: 8) {
-                            LabeledField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
-                            LabeledField(store.t("settings.bundleID"), text: $store.controlBundleID)
-                            LabeledField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
-                            LabeledField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
-                            LabeledField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
-                        }
-                        .padding(.top, 10)
-                    } label: {
-                        Text(store.t("settings.controlAdvanced"))
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.Ink.primary)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
+                    .fixedSize()
                 }
+
+                RowDivider()
+
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 8) {
+                        LabeledField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
+                        LabeledField(store.t("settings.bundleID"), text: $store.controlBundleID)
+                        LabeledField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
+                        LabeledField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
+                        LabeledField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
+                    }
+                    .padding(.top, 12)
+                } label: {
+                    Text(store.t("settings.controlAdvanced"))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.Ink.primary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 13)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
-        }
     }
 
     private var appiumServiceColor: Color {
@@ -1227,6 +1253,151 @@ struct SettingsView: View {
         case .unknown, .stopped:
             Theme.Ink.secondary
         }
+    }
+}
+
+/// The settings sheet's navigation: the product mark, one row per page, and
+/// the running version at the foot, like System Settings.
+private struct SettingsSidebar: View {
+    @EnvironmentObject private var store: DeviceGalleryStore
+    @ObservedObject private var updater = AppUpdater.shared
+    @Binding var selection: DashboardSettingsTab
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                BrandMark(size: 22)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("StupidMirror")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.Ink.primary)
+                    Text(store.t("toolbar.settings"))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 22)
+            .padding(.bottom, 20)
+
+            VStack(spacing: 2) {
+                ForEach(DashboardSettingsTab.allCases, id: \.self) { tab in
+                    SettingsSidebarRow(
+                        title: store.t(tab.titleKey),
+                        systemImage: tab.systemImage,
+                        isSelected: selection == tab
+                    ) {
+                        selection = tab
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+
+            Spacer(minLength: 12)
+
+            Text(String(format: store.t("settings.sidebar.version"), updater.currentVersion))
+                .font(Theme.mono(11))
+                .foregroundStyle(Theme.Ink.tertiary)
+                .textSelection(.enabled)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 16)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.Surface.ground)
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    let title: String
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isSelected ? Theme.Surface.sidebarSelection : (isHovered ? Theme.Surface.sidebarHover : .clear))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension DashboardSettingsTab {
+    var titleKey: String {
+        switch self {
+        case .general: "settings.tab.general"
+        case .mirroring: "settings.tab.mirroring"
+        case .mcp: "settings.tab.mcp"
+        case .license: "settings.tab.license"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .mirroring: "iphone"
+        case .mcp: "sparkles"
+        case .license: "key"
+        }
+    }
+}
+
+/// One settings page: a large title and a sentence, then its groups with
+/// generous air between them.
+struct SettingsPage<Content: View>: View {
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 30) {
+                SettingsPageTitle(title: title, subtitle: subtitle)
+                content()
+            }
+            .padding(.horizontal, 36)
+            .padding(.top, 34)
+            .padding(.bottom, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct SettingsPageTitle: View {
+    let title: String
+    var subtitle: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.Ink.primary)
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.Ink.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.trailing, 40)
     }
 }
 
@@ -1253,10 +1424,44 @@ struct LabeledField: View {
     }
 }
 
+/// The client's own app icon when it is installed, otherwise a symbol tile.
+private struct ClientAppIcon: View {
+    let symbol: String
+    let bundleIDs: [String]
+
+    var body: some View {
+        Group {
+            if let image = Self.appIcon(for: bundleIDs) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 40, height: 40)
+            } else {
+                Image(systemName: symbol)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(Theme.Ink.primary)
+                    .frame(width: 38, height: 38)
+                    .background(Theme.Surface.raised, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private static func appIcon(for bundleIDs: [String]) -> NSImage? {
+        for id in bundleIDs {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) {
+                return NSWorkspace.shared.icon(forFile: url.path)
+            }
+        }
+        return nil
+    }
+}
+
 /// One AI client's connection: who it is, where it stands, one primary
 /// action, and a starter prompt to paste into a new chat.
 private struct ClientCard<Actions: View>: View {
     let icon: String
+    var appBundleIDs: [String] = []
     let name: String
     let tagline: String
     let glyph: StatusGlyph.Kind
@@ -1269,52 +1474,54 @@ private struct ClientCard<Actions: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 10) {
-                IconDisc(systemName: icon, size: 32, tint: Theme.Ink.primary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.Ink.primary)
+            HStack(alignment: .top, spacing: 12) {
+                ClientAppIcon(symbol: icon, bundleIDs: appBundleIDs)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Theme.Ink.primary)
+                        if glyph != .idle {
+                            StateDot(kind: glyph)
+                        }
+                    }
                     Text(tagline)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.Ink.tertiary)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 8)
-                StatusGlyph(kind: glyph)
+                Spacer(minLength: 0)
             }
-            .padding(14)
-
-            RowDivider()
 
             VStack(alignment: .leading, spacing: 8) {
                 Text(detail)
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(Theme.Ink.secondary)
+                    .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
                 if let failure {
                     Text(failure)
                         .font(Theme.mono(11))
-                        .foregroundStyle(Theme.Ink.secondary)
+                        .foregroundStyle(Theme.Palette.danger)
                         .textSelection(.enabled)
                         .lineLimit(6)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
+            .padding(.top, 14)
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 18)
 
             HStack(spacing: 6, content: actions)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
 
             Button(action: onCopyPrompt) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("“\(prompt)”")
+                    Image(systemName: "text.quote")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                    Text(prompt)
                         .font(.system(size: 12))
-                        .foregroundStyle(Theme.Ink.secondary)
+                        .foregroundStyle(Theme.Ink.tertiary)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1322,18 +1529,20 @@ private struct ClientCard<Actions: View>: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(Theme.Ink.tertiary)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
+                .padding(.top, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.Surface.raised.opacity(0.5))
+                .overlay(alignment: .top) {
+                    Rectangle().fill(Theme.Surface.hairline).frame(height: 1)
+                }
+                .padding(.top, 16)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(copyPromptTitle)
             .accessibilityLabel("\(copyPromptTitle): \(prompt)")
         }
+        .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.well, style: .continuous))
         .wellSurface()
     }
 }
@@ -1357,7 +1566,9 @@ struct MCPAutomationSettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 30) {
+                SettingsPageTitle(title: store.t("settings.tab.mcp"), subtitle: store.t("mcp.clients.intro"))
+
                 clientSetup
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -1388,8 +1599,10 @@ struct MCPAutomationSettingsView: View {
 
                 logsGroup
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 36)
+            .padding(.top, 34)
+            .padding(.bottom, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear {
             portDraft = String(manager.port)
@@ -1577,27 +1790,19 @@ struct MCPAutomationSettingsView: View {
     }
 
     private var clientSetup: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            SettingsGroup(title: store.t("mcp.clients.title")) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(store.t("mcp.clients.intro"))
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.Ink.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(14)
-
-                    RowDivider()
-
-                    codexStep(
-                        glyph: store.sessions.isEmpty ? .idle : .done,
-                        title: store.t("mcp.codex.step1"),
-                        detail: store.sessions.isEmpty
-                            ? store.t("mcp.codex.noDevice")
-                            : String(format: store.t("mcp.codex.devices"), store.sessions.count)
-                    ) {
-                        Button(store.t("mcp.codex.phoneSetup")) { store.presentIPhoneSetup() }
-                            .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-                    }
+        VStack(alignment: .leading, spacing: 30) {
+            SettingsGroup(title: store.t("mcp.codex.step1")) {
+                codexStep(
+                    glyph: store.sessions.isEmpty ? .idle : .done,
+                    title: store.sessions.isEmpty
+                        ? store.t("mcp.devices.none")
+                        : String(format: store.t("mcp.devices.ready"), store.sessions.count),
+                    detail: store.sessions.isEmpty
+                        ? store.t("mcp.codex.noDevice")
+                        : store.t("mcp.devices.firstTime")
+                ) {
+                    Button(store.t("mcp.codex.phoneSetup")) { store.presentIPhoneSetup() }
+                        .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
                 }
             }
 
@@ -1606,6 +1811,7 @@ struct MCPAutomationSettingsView: View {
                 HStack(alignment: .top, spacing: 12) {
                     ClientCard(
                         icon: "chevron.left.forwardslash.chevron.right",
+                        appBundleIDs: ["com.openai.codex", "com.openai.chat"],
                         name: "Codex",
                         tagline: store.t("mcp.codex.tagline"),
                         glyph: codexInstallGlyph,
@@ -1636,6 +1842,7 @@ struct MCPAutomationSettingsView: View {
 
                     ClientCard(
                         icon: "asterisk",
+                        appBundleIDs: ["com.anthropic.claudefordesktop"],
                         name: "Claude Code",
                         tagline: store.t("mcp.claude.tagline"),
                         glyph: claudeGlyph,

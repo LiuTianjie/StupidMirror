@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.2 - 2026-10-29
+
+- Refresh the dashboard look: a brand mark beside the app name in the top
+  bar, quieter status pills and a hairline divider instead of heavy chrome.
+- Redesign Settings as a sidebar with General, Mirroring, AI Clients and
+  License pages, with more room between groups and clearer icons.
+- Activate a license inline on the License page instead of in a separate
+  pop-up. Choosing "Not activated" or starting a mirror without a license
+  opens Settings on that page.
+- The AI client cards show the installed Codex and Claude app icons, falling
+  back to a symbol when the app is not installed.
+
 ## 0.7.1 - 2026-10-27
 
 - Keep the dashboard and MCP responsive while devices stream. Stream
