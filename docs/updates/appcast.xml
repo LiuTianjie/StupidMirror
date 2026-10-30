@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.7.2</title>
-      <pubDate>Thu, 29 Oct 2026 15:21:11 +0000</pubDate>
-      <sparkle:version>202610292255</sparkle:version>
-      <sparkle:shortVersionString>0.7.2</sparkle:shortVersionString>
+      <title>StupidMirror 0.7.3</title>
+      <pubDate>Fri, 30 Oct 2026 05:33:02 +0000</pubDate>
+      <sparkle:version>202610301314</sparkle:version>
+      <sparkle:shortVersionString>0.7.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>Refresh the dashboard look: a brand mark beside the app name in the top bar, quieter status pills and a hairline divider instead of heavy chrome.</li><li>Redesign Settings as a sidebar with General, Mirroring, AI Clients and License pages, with more room between groups and clearer icons.</li><li>Activate a license inline on the License page instead of in a separate pop-up. Choosing &quot;Not activated&quot; or starting a mirror without a license opens Settings on that page.</li><li>The AI client cards show the installed Codex and Claude app icons, falling back to a symbol when the app is not installed.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.2/StupidMirror-v0.7.2-macos.zip" type="application/octet-stream" sparkle:edSignature="BqLJybzJrrk5APmEFcUoMZbma/lIb0OKjEWDFI/huwQqelfmT+rjYNppZkXoixdREc4SDjTpTx+5fK5gnJVlBA==" length="164232388" />
+      <description><![CDATA[<ul><li>Rework the License page. A status card at the top shows whether this Mac runs the free plan or is activated, without the duplicated &quot;Activated&quot; label and warning icon. The activation code field and button sit inside their own group with the help text below it, and the purchase link and account sign-in get their own rows with room to breathe. Once activated, the code field is hidden and only the account and claim options remain.</li><li>Restyle every Settings page to match the dashboard: the same rounded panels on the window background, borderless grouped rows, and a sidebar laid out like the device list. Labels no longer truncate or break Chinese words across lines.</li><li>The device list shows the real product image for each iPhone and iPad model, the same artwork Finder and Find My use. Simulators, Android devices and unknown models keep the platform symbol.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.3/StupidMirror-v0.7.3-macos.zip" type="application/octet-stream" sparkle:edSignature="BgrHI3Zj9jGbJ/bc2meMu9VNjC4tFxSVETQLJDOlUczsxso1s4DjM8WWMyV95Br2ruBvV3aeJgrrPBfSjp2ODQ==" length="164252156" />
     </item>
   </channel>
 </rss>
