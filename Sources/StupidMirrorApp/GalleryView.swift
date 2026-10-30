@@ -1072,18 +1072,19 @@ struct SettingsGroup<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             if !title.isEmpty {
                 GroupLabel(title: title, trailing: trailing)
+                    .padding(.horizontal, 6)
             }
             VStack(alignment: .leading, spacing: 0) {
                 content()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .wellSurface()
+            .wellSurface(radius: Theme.Radius.panel - DashboardWindowLayout.gutter, outlined: false)
             if let footer, !footer.isEmpty {
                 Text(footer)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.Ink.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 10)
                     .padding(.top, 2)
             }
         }
@@ -1094,32 +1095,30 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: DeviceGalleryStore
     @State private var selectedTab: DashboardSettingsTab
+    @State private var showControlAdvanced = false
+    @ObservedObject private var launchAtLogin = LaunchAtLoginController.shared
+    @ObservedObject private var updater = AppUpdater.shared
+    /// Bumped when Appium's state changes, which the store does not republish.
+    @State private var appiumRevision = 0
 
     init(initialTab: DashboardSettingsTab = .general) {
         _selectedTab = State(initialValue: initialTab)
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            SettingsSidebar(selection: $selectedTab)
-                .frame(width: 208)
-            Rectangle()
-                .fill(Theme.Surface.hairline)
-                .frame(width: 1)
+        HStack(alignment: .top, spacing: DashboardWindowLayout.gutter) {
+            SettingsSidebar(mcp: store.mcpServer, license: store.licenseManager, selection: $selectedTab)
+                .frame(width: 224)
             page
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .overlay(alignment: .topTrailing) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                    }
-                    .buttonStyle(IconButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                    .help(store.t("common.close"))
-                    .accessibilityLabel(store.t("common.close"))
-                    .padding(14)
-                }
+                .panelSurface()
+        }
+        .padding(.horizontal, DashboardWindowLayout.gutter)
+        .padding(.vertical, DashboardWindowLayout.gutter)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.Surface.ground)
+        .onReceive(store.appiumService.objectWillChange) { _ in
+            DispatchQueue.main.async { appiumRevision &+= 1 }
         }
     }
 
@@ -1127,21 +1126,59 @@ struct SettingsView: View {
     private var page: some View {
         switch selectedTab {
         case .general:
-            SettingsPage(title: store.t("settings.tab.general"), subtitle: store.t("settings.page.general")) {
+            SettingsPage(
+                title: store.t("settings.tab.general"),
+                statuses: generalStatuses
+            ) {
                 generalContent
             }
         case .mirroring:
-            SettingsPage(title: store.t("settings.tab.mirroring"), subtitle: store.t("settings.page.mirroring")) {
+            SettingsPage(title: store.t("settings.tab.mirroring"), statuses: mirroringStatuses) {
                 mirroringContent
             }
         case .mcp:
             MCPAutomationSettingsView(manager: store.mcpServer)
                 .environmentObject(store)
         case .license:
-            SettingsPage(title: store.t("settings.tab.license"), subtitle: store.t("license.activation.subtitle")) {
-                LicenseActivationView(licenseManager: store.licenseManager, embedded: true)
+            SettingsPage(title: store.t("settings.tab.license"), statuses: licenseStatuses) {
+                LicenseActivationView(licenseManager: store.licenseManager)
             }
         }
+    }
+
+    private var generalStatuses: [SettingsPageStatus] {
+        let launch = launchAtLogin.isEnabled
+        var items = [SettingsPageStatus(
+            color: launch ? Theme.Palette.live : nil,
+            text: "\(store.t("settings.status.launch")) \(store.t(launch ? "common.on" : "common.off"))"
+        )]
+        if updater.isConfigured {
+            let auto = updater.automaticallyChecksForUpdates
+            items.append(SettingsPageStatus(
+                color: auto ? Theme.Palette.live : nil,
+                text: "\(store.t("settings.status.updates")) \(store.t(auto ? "common.on" : "common.off"))"
+            ))
+        }
+        return items
+    }
+
+    private var mirroringStatuses: [SettingsPageStatus] {
+        _ = appiumRevision
+        return [
+            SettingsPageStatus(
+                color: store.wirelessMirroringEnabled ? Theme.Palette.live : nil,
+                text: "\(store.t("transport.wireless")) \(store.t(store.wirelessMirroringEnabled ? "common.on" : "common.off"))"
+            ),
+            SettingsPageStatus(
+                color: store.appiumService.state == .unknown ? nil : appiumServiceColor,
+                text: "Appium \(store.appiumServiceStateLabel(store.appiumService.state))"
+            ),
+        ]
+    }
+
+    private var licenseStatuses: [SettingsPageStatus] {
+        let state = store.licenseManager.state
+        return [SettingsPageStatus(color: LicenseState.dotColor(state), text: store.licenseStatusLabel(state))]
     }
 
     @ViewBuilder
@@ -1190,7 +1227,10 @@ struct SettingsView: View {
         }
 
             SettingsGroup(title: store.t("settings.control"), footer: store.t("settings.appiumHelp")) {
-                SettingRow("Appium", help: store.appiumService.message) {
+                SettingRow(
+                    "Appium",
+                    help: store.appiumService.state == .unknown ? store.t("settings.appiumIdle") : store.appiumService.message
+                ) {
                     HStack(spacing: 8) {
                         StatusPill(
                             title: store.appiumServiceStateLabel(store.appiumService.state),
@@ -1223,7 +1263,15 @@ struct SettingsView: View {
 
                 RowDivider()
 
-                DisclosureGroup {
+                DisclosureHeader(
+                    isExpanded: $showControlAdvanced,
+                    accessibilityTitle: store.t("settings.controlAdvanced")
+                ) {
+                    Text(store.t("settings.controlAdvanced"))
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.Ink.primary)
+                }
+                if showControlAdvanced {
                     VStack(alignment: .leading, spacing: 8) {
                         LabeledField(store.t("settings.appiumURL"), text: $store.appiumServerURL)
                         LabeledField(store.t("settings.bundleID"), text: $store.controlBundleID)
@@ -1231,14 +1279,10 @@ struct SettingsView: View {
                         LabeledField(store.t("settings.xcodeSigningID"), text: $store.controlXcodeSigningID)
                         LabeledField(store.t("settings.wdaBundleID"), text: $store.controlWDABundleID)
                     }
-                    .padding(.top, 12)
-                } label: {
-                    Text(store.t("settings.controlAdvanced"))
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.Ink.primary)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .transition(.opacity)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 13)
             }
     }
 
@@ -1256,34 +1300,31 @@ struct SettingsView: View {
     }
 }
 
-/// The settings sheet's navigation: the product mark, one row per page, and
-/// the running version at the foot, like System Settings.
+/// The settings sheet's navigation, drawn like the dashboard's device list:
+/// a small label, one two-line row per page with its live state, and the
+/// product and version at the foot.
 private struct SettingsSidebar: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject private var updater = AppUpdater.shared
+    @ObservedObject var mcp: MCPServerManager
+    @ObservedObject var license: LicenseManager
     @Binding var selection: DashboardSettingsTab
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                BrandMark(size: 22)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("StupidMirror")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.Ink.primary)
-                    Text(store.t("toolbar.settings"))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.Ink.tertiary)
-                }
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 22)
-            .padding(.bottom, 20)
+            Text(store.t("toolbar.settings"))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.Ink.tertiary)
+                .padding(.horizontal, 18)
+                .padding(.top, 8)
+                .padding(.bottom, 8)
 
             VStack(spacing: 2) {
                 ForEach(DashboardSettingsTab.allCases, id: \.self) { tab in
                     SettingsSidebarRow(
                         title: store.t(tab.titleKey),
+                        detail: detail(for: tab),
+                        dot: dot(for: tab),
                         systemImage: tab.systemImage,
                         isSelected: selection == tab
                     ) {
@@ -1291,24 +1332,70 @@ private struct SettingsSidebar: View {
                     }
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 8)
 
             Spacer(minLength: 12)
 
-            Text(String(format: store.t("settings.sidebar.version"), updater.currentVersion))
-                .font(Theme.mono(11))
-                .foregroundStyle(Theme.Ink.tertiary)
-                .textSelection(.enabled)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 16)
+            Rectangle()
+                .fill(Theme.Surface.sidebarDivider)
+                .frame(height: 1)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 4)
+            HStack(spacing: 10) {
+                BrandMark(size: 13)
+                    .frame(width: 24, height: 24)
+                    .background(
+                        Theme.Surface.sidebarTile,
+                        in: RoundedRectangle(cornerRadius: Theme.Radius.chip + 1, style: .continuous)
+                    )
+                Text("StupidMirror")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.Ink.secondary)
+                Spacer(minLength: 8)
+                Text(updater.currentVersion)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(Theme.Ink.tertiary)
+                    .textSelection(.enabled)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 40)
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Theme.Surface.ground)
+    }
+
+    private func detail(for tab: DashboardSettingsTab) -> String {
+        switch tab {
+        case .general:
+            return "\(store.t(store.appearance.titleKey)) · \(store.language.displayName)"
+        case .mirroring:
+            return store.wirelessMirroringEnabled
+                ? "USB · \(store.t("transport.wireless"))"
+                : store.t("settings.sidebar.usbOnly")
+        case .mcp:
+            return mcp.status.isRunning
+                ? "MCP · :\(String(mcp.port))"
+                : "MCP \(store.mcpStatusLabel(mcp.status))"
+        case .license:
+            return store.licenseStatusLabel(license.state)
+        }
+    }
+
+    private func dot(for tab: DashboardSettingsTab) -> Color? {
+        switch tab {
+        case .general, .mirroring:
+            return nil
+        case .mcp:
+            return mcp.status.isRunning ? Theme.Palette.live : MCPServerStatus.color(mcp.status)
+        case .license:
+            return LicenseState.dotColor(license.state)
+        }
     }
 }
 
 private struct SettingsSidebarRow: View {
     let title: String
+    let detail: String
+    let dot: Color?
     let systemImage: String
     let isSelected: Bool
     let action: () -> Void
@@ -1318,25 +1405,80 @@ private struct SettingsSidebarRow: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.tertiary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.secondary)
+                        .fixedSize()
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.Ink.tertiary)
+                        .fixedSize()
+                }
                 Spacer(minLength: 0)
+                if let dot {
+                    Circle()
+                        .fill(dot)
+                        .frame(width: 6, height: 6)
+                }
             }
             .padding(.horizontal, 10)
-            .frame(height: 32)
+            .frame(height: 46)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
                     .fill(isSelected ? Theme.Surface.sidebarSelection : (isHovered ? Theme.Surface.sidebarHover : .clear))
             )
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension DeviceGalleryStore {
+    func mcpStatusLabel(_ status: MCPServerStatus) -> String {
+        switch status {
+        case .stopped: t("mcp.status.stopped")
+        case .starting: t("mcp.status.starting")
+        case .running: t("mcp.status.running")
+        case .failed: t("mcp.status.failed")
+        }
+    }
+
+    func licenseStatusLabel(_ state: LicenseState) -> String {
+        switch state {
+        case .checking: t("license.status.checking")
+        case .unlicensed: t("license.status.unlicensed")
+        case .licensed: t("license.status.licensed")
+        case .unavailable: t("license.status.unavailable")
+        }
+    }
+}
+
+extension MCPServerStatus {
+    static func color(_ status: MCPServerStatus) -> Color? {
+        switch status {
+        case .running: Theme.Palette.live
+        case .starting: Theme.Palette.pending
+        case .failed: Theme.Palette.danger
+        case .stopped: nil
+        }
+    }
+}
+
+extension LicenseState {
+    static func dotColor(_ state: LicenseState) -> Color? {
+        switch state {
+        case .licensed: Theme.Palette.live
+        case .checking: nil
+        case .unlicensed: Theme.Palette.pending
+        case .unavailable: Theme.Palette.danger
+        }
     }
 }
 
@@ -1360,44 +1502,90 @@ extension DashboardSettingsTab {
     }
 }
 
-/// One settings page: a large title and a sentence, then its groups with
-/// generous air between them.
+/// One state on a settings page's header line: an optional dot and a label.
+struct SettingsPageStatus: Hashable {
+    let color: Color?
+    let text: String
+}
+
+/// One settings page, headed like the dashboard's device panel: the page
+/// name with a small tag, a line of state dots, and the close button; then
+/// its groups, each set in a grey well.
 struct SettingsPage<Content: View>: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var store: DeviceGalleryStore
     let title: String
-    var subtitle: String?
+    var tag: String?
+    var statuses: [SettingsPageStatus] = []
+    var note: String?
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                SettingsPageTitle(title: title, subtitle: subtitle)
-                content()
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(title)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(Theme.Ink.primary)
+                            .fixedSize()
+                        if let tag, !tag.isEmpty {
+                            Text(tag)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.Ink.tertiary)
+                                .fixedSize()
+                        }
+                    }
+                    if !statuses.isEmpty {
+                        HStack(spacing: 14) {
+                            ForEach(statuses, id: \.self) { status in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(status.color ?? Theme.Surface.controlStroke)
+                                        .frame(width: 6, height: 6)
+                                    Text(status.text)
+                                        .fixedSize()
+                                }
+                            }
+                        }
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.Ink.secondary)
+                    }
+                }
+                Spacer(minLength: 8)
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(IconButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                .help(store.t("common.close"))
+                .accessibilityLabel(store.t("common.close"))
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 34)
-            .padding(.bottom, 36)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
+            .padding(.leading, 20)
+            .padding(.trailing, 12)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
 
-struct SettingsPageTitle: View {
-    let title: String
-    var subtitle: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Theme.Ink.primary)
-            if let subtitle, !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.Ink.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if let note, !note.isEmpty {
+                        Text(note)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.Ink.secondary)
+                            .lineSpacing(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 10)
+                    }
+                    content()
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 2)
+                .padding(.bottom, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(.trailing, 40)
     }
 }
 
@@ -1459,6 +1647,31 @@ private struct ClientAppIcon: View {
 
 /// One AI client's connection: who it is, where it stands, one primary
 /// action, and a starter prompt to paste into a new chat.
+private struct EqualWidthColumns: Layout {
+    var spacing: CGFloat
+
+    private func columnWidth(_ proposal: ProposedViewSize, count: Int) -> CGFloat {
+        let total = proposal.width ?? 640
+        return max(0, (total - spacing * CGFloat(count - 1)) / CGFloat(count))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let width = columnWidth(proposal, count: subviews.count)
+        let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0
+        return CGSize(width: proposal.width ?? width * CGFloat(subviews.count) + spacing * CGFloat(subviews.count - 1), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard !subviews.isEmpty else { return }
+        let width = columnWidth(ProposedViewSize(width: bounds.width, height: nil), count: subviews.count)
+        for (index, subview) in subviews.enumerated() {
+            let x = bounds.minX + CGFloat(index) * (width + spacing)
+            subview.place(at: CGPoint(x: x, y: bounds.minY), proposal: ProposedViewSize(width: width, height: bounds.height))
+        }
+    }
+}
+
 private struct ClientCard<Actions: View>: View {
     let icon: String
     var appBundleIDs: [String] = []
@@ -1471,6 +1684,7 @@ private struct ClientCard<Actions: View>: View {
     let copyPromptTitle: String
     @ViewBuilder var actions: () -> Actions
     let onCopyPrompt: () -> Void
+    @State private var isPromptHovered = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1488,7 +1702,7 @@ private struct ClientCard<Actions: View>: View {
                     Text(tagline)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.Ink.tertiary)
-                        .lineLimit(1)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
             }
@@ -1510,40 +1724,45 @@ private struct ClientCard<Actions: View>: View {
             }
             .padding(.top, 14)
 
-            Spacer(minLength: 18)
-
-            HStack(spacing: 6, content: actions)
-
             Button(action: onCopyPrompt) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "text.quote")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.Ink.tertiary)
-                    Text(prompt)
+                HStack(alignment: .top, spacing: 10) {
+                    Text("“\(prompt)”")
                         .font(.system(size: 12))
-                        .foregroundStyle(Theme.Ink.tertiary)
-                        .lineLimit(2)
+                        .foregroundStyle(Theme.Ink.secondary)
+                        .lineSpacing(2)
                         .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Image(systemName: "doc.on.doc")
+                    Image(systemName: isPromptHovered ? "doc.on.doc.fill" : "doc.on.doc")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.Ink.tertiary)
+                        .foregroundStyle(isPromptHovered ? Theme.Ink.primary : Theme.Ink.tertiary)
+                        .padding(.top, 1)
                 }
-                .padding(.top, 14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Theme.Surface.hairline).frame(height: 1)
-                }
-                .padding(.top, 16)
-                .contentShape(Rectangle())
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    isPromptHovered ? Theme.Surface.selected : Theme.Surface.raised,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                )
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
             }
             .buttonStyle(.plain)
+            .onHover { isPromptHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: isPromptHovered)
+            .padding(.top, 14)
             .help(copyPromptTitle)
             .accessibilityLabel("\(copyPromptTitle): \(prompt)")
+
+            Spacer(minLength: 16)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8, content: actions)
+                VStack(alignment: .leading, spacing: 6, content: actions)
+            }
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .wellSurface()
+        .wellSurface(radius: Theme.Radius.panel - DashboardWindowLayout.gutter, outlined: false)
     }
 }
 
@@ -1561,48 +1780,69 @@ struct MCPAutomationSettingsView: View {
     @State private var portDraft = ""
     @State private var tutorialClient: MCPTutorialClient = .codex
     @State private var showToken = false
+    @State private var showAdvanced = false
     @State private var confirmRotation = false
     @State private var errorMessage: String?
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                SettingsPageTitle(title: store.t("settings.tab.mcp"), subtitle: store.t("mcp.clients.intro"))
+        SettingsPage(
+            title: store.t("settings.tab.mcp"),
+            statuses: [
+                SettingsPageStatus(
+                    color: MCPServerStatus.color(manager.status),
+                    text: manager.status.isRunning
+                        ? "MCP :\(String(manager.port))"
+                        : "MCP \(statusTitle)"
+                ),
+                SettingsPageStatus(
+                    color: manager.connectedClientCount > 0 ? Theme.Palette.control : nil,
+                    text: String(format: store.t("mcp.clients"), manager.connectedClientCount)
+                ),
+            ],
+            note: store.t("mcp.clients.intro")
+        ) {
 
                 clientSetup
 
                 VStack(alignment: .leading, spacing: 8) {
                     GroupLabel(title: store.t("mcp.advanced"))
-                    DisclosureGroup {
-                        VStack(alignment: .leading, spacing: 18) {
-                            serverGroup
-                            tokenGroup
-                            connectGroup
+                        .padding(.horizontal, 6)
+                    VStack(alignment: .leading, spacing: 0) {
+                        DisclosureHeader(
+                            isExpanded: $showAdvanced,
+                            insets: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16),
+                            accessibilityTitle: store.t("mcp.advanced")
+                        ) {
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(statusColor)
+                                    .frame(width: 6, height: 6)
+                                Text("\(store.t("mcp.server")) · \(statusTitle)")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Theme.Ink.primary)
+                                    .fixedSize()
+                                Text(manager.endpoint)
+                                    .font(Theme.mono(12))
+                                    .foregroundStyle(Theme.Ink.tertiary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
                         }
-                        .padding(.top, 12)
-                    } label: {
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(statusColor)
-                                .frame(width: 6, height: 6)
-                            Text("\(store.t("mcp.server")) · \(statusTitle)")
-                                .font(.system(size: 13))
-                            Text(manager.endpoint)
-                                .font(Theme.mono(12))
-                                .foregroundStyle(Theme.Ink.tertiary)
-                                .lineLimit(1)
+                        if showAdvanced {
+                            VStack(alignment: .leading, spacing: 18) {
+                                serverGroup
+                                tokenGroup
+                                connectGroup
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 14)
+                            .transition(.opacity)
                         }
                     }
-                    .padding(14)
-                    .wellSurface()
+                    .wellSurface(radius: Theme.Radius.panel - DashboardWindowLayout.gutter, outlined: false)
                 }
 
                 logsGroup
-            }
-            .padding(.horizontal, 36)
-            .padding(.top, 34)
-            .padding(.bottom, 36)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .onAppear {
             portDraft = String(manager.port)
@@ -1790,7 +2030,7 @@ struct MCPAutomationSettingsView: View {
     }
 
     private var clientSetup: some View {
-        VStack(alignment: .leading, spacing: 30) {
+        VStack(alignment: .leading, spacing: 18) {
             SettingsGroup(title: store.t("mcp.codex.step1")) {
                 codexStep(
                     glyph: store.sessions.isEmpty ? .idle : .done,
@@ -1808,7 +2048,8 @@ struct MCPAutomationSettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 GroupLabel(title: store.t("mcp.clients.step2"))
-                HStack(alignment: .top, spacing: 12) {
+                    .padding(.horizontal, 6)
+                EqualWidthColumns(spacing: 12) {
                     ClientCard(
                         icon: "chevron.left.forwardslash.chevron.right",
                         appBundleIDs: ["com.openai.codex", "com.openai.chat"],
@@ -1833,9 +2074,9 @@ struct MCPAutomationSettingsView: View {
                         }
                         .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
                         .disabled(codexInstaller.isInstalling)
-                        Spacer(minLength: 8)
                         Button(store.t("mcp.codex.open")) { codexInstaller.openCodex() }
                             .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                            .help("Codex")
                     } onCopyPrompt: {
                         copy(store.t("mcp.codex.prompt"))
                     }
@@ -1864,9 +2105,9 @@ struct MCPAutomationSettingsView: View {
                         }
                         .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
                         .disabled(claudeConnector.isConnecting)
-                        Spacer(minLength: 8)
                         Button(store.t("mcp.claude.open")) { claudeConnector.openClaude() }
                             .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                            .help("Claude")
                     } onCopyPrompt: {
                         copy(store.t("mcp.claude.prompt"))
                     }
@@ -1972,6 +2213,6 @@ struct MCPAutomationSettingsView: View {
 
     private func copy(_ value: String) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(value, forType: .string)
+        NSPasteboard.general.setString(AppCopy.plain(value), forType: .string)
     }
 }

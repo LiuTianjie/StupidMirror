@@ -366,6 +366,39 @@ struct SettingRow<Control: View>: View {
     }
 }
 
+/// A disclosure toggle whose whole row is the hit target, with a trailing
+/// chevron that turns when open. The caller places the revealed content.
+struct DisclosureHeader<Label: View>: View {
+    @Binding var isExpanded: Bool
+    var insets = EdgeInsets(top: 13, leading: 16, bottom: 13, trailing: 16)
+    var accessibilityTitle: String
+    @ViewBuilder var label: () -> Label
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.18)) { isExpanded.toggle() }
+        } label: {
+            HStack(spacing: 10) {
+                label()
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isHovered ? Theme.Ink.primary : Theme.Ink.tertiary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .padding(insets)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .accessibilityLabel(accessibilityTitle)
+        .accessibilityValue(isExpanded ? "expanded" : "collapsed")
+    }
+}
+
 struct RowDivider: View {
     var body: some View {
         Rectangle()
@@ -408,6 +441,7 @@ private struct PillButtonBody: View {
             .font(.system(size: compact ? 12 : 13, weight: .medium))
             .labelStyle(PillLabelStyle())
             .lineLimit(1)
+            .fixedSize()
             .foregroundStyle(foreground)
             .padding(.horizontal, compact ? 11 : 15)
             .frame(height: compact ? 26 : 32)
