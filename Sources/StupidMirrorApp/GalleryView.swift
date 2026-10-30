@@ -1138,8 +1138,8 @@ struct SettingsView: View {
             MCPAutomationSettingsView(manager: store.mcpServer)
                 .environmentObject(store)
         case .license:
-            SettingsPage(title: store.t("settings.tab.license"), subtitle: store.t("license.activation.subtitle")) {
-                LicenseActivationView(licenseManager: store.licenseManager, embedded: true)
+            SettingsPage(title: store.t("settings.tab.license"), subtitle: store.t("license.page.subtitle")) {
+                LicenseActivationView(licenseManager: store.licenseManager)
             }
         }
     }

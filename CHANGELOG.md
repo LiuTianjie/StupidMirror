@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.3 - 2026-10-30
+
+- Rework the License page. A status card at the top shows whether this Mac
+  runs the free plan or is activated, without the duplicated "Activated"
+  label and warning icon. The activation code field and button sit inside
+  their own group with the help text below it, and the purchase link and
+  account sign-in get their own rows with room to breathe. Once activated,
+  the code field is hidden and only the account and claim options remain.
+
 ## 0.7.2 - 2026-10-29
 
 - Refresh the dashboard look: a brand mark beside the app name in the top
