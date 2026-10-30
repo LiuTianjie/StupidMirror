@@ -25,10 +25,21 @@ struct DeviceRowView: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 10) {
-                Image(systemName: session.platform.systemImage)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.tertiary)
-                    .frame(width: 20)
+                Group {
+                    if let modelImage = DeviceModelIcon.image(for: session.device.productType) {
+                        Image(nsImage: modelImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 26, height: 30)
+                            .opacity(isConnected ? 1 : 0.55)
+                    } else {
+                        Image(systemName: session.platform.systemImage)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(isSelected ? Theme.Ink.primary : Theme.Ink.tertiary)
+                    }
+                }
+                .frame(width: 26)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.device.name)

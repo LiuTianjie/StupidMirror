@@ -6,6 +6,7 @@ import SwiftUI
 /// control and wireless mirroring.
 struct IPhoneSetupGuideView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
+    @State private var showManualEntry = false
     @Environment(\.dismiss) private var dismiss
 
     private var usbSession: DeviceSession? { store.iphoneSetupUSBSession }
@@ -241,7 +242,16 @@ struct IPhoneSetupGuideView: View {
                 .padding(.trailing, 14)
             }
 
-            DisclosureGroup {
+            DisclosureHeader(
+                isExpanded: $showManualEntry,
+                insets: EdgeInsets(top: 8, leading: Self.stepIndent, bottom: 8, trailing: 14),
+                accessibilityTitle: store.t("control.setup.manualEntry")
+            ) {
+                Text(store.t("control.setup.manualEntry"))
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.Ink.secondary)
+            }
+            if showManualEntry {
                 VStack(alignment: .leading, spacing: 6) {
                     TextField(store.t("settings.xcodeTeam"), text: $store.controlXcodeOrgID)
                         .fieldSurface(monospaced: true)
@@ -249,15 +259,11 @@ struct IPhoneSetupGuideView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.Ink.tertiary)
                 }
-                .padding(.top, 6)
-            } label: {
-                Text(store.t("control.setup.manualEntry"))
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(Theme.Ink.secondary)
+                .padding(.leading, Self.stepIndent)
+                .padding(.trailing, 14)
+                .padding(.bottom, 12)
+                .transition(.opacity)
             }
-            .padding(.leading, Self.stepIndent)
-            .padding(.trailing, 14)
-            .padding(.bottom, 12)
         }
     }
 

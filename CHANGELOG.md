@@ -8,6 +8,13 @@
   their own group with the help text below it, and the purchase link and
   account sign-in get their own rows with room to breathe. Once activated,
   the code field is hidden and only the account and claim options remain.
+- Restyle every Settings page to match the dashboard: the same rounded
+  panels on the window background, borderless grouped rows, and a sidebar
+  laid out like the device list. Labels no longer truncate or break Chinese
+  words across lines.
+- The device list shows the real product image for each iPhone and iPad
+  model, the same artwork Finder and Find My use. Simulators, Android
+  devices and unknown models keep the platform symbol.
 
 ## 0.7.2 - 2026-10-29
 

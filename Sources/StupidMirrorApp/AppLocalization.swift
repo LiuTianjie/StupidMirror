@@ -33,9 +33,63 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 enum AppCopy {
     static func text(_ key: String, language: AppLanguage) -> String {
         if language.usesChinese, let value = zhHans[key] {
-            return value
+            return joiningChineseWords(value)
         }
         return en[key] ?? key
+    }
+
+    static let wordJoiner: Character = "\u{2060}"
+
+    static func plain(_ text: String) -> String {
+        text.replacingOccurrences(of: String(wordJoiner), with: "")
+    }
+
+    nonisolated(unsafe) private static let joinedCache = NSCache<NSString, NSString>()
+
+    /// SwiftUI breaks Chinese lines between any two characters, which splits words
+    /// like "工具" across lines. Word joiners keep each segmented word on one line.
+    static func joiningChineseWords(_ text: String) -> String {
+        if let cached = joinedCache.object(forKey: text as NSString) {
+            return cached as String
+        }
+        let source = text as NSString
+        let tokenizer = CFStringTokenizerCreate(
+            nil,
+            source as CFString,
+            CFRange(location: 0, length: source.length),
+            kCFStringTokenizerUnitWordBoundary,
+            Locale(identifier: "zh-Hans") as CFLocale
+        )
+        var output = ""
+        var cursor = 0
+        while CFStringTokenizerAdvanceToNextToken(tokenizer).rawValue != 0 {
+            let range = CFStringTokenizerGetCurrentTokenRange(tokenizer)
+            guard range.location >= cursor else { continue }
+            if range.location > cursor {
+                output += source.substring(with: NSRange(location: cursor, length: range.location - cursor))
+            }
+            let token = source.substring(with: NSRange(location: range.location, length: range.length))
+            if token.count > 1, token.unicodeScalars.allSatisfy(isHan) {
+                output += token.map(String.init).joined(separator: String(wordJoiner))
+            } else {
+                output += token
+            }
+            cursor = range.location + range.length
+        }
+        if cursor < source.length {
+            output += source.substring(from: cursor)
+        }
+        joinedCache.setObject(output as NSString, forKey: text as NSString)
+        return output
+    }
+
+    private static func isHan(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xF900...0xFAFF, 0x20000...0x2FA1F:
+            true
+        default:
+            false
+        }
     }
 
     private static let en: [String: String] = [
@@ -120,7 +174,8 @@ enum AppCopy {
         "agent.start.retry": "Retry",
         "iphone.setup.title": "Set Up This iPhone",
         "iphone.setup.subtitle": "One USB preparation enables control over the cable and mirroring plus control over Wi-Fi.",
-        "iphone.setup.open": "Open iPhone Setup…",
+        "iphone.setup.open": "Open Setup Guide",
+        "settings.appiumIdle": "Local automation service for taps and typing.",
         "iphone.setup.step.usb.title": "Connect and unlock the iPhone",
         "iphone.setup.step.usb.body": "Connect by USB, tap Trust if the iPhone asks, and keep it unlocked.",
         "iphone.setup.usb.connected": "%@ is connected by USB.",
@@ -279,7 +334,7 @@ enum AppCopy {
         "menu.updateAvailable": "Update to %@…",
         "settings.mirroring": "Mirroring",
         "settings.audioPlayback": "Play Device Audio on Mac",
-        "settings.audioPlaybackHelp": "USB iPhone: off keeps sound on the phone; on plays it on this Mac and requires Camera and Microphone permission for the USB audio input. Wireless iPhone keeps sound on the phone. Android: off keeps sound on the device; on plays here, and Android 13+ also keeps device playback.",
+        "settings.audioPlaybackHelp": "USB iPhone: on plays sound on this Mac and needs Camera and Microphone access; off keeps it on the phone. Wireless iPhones always keep sound on the phone. Android: on plays here, and Android 13+ keeps playing on the device too.",
         "settings.audioPhoneOnlyHelp": "This wireless connection keeps sound on the iPhone. Connect by USB to play it on this Mac.",
         "settings.audioSimulatorHelp": "Simulator audio is played by this Mac.",
         "settings.autoOpen": "Open mirror windows automatically when new devices appear",
@@ -309,6 +364,9 @@ enum AppCopy {
         "settings.page.mirroring": "How phones open on this Mac and how control is set up.",
         "settings.page.mcp": "Let Codex or Claude Code see and operate your phone.",
         "settings.sidebar.version": "Version %@",
+        "settings.sidebar.usbOnly": "USB only",
+        "settings.status.launch": "Open at login",
+        "settings.status.updates": "Auto-update",
         "mcp.devices.none": "No phone connected",
         "mcp.devices.ready": "%d device(s) ready",
         "mcp.devices.firstTime": "Connecting an iPhone for the first time? Finish the setup guide first.",
@@ -318,11 +376,11 @@ enum AppCopy {
         "mcp.codex.title": "Use your phone in Codex",
         "mcp.codex.intro": "Connect once, then ask Codex to read and operate your phone. No token or configuration to copy.",
         "mcp.codex.step1": "1. Connect your phone",
-        "mcp.codex.noDevice": "Connect an iPhone by USB for first-time setup. For Android, enable USB debugging and trust this Mac.",
+        "mcp.codex.noDevice": "Use USB for first-time iPhone setup.\nOn Android, allow USB debugging for this Mac.",
         "mcp.codex.devices": "%d device(s) discovered. If this is your first iPhone connection, finish the setup guide.",
         "mcp.codex.phoneSetup": "iPhone setup guide",
         "mcp.codex.step2": "2. Connect StupidMirror to Codex",
-        "mcp.codex.install": "Connect Codex",
+        "mcp.codex.install": "Connect",
         "mcp.codex.reinstall": "Reinstall",
         "mcp.codex.installing": "Installing the local plugin…",
         "mcp.codex.installed": "Plugin installed. Open a new Codex chat to load it.",
@@ -330,25 +388,25 @@ enum AppCopy {
         "mcp.codex.connected": "An AI client is connected to StupidMirror.",
         "mcp.codex.step3": "3. Start in a new Codex chat",
         "mcp.codex.newChat": "Choose the StupidMirror plugin in Codex, then send this prompt. If the tools are missing, reconnect the plugin or start a new chat.",
-        "mcp.codex.prompt": "Use StupidMirror to show my phone screen inside Codex and read the current page without tapping anything.",
-        "mcp.codex.open": "Open Codex",
+        "mcp.codex.prompt": "Use StupidMirror to show my phone in Codex and read the screen without tapping.",
+        "mcp.codex.open": "Open",
         "mcp.codex.copyPrompt": "Copy starter prompt",
         "mcp.codex.screen": "The live phone screen appears inside Codex. StupidMirror runs in the background; no separate mirror window is needed. Keep your phone connected and unlocked.",
         "mcp.clients.title": "Use your phone with AI",
         "mcp.clients.intro": "Connect once, then ask Codex or Claude Code to read and operate your phone. Each connection installs the StupidMirror plugin together with its MCP tools; there is no token or configuration to copy.",
         "mcp.clients.step2": "2. Connect an AI client",
         "mcp.clients.copyPrompt": "Copy starter prompt",
-        "mcp.codex.tagline": "Plugin + MCP · live panel in chat",
-        "mcp.codex.cardIntro": "Installs the plugin and its MCP tools. Codex can then show the live phone inside the chat and operate it.",
-        "mcp.claude.tagline": "Plugin + MCP · CLI and desktop",
-        "mcp.claude.intro": "Installs the plugin and registers its MCP tools for your user account, skipping what is already there. Port and token changes are picked up automatically.",
-        "mcp.claude.connect": "Connect Claude Code",
+        "mcp.codex.tagline": "Live panel in chat",
+        "mcp.codex.cardIntro": "Installs the plugin and MCP tools, so Codex can show and operate your phone in chat.",
+        "mcp.claude.tagline": "CLI and desktop app",
+        "mcp.claude.intro": "Installs the plugin and MCP tools for your account. Port and token changes apply automatically.",
+        "mcp.claude.connect": "Connect",
         "mcp.claude.reconnect": "Reinstall",
         "mcp.claude.connecting": "Installing the plugin and MCP tools…",
         "mcp.claude.connected": "Installed. Start a new Claude Code session to load it.",
         "mcp.claude.keptServer": "Your existing stupidmirror MCP entry was kept.",
-        "mcp.claude.prompt": "Use StupidMirror to list my devices and read the current screen without tapping anything.",
-        "mcp.claude.open": "Open Claude",
+        "mcp.claude.prompt": "Use StupidMirror to list my devices and read the screen without tapping.",
+        "mcp.claude.open": "Open",
         "mcp.claude.cliMissing": "Claude Code was not found. Install it from claude.com/claude-code, then try again.",
         "mcp.claude.helperMissing": "This StupidMirror build does not include its MCP helper. Install the app in Applications and try again.",
         "mcp.claude.pluginMissing": "This StupidMirror build does not include the Claude Code plugin. Install an updated app build.",
@@ -572,7 +630,8 @@ enum AppCopy {
         "agent.start.retry": "重试",
         "iphone.setup.title": "设置这台 iPhone",
         "iphone.setup.subtitle": "用 USB 准备一次，之后有线可以控制，Wi‑Fi 下可以镜像并控制。",
-        "iphone.setup.open": "打开 iPhone 设置…",
+        "iphone.setup.open": "打开设置向导",
+        "settings.appiumIdle": "本机自动化服务，负责点按和输入。",
         "iphone.setup.step.usb.title": "连接并解锁 iPhone",
         "iphone.setup.step.usb.body": "使用 USB 连接；手机询问是否信任时点“信任”，并保持解锁。",
         "iphone.setup.usb.connected": "%@ 已通过 USB 连接。",
@@ -731,12 +790,12 @@ enum AppCopy {
         "menu.updateAvailable": "更新到 %@…",
         "settings.mirroring": "镜像",
         "settings.audioPlayback": "在 Mac 上播放设备声音",
-        "settings.audioPlaybackHelp": "USB iPhone：关闭时声音留在手机，打开后在这台 Mac 播放；USB 音频输入需要相机和麦克风权限。无线 iPhone 的声音留在手机。Android 关闭时声音留在设备，打开后在 Mac 播放，Android 13 及以上也会保留设备播放。",
+        "settings.audioPlaybackHelp": "USB iPhone：打开后在这台 Mac 播放，需要相机和麦克风权限；关闭时声音留在手机。无线 iPhone 的声音始终留在手机。Android：打开后在 Mac 播放，Android 13 及以上设备会同时出声。",
         "settings.audioPhoneOnlyHelp": "当前无线连接的声音留在 iPhone；通过 USB 连接后可选择在 Mac 播放。",
         "settings.audioSimulatorHelp": "模拟器的声音由这台 Mac 播放。",
         "settings.autoOpen": "新设备出现时自动打开镜像窗口",
         "settings.wirelessMirroring": "启用无线模式",
-        "settings.wirelessMirroringHelp": "通过 CoreDevice 隧道在同一局域网内连接已配对的 iPhone，并在其上运行 WebDriverAgent。首次信任、签名、安装代理以及开启 Wi‑Fi 连接仍需使用 USB。",
+        "settings.wirelessMirroringHelp": "首次信任、签名、安装代理和开启 Wi‑Fi 连接需要 USB，之后通过 CoreDevice 隧道在同一局域网内连接已配对的 iPhone。",
         "transport.usb": "USB",
         "transport.adb": "ADB",
         "transport.wireless": "无线",
@@ -761,6 +820,9 @@ enum AppCopy {
         "settings.page.mirroring": "手机在这台 Mac 上如何打开，以及控制如何配置。",
         "settings.page.mcp": "让 Codex 或 Claude Code 看到并操作你的手机。",
         "settings.sidebar.version": "版本 %@",
+        "settings.sidebar.usbOnly": "仅 USB",
+        "settings.status.launch": "开机启动",
+        "settings.status.updates": "自动更新",
         "mcp.devices.none": "还没有连接手机",
         "mcp.devices.ready": "%d 台设备已就绪",
         "mcp.devices.firstTime": "第一次连接 iPhone？请先完成设置引导。",
@@ -783,24 +845,24 @@ enum AppCopy {
         "mcp.codex.step3": "3. 在 Codex 新建聊天",
         "mcp.codex.newChat": "在 Codex 中选择 StupidMirror 插件，再发送下面的指令。若工具未出现，请重新连接插件或新建聊天。",
         "mcp.codex.prompt": "用 StupidMirror 在 Codex 中显示我的手机屏幕，并读取当前页面，先不要点击。",
-        "mcp.codex.open": "打开 Codex",
+        "mcp.codex.open": "打开",
         "mcp.codex.copyPrompt": "复制开始指令",
         "mcp.codex.screen": "手机画面直接显示在 Codex 内，StupidMirror 在后台运行，无需另开镜像窗口。请保持手机已连接并解锁。",
         "mcp.clients.title": "在 AI 客户端中使用手机",
         "mcp.clients.intro": "连接一次，就能让 Codex 或 Claude Code 读取和操作手机。接入时会一并安装 StupidMirror 插件和 MCP 工具，无需复制 Token 或编辑配置。",
         "mcp.clients.step2": "2. 接入 AI 客户端",
         "mcp.clients.copyPrompt": "复制开始指令",
-        "mcp.codex.tagline": "插件 + MCP · 对话内实时画面",
-        "mcp.codex.cardIntro": "安装插件和 MCP 工具。之后 Codex 可以在对话里显示手机实时画面并操作手机。",
-        "mcp.claude.tagline": "插件 + MCP · 命令行与桌面版 Code",
-        "mcp.claude.intro": "为当前用户安装插件并注册 MCP 工具，已装好的部分会跳过。端口和 Token 变化会自动生效。",
+        "mcp.codex.tagline": "对话内实时画面",
+        "mcp.codex.cardIntro": "安装插件和 MCP 工具，让 Codex 在对话里显示并操作手机实时画面。",
+        "mcp.claude.tagline": "CLI 与桌面版",
+        "mcp.claude.intro": "为当前用户安装插件和 MCP 工具，装好的部分会跳过。端口和 Token 变化自动生效。",
         "mcp.claude.connect": "接入 Claude Code",
         "mcp.claude.reconnect": "重新安装",
         "mcp.claude.connecting": "正在安装插件和 MCP 工具…",
         "mcp.claude.connected": "已安装。新开一个 Claude Code 会话即可加载。",
         "mcp.claude.keptServer": "已保留你现有的 stupidmirror MCP 配置。",
-        "mcp.claude.prompt": "用 StupidMirror 列出我的设备，读取当前屏幕，先不要点击。",
-        "mcp.claude.open": "打开 Claude",
+        "mcp.claude.prompt": "用 StupidMirror 列出设备并读取当前屏幕，不要点击。",
+        "mcp.claude.open": "打开",
         "mcp.claude.cliMissing": "没有找到 Claude Code。请先从 claude.com/claude-code 安装，再重试。",
         "mcp.claude.helperMissing": "当前 StupidMirror 版本缺少 MCP 辅助程序。请把应用安装到「应用程序」后重试。",
         "mcp.claude.pluginMissing": "当前 StupidMirror 版本没有包含 Claude Code 插件，请安装更新后的版本。",

@@ -54,9 +54,9 @@ struct LicenseActivationView: View {
                 StatusPill(title: store.t("license.page.pill.multiDevice"), color: Theme.Palette.live)
             }
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .wellSurface()
+        .wellSurface(radius: Theme.Radius.panel - DashboardWindowLayout.gutter, outlined: false)
         .accessibilityElement(children: .combine)
     }
 

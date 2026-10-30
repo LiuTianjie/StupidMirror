@@ -16,9 +16,9 @@ final class AppLocalizationTests: XCTestCase {
 
     func testChineseAndEnglishUserVisibleCopyDiffer() {
         XCTAssertEqual(AppCopy.text("menu.devices", language: .en), "Devices")
-        XCTAssertEqual(AppCopy.text("menu.devices", language: .zhHans), "设备")
+        XCTAssertEqual(AppCopy.plain(AppCopy.text("menu.devices", language: .zhHans)), "设备")
         XCTAssertEqual(AppCopy.text("connection.disconnected", language: .en), "Reconnecting")
-        XCTAssertEqual(AppCopy.text("connection.disconnected", language: .zhHans), "重连中")
+        XCTAssertEqual(AppCopy.plain(AppCopy.text("connection.disconnected", language: .zhHans)), "重连中")
     }
 
     private var criticalKeys: [String] {

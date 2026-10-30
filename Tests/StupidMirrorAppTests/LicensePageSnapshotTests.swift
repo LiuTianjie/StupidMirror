@@ -63,14 +63,14 @@ final class LicensePageSnapshotTests: XCTestCase {
     }
 }
 
-private final class SnapshotLicenseStore: LicenseRecordStoring, @unchecked Sendable {
+final class SnapshotLicenseStore: LicenseRecordStoring, @unchecked Sendable {
     private var record: LocalLicenseRecord?
     init(record: LocalLicenseRecord?) { self.record = record }
     func load() throws -> LocalLicenseRecord? { record }
     func save(_ record: LocalLicenseRecord) throws { self.record = record }
 }
 
-private struct SnapshotLicenseRemote: LicenseRemoteServicing {
+struct SnapshotLicenseRemote: LicenseRemoteServicing {
     struct Unavailable: Error {}
     func activate(code: String, installationID: UUID) async throws -> LicenseActivation { throw Unavailable() }
     func validate(receipt: String, installationID: UUID) async throws -> LicenseValidation { throw Unavailable() }
