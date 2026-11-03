@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Geometry and artwork shared by the native windows and the Codex panel.
-/// The screen is placed inside DeviceKit's chassis, using its framebuffer mask.
+/// Uses DeviceKit artwork for known Apple devices and a neutral Android chassis.
 struct MirrorBezel {
     let id: String
     let size: CGSize
@@ -143,6 +143,13 @@ enum MirrorBezelCatalog {
         case "rot180" where !landscape: orientation = 180
         default: orientation = landscape ? 90 : 0
         }
+        if platform == .android {
+            let key = "android-rounded-v1|\(productType)|\(orientation)|\(aspect)"
+            if let cached = cache[key] { return cached }
+            let bezel = androidBezel(id: key, aspect: aspect, orientation: orientation)
+            cache[key] = bezel
+            return bezel
+        }
         let profile = profiles.first { $0.models.contains(productType) || $0.name.caseInsensitiveCompare(productType) == .orderedSame }
             ?? profiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
         // Duo's inner panel has its own chassis and mask. The outer profile
@@ -265,6 +272,59 @@ enum MirrorBezelCatalog {
             }
         }
         return MirrorBezel(id: id, size: orientedSize, screenRect: orientedScreen, artwork: artwork, screenMask: orientedMask)
+    }
+
+    /// A generic Android shell, not a model-specific hardware mask. Keep the
+    /// full framebuffer's aspect and coordinates; only its presentation is rounded.
+    private static func androidBezel(id: String, aspect: Double, orientation: Int) -> MirrorBezel {
+        let landscape = orientation == 90 || orientation == 270
+        let screen = CGSize(width: 360, height: 360 / (landscape ? 1 / aspect : aspect))
+        let inset: CGFloat = 6
+        let margin: CGFloat = 5
+        let screenRadius: CGFloat = 24
+        let bodyRadius = screenRadius + inset
+        let body = CGRect(x: margin, y: margin,
+                          width: screen.width + inset * 2, height: screen.height + inset * 2)
+        let screenRect = CGRect(x: body.minX + inset, y: body.minY + inset,
+                                width: screen.width, height: screen.height)
+        let size = CGSize(width: body.width + margin * 2, height: body.height + margin * 2)
+        let transform = rotation(orientation, size: size)
+        let orientedSize = landscape ? CGSize(width: size.height, height: size.width) : size
+
+        let artwork = raster(size: orientedSize) { context in
+            context.concatenate(transform)
+
+            // Side keys sit outside the glass, never over the mirrored content.
+            for (offset, height) in [(0.19, 48.0), (0.30, 30.0)] {
+                let key = CGRect(x: body.maxX - 1, y: body.minY + body.height * offset,
+                                 width: 3.5, height: height)
+                NSGradient(colors: [NSColor(white: 0.32, alpha: 1), NSColor(white: 0.13, alpha: 1)])?
+                    .draw(in: NSBezierPath(roundedRect: key, xRadius: 1.5, yRadius: 1.5), angle: 0)
+            }
+
+            let chassis = NSBezierPath(roundedRect: body, xRadius: bodyRadius, yRadius: bodyRadius)
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: 1), blur: 3,
+                              color: NSColor.black.withAlphaComponent(0.20).cgColor)
+            NSColor(white: 0.12, alpha: 1).setFill()
+            chassis.fill()
+            context.restoreGState()
+
+            NSGradient(colors: [NSColor(white: 0.42, alpha: 1), NSColor(white: 0.17, alpha: 1),
+                                NSColor(white: 0.30, alpha: 1)])?.draw(in: chassis, angle: -35)
+            NSColor(white: 0.025, alpha: 1).setFill()
+            NSBezierPath(roundedRect: body.insetBy(dx: 1.25, dy: 1.25),
+                         xRadius: bodyRadius - 1.25, yRadius: bodyRadius - 1.25).fill()
+        } ?? NSImage(size: orientedSize)
+
+        let orientedScreen = screenRect.applying(transform)
+        let mask = raster(size: orientedScreen.size) { _ in
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: CGRect(origin: .zero, size: orientedScreen.size),
+                         xRadius: screenRadius, yRadius: screenRadius).fill()
+        }
+        return MirrorBezel(id: id, size: orientedSize, screenRect: orientedScreen,
+                           artwork: artwork, screenMask: mask)
     }
 
     private static func plainBezel(id: String, aspect: Double) -> MirrorBezel {
