@@ -102,9 +102,11 @@ Capture, encoding, transmission, and decoding keep bounded in-flight buffers to 
 
 Install `adb`, enable USB debugging, connect the device, and approve this Mac on the phone. Select the discovered device to start mirroring. Video and audio work independently of the optional Appium control connection.
 
+Android previews use a rounded device shell with a slim metallic rim and side keys in the dashboard, mirror window, and AI client previews.
+
 ## Device control
 
-Click **Connect** to start control.
+Click **Connect Control** to start control. **Refresh Thumbnail** and **Remove Device** are directly available beside it; removing a device asks for confirmation.
 
 | Platform | Preferred touch backend | Preparation |
 | --- | --- | --- |

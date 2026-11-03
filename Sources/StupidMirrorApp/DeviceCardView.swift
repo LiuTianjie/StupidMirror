@@ -599,7 +599,7 @@ struct ControlConnectionLoadingDebugPreview: View {
 #endif
 
 // The row under the screen: phone navigation on the left, then refresh,
-// more, control and the mirror window. Opening the mirror is the one white
+// remove, control and the mirror window. Opening the mirror is the one white
 // pill on the panel.
 struct DeviceActionDock: View {
     @EnvironmentObject private var store: DeviceGalleryStore
@@ -650,28 +650,22 @@ struct DeviceActionDock: View {
 
             Spacer(minLength: 8)
 
-            Menu {
-                Button(store.t("card.refreshThumbnail")) {
-                    store.refreshThumbnail(for: session)
-                }
-                .disabled(!isConnected)
-                Divider()
-                Button(store.t("device.remove"), role: .destructive) {
-                    confirmsRemoval = true
-                }
+            Button {
+                store.refreshThumbnail(for: session)
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.Ink.secondary)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Circle())
+                Label(store.t("card.refreshThumbnail"), systemImage: "arrow.clockwise")
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(store.t("device.actions"))
-            .accessibilityLabel(store.t("device.actions"))
+            .buttonStyle(IconButtonStyle())
+            .disabled(!isConnected)
+            .help(store.t("card.refreshThumbnail"))
+
+            Button(role: .destructive) {
+                confirmsRemoval = true
+            } label: {
+                Label(store.t("device.remove"), systemImage: "trash")
+            }
+            .buttonStyle(IconButtonStyle())
+            .help(store.t("device.remove"))
 
             Button {
                 if controlSession.isReady || controlSession.isConnecting {

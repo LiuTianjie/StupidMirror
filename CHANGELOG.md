@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.4 - 2026-11-03
+
+- Show Refresh Thumbnail and Remove Device directly in the device toolbar,
+  beside the control and mirror buttons. Removing a device still asks for
+  confirmation, and refreshing stays disabled while the device is disconnected.
+- Give Android previews a rounded screen shell with a slim metallic rim,
+  side keys, and a subtle shadow. The dashboard, mirror window, and AI client
+  previews share the same shell, preserving the screen's aspect ratio and
+  touch-coordinate mapping in portrait and landscape.
+
 ## 0.7.3 - 2026-10-30
 
 - Rework the License page. A status card at the top shows whether this Mac
