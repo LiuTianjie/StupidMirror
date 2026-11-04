@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.7.4</title>
-      <pubDate>Tue, 03 Nov 2026 07:36:09 +0000</pubDate>
-      <sparkle:version>202611031522</sparkle:version>
-      <sparkle:shortVersionString>0.7.4</sparkle:shortVersionString>
+      <title>StupidMirror 0.7.5</title>
+      <pubDate>Wed, 04 Nov 2026 08:38:54 +0000</pubDate>
+      <sparkle:version>202611041625</sparkle:version>
+      <sparkle:shortVersionString>0.7.5</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>Show Refresh Thumbnail and Remove Device directly in the device toolbar, beside the control and mirror buttons. Removing a device still asks for confirmation, and refreshing stays disabled while the device is disconnected.</li><li>Give Android previews a rounded screen shell with a slim metallic rim, side keys, and a subtle shadow. The dashboard, mirror window, and AI client previews share the same shell, preserving the screen&#x27;s aspect ratio and touch-coordinate mapping in portrait and landscape.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.4/StupidMirror-v0.7.4-macos.zip" type="application/octet-stream" sparkle:edSignature="ztnSWcTzHQCsKHlomGeWaBGUVy+MqV6+nmQGCFg6Gm4Hx66wYleBsL36yKT1nHFpugn5XKnCNqfNYoa0Ri+SCw==" length="164250772" />
+      <description><![CDATA[<ul><li>Claude Code opens the live phone in the Claude desktop app&#x27;s Browser pane by itself, beside the conversation, the way Codex shows its panel in the chat. This now also works on installs that refuse launch configurations holding only a URL, such as Claude Desktop routed through a gateway: <code>open_viewer</code> returns a complete <code>.claude/launch.json</code> entry that starts the app&#x27;s helper as a small placeholder page on port 17374, and Claude then sends the pane to the viewer link. The Claude plugin (0.1.5) replaces the older URL-only entry.</li><li>The website puts Codex and Claude Code side by side: a new section shows where the phone appears in each, and the MCP guide is now a Claude Code guide.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.5/StupidMirror-v0.7.5-macos.zip" type="application/octet-stream" sparkle:edSignature="VLeT4UIUmD2sEzVn5DFoFssL5fPGz9bNf53y6H2qh6nmr9s/nP9PtWmuZNs396XWvSnK35uZpIRLooNPvzJTBA==" length="164264499" />
     </item>
   </channel>
 </rss>
