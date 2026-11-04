@@ -108,7 +108,7 @@ const locales = {
     note: "The complete project history. Older entries describe the behavior of that version.",
     latest: "Latest", download: "Download latest", jump: "Jump to a version", versions: "versions",
     source: "Source on GitHub", releases: "GitHub releases", early: "Early development", top: "Back to top",
-    nav: "Primary navigation", skip: "Skip to release history", codex: "Codex plugin", mcp: "MCP setup",
+    nav: "Primary navigation", skip: "Skip to release history", codex: "Codex plugin", mcp: "Claude Code & MCP",
   },
   zh: {
     lang: "zh-CN", path: "zh/changelog/", up: "../../", home: "zh/", other: "changelog/",
@@ -117,7 +117,7 @@ const locales = {
     note: "完整保留项目历史。版本正文沿用英文原始记录；旧条目描述的是对应版本的行为。",
     latest: "最新版本", download: "下载最新版", jump: "跳转到版本", versions: "个版本",
     source: "在 GitHub 查看源文件", releases: "GitHub 发布记录", early: "早期开发", top: "回到顶部",
-    nav: "主导航", skip: "跳转到版本历史", codex: "Codex 插件", mcp: "MCP 配置",
+    nav: "主导航", skip: "跳转到版本历史", codex: "Codex 插件", mcp: "Claude Code 与 MCP",
   },
 };
 

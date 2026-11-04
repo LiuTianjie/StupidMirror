@@ -7,7 +7,7 @@
     <title>StupidMirror | iPhone Mirroring &amp; AI Automation for Mac</title>
     <meta
       name="description"
-      content="Mirror and control a real iPhone or Android on your Mac over USB or Wi-Fi. Local OCR, a localhost MCP server and a Codex plugin let AI agents operate it."
+      content="Mirror and control a real iPhone or Android on your Mac over USB or Wi-Fi, and hand it to Codex and Claude Code with one click: the live phone screen opens beside the chat."
     />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#08090a" />
@@ -70,7 +70,7 @@
             "@id": "https://stupidmirror.itool.tech/#webpage",
             "url": "https://stupidmirror.itool.tech/",
             "name": "StupidMirror | iPhone Mirroring & AI Automation for Mac",
-            "description": "Mirror and control a real iPhone or Android on your Mac over USB or Wi-Fi. Local OCR, a localhost MCP server and a Codex plugin let AI agents operate it.",
+            "description": "Mirror and control a real iPhone or Android on your Mac over USB or Wi-Fi, and hand it to Codex and Claude Code with one click: the live phone screen opens beside the chat.",
             "inLanguage": "en",
             "isPartOf": {
               "@id": "https://stupidmirror.itool.tech/#website"
@@ -84,12 +84,12 @@
             "@type": "SoftwareApplication",
             "@id": "https://stupidmirror.itool.tech/#software",
             "name": "StupidMirror",
-            "description": "Native macOS app that mirrors and controls real iPhone and Android devices over USB or Wi-Fi, with local Vision OCR, a localhost MCP server and a Codex plugin for AI agents.",
+            "description": "Native macOS app that mirrors and controls real iPhone and Android devices over USB or Wi-Fi, with local Vision OCR, a localhost MCP server, and one-click plugins for Codex and Claude Code.",
             "url": "https://stupidmirror.itool.tech/",
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "Device mirroring and automation",
             "operatingSystem": "macOS 15 or later",
-            "softwareVersion": "0.7.4",
+            "softwareVersion": "0.7.5",
             "downloadUrl": "https://github.com/LiuTianjie/StupidMirror/releases/latest",
             "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
             "screenshot": [
@@ -103,8 +103,9 @@
               "Real-time system touch on iOS 27+ and iOS Simulators",
               "Duo simulator posture and active-screen controls",
               "Local Apple Vision OCR and accessibility targeting",
-              "Localhost MCP server for Codex and Claude Code",
-              "Codex plugin with the live phone screen in chat"
+              "Localhost MCP server for Codex, Claude Code and other MCP clients",
+              "Codex plugin with the live phone screen in chat",
+              "Claude Code plugin with the live phone screen in the Claude desktop Browser pane"
             ],
             "license": "https://polyformproject.org/licenses/noncommercial/1.0.0",
             "offers": {
@@ -155,7 +156,7 @@
                 "name": "Which AI agents can use it?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Codex through the bundled plugin, which shows the live phone screen inside the chat, and Claude Code or other MCP clients through the local MCP server. StupidMirror needs no model API key."
+                  "text": "Codex and Claude Code, each through a bundled plugin you connect with one click. Codex shows the live phone screen inside the chat, and the Claude desktop app opens it in the Browser pane beside the conversation. Other MCP clients use the local MCP server. StupidMirror needs no model API key."
                 }
               },
               {
@@ -163,7 +164,7 @@
                 "name": "Does the screen or my data go through a cloud service?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "No. The Codex panel streams over encrypted local WebRTC without a cloud relay, the MCP server listens on this Mac only, and text recognition runs locally with Apple Vision."
+                  "text": "No. The Codex panel streams over encrypted local WebRTC and the Claude viewer is a page served from this Mac, neither through a cloud relay. The MCP server listens on this Mac only, and text recognition runs locally with Apple Vision."
                 }
               },
               {
@@ -241,7 +242,7 @@
         <div class="site-menu" id="site-menu" data-menu>
           <a href="#mirror">Mirror</a>
           <a href="#wireless">Wireless</a>
-          <a href="#codex">Codex</a>
+          <a href="#ai">Codex · Claude</a>
           <a href="#automation">AI harness</a>
           <a href="#scenes">Use cases</a>
           <a href="changelog/">Changelog</a>
@@ -264,8 +265,8 @@
 
         <div class="hero-copy reveal">
           <a class="announce" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
-            <span class="announce-tag">0.7.4</span>
-            <span class="announce-text">Visible device actions. A new Android shell.</span>
+            <span class="announce-tag">0.7.5</span>
+            <span class="announce-text">The live phone opens in Claude’s Browser pane.</span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg>
           </a>
           <h1>
@@ -273,8 +274,8 @@
             <span class="hero-line hero-line-soft">Leave the rest to <span class="brand-gradient">StupidMirror.</span></span>
           </h1>
           <p class="hero-lead">
-            Mirror a real iPhone over USB or Wi-Fi. Then let local OCR,
-            Accessibility, and MCP make it operable by you and your AI agent.
+            Mirror a real iPhone over USB or Wi-Fi. Then hand it to Codex or
+            Claude Code: the live screen opens beside the chat, and your agent can operate it.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
@@ -288,7 +289,7 @@
             </a>
           </div>
           <div class="hero-meta" aria-label="Product information">
-            <span>v0.6.0</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
+            <span>v0.7.5</span><i></i><span>macOS 15+</span><i></i><span>CODEX / CLAUDE CODE / MCP</span>
           </div>
         </div>
 
@@ -306,7 +307,7 @@
         <p class="marquee-label">Works with</p>
         <div class="marquee" data-marquee>
           <div class="marquee-track">
-            <span>Codex</span><span>Claude Code</span><span>Model Context Protocol</span><span>iPhone over USB</span>
+            <span>Codex</span><span>Claude Code</span><span>Claude desktop app</span><span>Model Context Protocol</span><span>iPhone over USB</span>
             <span>iPhone over Wi-Fi</span><span>Android 11+</span><span>Simulators</span><span>WebDriverAgent</span><span>Vision OCR</span>
             <span>VideoToolbox H.264</span><span>iOS Accessibility</span>
           </div>
@@ -427,27 +428,72 @@
         </div>
       </section>
 
-      <!-- Codex: three steps in one row. -->
-      <section class="section-shell codex" id="codex">
+      <!-- AI clients: Codex and Claude Code, side by side. -->
+      <section class="section-shell clients" id="ai">
         <div class="section-heading reveal">
           <div>
-            <p class="section-index">CODEX</p>
-            <h2>Your phone, inside Codex.</h2>
+            <p class="section-index">AI CLIENTS</p>
+            <h2>Your phone, inside Codex<br /><span class="display-soft">and Claude Code.</span></h2>
           </div>
           <div>
-            <p class="lead-strong">Connect once. View, operate, annotate.</p>
-            <p>Open MCP Automation settings and click Connect Codex. Select StupidMirror in a new chat to open the embedded phone panel.</p>
+            <p class="lead-strong">One click to connect. The live screen sits beside the chat.</p>
+            <p>In Settings → MCP Automation, Connect Codex and Connect Claude Code each install the plugin and MCP tools together. Start a new session, and your agent can watch, tap, type and verify on the real device.</p>
           </div>
         </div>
-        <div class="step-grid">
-          <article class="card spotlight step reveal"><span class="step-number">01</span><h3>Live video in your chat</h3><p>Local WebRTC carries the phone video into Codex. Switch devices, pause, or resume without a separate mirror window.</p></article>
-          <article class="card spotlight step reveal"><span class="step-number">02</span><h3>You and your AI can operate</h3><p>Enable manual control to tap and drag. AI observations keep images by default, with compact text and targeted controls.</p></article>
-          <article class="card spotlight step reveal"><span class="step-number">03</span><h3>Point it out with annotations</h3><p>Freeze a frame, move and resize numbered regions, then send the marked image and your note with Command-Enter. The composer stays below the picture.</p></article>
+
+        <div class="client-grid">
+          <article class="card spotlight client-card client-codex reveal">
+            <div class="client-head">
+              <span class="client-name">Codex</span>
+              <span class="client-tag">Plugin · embedded panel</span>
+            </div>
+            <div class="client-window" aria-hidden="true">
+              <div class="window-bar"><i></i><i></i><i></i><span>New chat · StupidMirror</span></div>
+              <div class="window-body">
+                <div class="window-chat"><b></b><b></b><b class="short"></b><em></em><b></b><b class="short"></b></div>
+                <div class="window-pane">
+                  <span class="pane-label"><i class="live-dot"></i>Live</span>
+                  <div class="mini-phone"><img src="assets/automation-3.webp" alt="" loading="lazy" width="794" height="1812" /></div>
+                </div>
+              </div>
+            </div>
+            <h3>The phone panel lives in your chat.</h3>
+            <p>Encrypted local WebRTC brings the screen into Codex. Switch devices, take manual control, or freeze a frame and send numbered annotations with Command-Enter.</p>
+            <ul class="client-points">
+              <li>Live video in the conversation</li>
+              <li>Manual control and device switching</li>
+              <li>Annotated screenshots to the agent</li>
+            </ul>
+            <a class="text-link" href="codex/">Codex setup guide<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+          </article>
+
+          <article class="card spotlight client-card client-claude reveal">
+            <div class="client-head">
+              <span class="client-name">Claude Code</span>
+              <span class="client-tag">Plugin · Browser pane</span>
+            </div>
+            <div class="client-window" aria-hidden="true">
+              <div class="window-bar"><i></i><i></i><i></i><span>Code · Browser</span></div>
+              <div class="window-body">
+                <div class="window-chat"><b></b><b class="short"></b><em></em><b></b><b></b><b class="short"></b></div>
+                <div class="window-pane">
+                  <span class="pane-label pane-url">127.0.0.1 · viewer</span>
+                  <div class="mini-phone"><img src="assets/automation-1.webp" alt="" loading="lazy" width="794" height="1812" /></div>
+                </div>
+              </div>
+            </div>
+            <h3>The phone opens beside the conversation.</h3>
+            <p>In the Claude desktop app, Claude opens the live viewer in the Browser pane the first time it works with a device. No link to copy, no window to arrange. In the terminal, ask for the viewer link.</p>
+            <ul class="client-points">
+              <li>Opens in the Browser pane by itself</li>
+              <li>Same video, device picker and manual control</li>
+              <li>Works in local sessions, gateway setups included</li>
+            </ul>
+            <a class="text-link" href="mcp/">Claude Code setup guide<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+          </article>
         </div>
-        <div class="codex-foot reveal">
-          <a class="text-link" href="codex/">Read the Codex setup guide<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
-          <p>Video stays local. Screenshots requested by your AI and annotations you send follow your AI client’s data settings. Host support is required for image messages.</p>
-        </div>
+
+        <p class="clients-note reveal">Video stays on this Mac. Screenshots your AI requests and annotations you send follow your AI client’s data settings. Other MCP clients connect with the generated configuration.</p>
       </section>
 
       <!-- Automation: tool marquee, three recognised screens, three claims. -->
@@ -461,7 +507,7 @@
               StupidMirror includes an MCP server bound to localhost. It embeds no model and asks for no model API key —
               it hands the real device to the Codex or Claude Code setup you already use.
             </p>
-            <a class="text-link" href="mcp/">Set up MCP for Claude Code<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+            <a class="text-link" href="mcp/">MCP tools and other clients<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
           </div>
         </div>
 
@@ -591,11 +637,11 @@
           </details>
           <details class="faq-item">
             <summary><h3>Which AI agents can use it?</h3></summary>
-            <p>Codex through the bundled plugin, which shows the live phone screen inside the chat, and Claude Code or other MCP clients through the local MCP server. StupidMirror needs no model API key.</p>
+            <p>Codex and Claude Code, each through a bundled plugin you connect with one click. Codex shows the live phone screen inside the chat, and the Claude desktop app opens it in the Browser pane beside the conversation. Other MCP clients use the local MCP server. StupidMirror needs no model API key.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Does the screen or my data go through a cloud service?</h3></summary>
-            <p>No. The Codex panel streams over encrypted local WebRTC without a cloud relay, the MCP server listens on this Mac only, and text recognition runs locally with Apple Vision.</p>
+            <p>No. The Codex panel streams over encrypted local WebRTC and the Claude viewer is a page served from this Mac, neither through a cloud relay. The MCP server listens on this Mac only, and text recognition runs locally with Apple Vision.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Is StupidMirror free?</h3></summary>
@@ -627,7 +673,7 @@
       <div class="section-shell footer-inner">
         <a class="brand" href="#top"><img src="assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
         <p>Native iPhone mirroring &amp; automation harness for macOS.</p>
-        <nav class="guide-footer-nav" aria-label="Guides"><a href="codex/">Codex plugin</a><a href="mcp/">MCP setup</a><a href="changelog/">Changelog</a></nav>
+        <nav class="guide-footer-nav" aria-label="Guides"><a href="codex/">Codex plugin</a><a href="mcp/">Claude Code &amp; MCP</a><a href="changelog/">Changelog</a></nav>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
     </footer>

@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <script>if(location.hostname.endsWith("github.io"))location.replace("https://stupidmirror.itool.tech"+location.pathname.replace(/^\/StupidMirror/i,"")+location.search+location.hash)</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>让 Claude Code 操作 iPhone / 安卓真机的 MCP｜StupidMirror</title>
-    <meta name="description" content="StupidMirror 在 Mac 上提供只监听本机的 MCP Server，Claude Code、Codex 等 MCP 客户端可以直接观察、点击、输入并验证真实 iPhone 或安卓手机。" />
+    <title>在 Claude Code 里查看并操作 iPhone / 安卓｜StupidMirror</title>
+    <meta name="description" content="一键把真实 iPhone 或安卓手机接入 Claude Code。Claude 桌面版会在浏览器面板里打开手机实时画面，Claude 通过只监听本机的 MCP Server 点击、输入并验证。" />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#08090a" />
     <meta name="color-scheme" content="dark" />
@@ -16,15 +16,15 @@
     <meta property="og:type" content="article" />
     <meta property="og:site_name" content="StupidMirror" />
     <meta property="og:url" content="https://stupidmirror.itool.tech/zh/mcp/" />
-    <meta property="og:title" content="让 Claude Code 操作 iPhone / 安卓真机的 MCP｜StupidMirror" />
-    <meta property="og:description" content="StupidMirror 在 Mac 上提供只监听本机的 MCP Server，Claude Code、Codex 等 MCP 客户端可以直接观察、点击、输入并验证真实 iPhone 或安卓手机。" />
+    <meta property="og:title" content="在 Claude Code 里查看并操作 iPhone / 安卓｜StupidMirror" />
+    <meta property="og:description" content="一键把真实 iPhone 或安卓手机接入 Claude Code。Claude 桌面版会在浏览器面板里打开手机实时画面，Claude 通过只监听本机的 MCP Server 点击、输入并验证。" />
     <meta property="og:image" content="https://stupidmirror.itool.tech/assets/og-image.jpg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:locale" content="zh_CN" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="让 Claude Code 操作 iPhone / 安卓真机的 MCP｜StupidMirror" />
-    <meta name="twitter:description" content="StupidMirror 在 Mac 上提供只监听本机的 MCP Server，Claude Code、Codex 等 MCP 客户端可以直接观察、点击、输入并验证真实 iPhone 或安卓手机。" />
+    <meta name="twitter:title" content="在 Claude Code 里查看并操作 iPhone / 安卓｜StupidMirror" />
+    <meta name="twitter:description" content="一键把真实 iPhone 或安卓手机接入 Claude Code。Claude 桌面版会在浏览器面板里打开手机实时画面，Claude 通过只监听本机的 MCP Server 点击、输入并验证。" />
     <meta name="twitter:image" content="https://stupidmirror.itool.tech/assets/og-image.jpg" />
     <link rel="icon" type="image/png" sizes="128x128" href="../../assets/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="../../assets/apple-touch-icon.png" />
@@ -39,7 +39,7 @@
             "@type": "TechArticle",
             "@id": "https://stupidmirror.itool.tech/zh/mcp/#article",
             "headline": "把真实 iPhone / 安卓交给 Claude Code。",
-            "description": "StupidMirror 在 Mac 上提供只监听本机的 MCP Server，Claude Code、Codex 等 MCP 客户端可以直接观察、点击、输入并验证真实 iPhone 或安卓手机。",
+            "description": "一键把真实 iPhone 或安卓手机接入 Claude Code。Claude 桌面版会在浏览器面板里打开手机实时画面，Claude 通过只监听本机的 MCP Server 点击、输入并验证。",
             "inLanguage": "zh-CN",
             "url": "https://stupidmirror.itool.tech/zh/mcp/",
             "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
@@ -65,7 +65,7 @@
               {
                 "@type": "ListItem",
                 "position": 2,
-                "name": "MCP 配置",
+                "name": "Claude Code 与 MCP",
                 "item": "https://stupidmirror.itool.tech/zh/mcp/"
               }
             ]
@@ -88,7 +88,15 @@
                 "name": "支持哪些客户端？",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Codex 和 Claude Code 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。"
+                  "text": "Claude Code 和 Codex 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。"
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Claude 里的手机画面显示在哪？",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "在 Claude 桌面版 Code 标签的浏览器面板里，是这台 Mac 本机提供的页面。Claude 会在项目的 .claude/launch.json 里加一条 stupidmirror-viewer 配置来打开它。标注是 Codex 面板的功能；在 Claude 里可以用浏览器面板的选取元素，或附上截图。"
                 }
               },
               {
@@ -142,19 +150,19 @@
     </header>
     <main>
       <section class="section-shell guide-hero">
-        <nav class="guide-breadcrumb" aria-label="Breadcrumb"><a href="../../zh/">StupidMirror</a><span aria-hidden="true">/</span><span aria-current="page">MCP 配置</span></nav>
-        <p class="section-index">MCP SERVER</p>
+        <nav class="guide-breadcrumb" aria-label="Breadcrumb"><a href="../../zh/">StupidMirror</a><span aria-hidden="true">/</span><span aria-current="page">Claude Code 与 MCP</span></nav>
+        <p class="section-index">CLAUDE CODE · MCP</p>
         <h1>把真实 iPhone / 安卓交给 Claude Code。</h1>
-        <p class="guide-lead">StupidMirror 通过一个带认证、只监听本机的 MCP Server 提供已连接的设备。它不内置模型，也不需要模型 API Key，只是把真机交给你正在用的 Agent。</p>
+        <p class="guide-lead">一键安装 Claude Code 插件和 MCP 工具。在 Claude 桌面版里，手机实时画面会出现在对话旁边的浏览器面板中，就像 Codex 面板嵌在聊天里一样。StupidMirror 不内置模型，也不需要模型 API Key。</p>
         <figure class="guide-shot"><img src="../../assets/site-mcp.webp" alt="StupidMirror 内置 MCP Server 设置界面" width="1441" height="1321" loading="lazy" decoding="async" /></figure>
       </section>
       <section class="section-shell guide-section">
-        <h2>接入 MCP 客户端</h2>
-        <p class="guide-note">在「设置 → MCP 自动化」中，「接入 Codex」和「接入 Claude Code」都会一键安装插件和 MCP 工具，已装好的部分会跳过。其他 MCP 客户端使用自动生成的配置。</p>
+        <h2>接入 Claude Code</h2>
+        <p class="guide-note">在「设置 → MCP 自动化」中，「接入 Claude Code」一键安装插件和 MCP 工具，「接入 Codex」同样适用于 Codex，已装好的部分会跳过。其他 MCP 客户端使用自动生成的配置。</p>
         <div class="step-grid guide-grid">
           <article class="card step"><span class="step-number">01</span><h3>开启 MCP Server</h3><p>打开「设置 → MCP」，开启本机 MCP Server。它只监听 http://127.0.0.1:&lt;port&gt;/mcp。</p></article>
           <article class="card step"><span class="step-number">02</span><h3>选择客户端</h3><p>点击「接入 Claude Code」（或「接入 Codex」）一键接入。其他 MCP 客户端请展开「高级连接设置 · 其他 AI 客户端」。</p></article>
-          <article class="card step"><span class="step-number">03</span><h3>新开会话</h3><p>在终端或 Claude 桌面版的 Code 标签里新开一个 Claude Code 会话。想看手机画面时让它打开实时画面：open_viewer 会返回一个本机链接，可在桌面版的浏览器面板中打开。手动接入的客户端则复制生成的配置，其中包含地址、Bearer 认证和 240 秒的工具超时。</p></article>
+          <article class="card step"><span class="step-number">03</span><h3>新开会话</h3><p>在 Claude 桌面版的 Code 标签里新开一个本地会话。Claude 第一次操作设备时，会自动在浏览器面板里打开实时画面，画面、切换设备和手动控制都与 Codex 面板一致；桌面版走网关（gateway）时同样可用。在终端里则可以让 Claude 给出画面链接。手动接入的客户端复制生成的配置，其中包含地址、Bearer 认证和 240 秒的工具超时。</p></article>
           <article class="card step"><span class="step-number">04</span><h3>向 Agent 提问</h3><p>保持 StupidMirror 打开，试试：「列出已连接的设备，开始镜像我的 iPhone，并标出可点击元素，先不要点击。」</p></article>
         </div>
       </section>
@@ -182,7 +190,11 @@
           </details>
           <details class="faq-item">
             <summary><h3>支持哪些客户端？</h3></summary>
-            <p>Codex 和 Claude Code 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。</p>
+            <p>Claude Code 和 Codex 一键接入，同时安装插件和 MCP 工具；其他 MCP 客户端通过生成的配置（含 Bearer 认证）接入。</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Claude 里的手机画面显示在哪？</h3></summary>
+            <p>在 Claude 桌面版 Code 标签的浏览器面板里，是这台 Mac 本机提供的页面。Claude 会在项目的 .claude/launch.json 里加一条 stupidmirror-viewer 配置来打开它。标注是 Codex 面板的功能；在 Claude 里可以用浏览器面板的选取元素，或附上截图。</p>
           </details>
           <details class="faq-item">
             <summary><h3>为什么第一次操作比较慢？</h3></summary>
@@ -207,7 +219,7 @@
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="../../zh/"><img src="../../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
-        <nav class="guide-footer-nav" aria-label="指南"><a href="../../zh/codex/">Codex 插件</a><a href="../../zh/mcp/">MCP 配置</a><a href="../../zh/changelog/">更新日志</a></nav>
+        <nav class="guide-footer-nav" aria-label="指南"><a href="../../zh/codex/">Codex 插件</a><a href="../../zh/mcp/">Claude Code 与 MCP</a><a href="../../zh/changelog/">更新日志</a></nav>
         <span>© 2026 StupidMirror</span>
       </div>
     </footer>

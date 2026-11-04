@@ -523,6 +523,130 @@
     [
       "MCP setup",
       "MCP 配置"
+    ],
+    [
+      "The live phone opens in Claude’s Browser pane.",
+      "手机实时画面在 Claude 浏览器面板中打开。"
+    ],
+    [
+      "Mirror a real iPhone over USB or Wi-Fi. Then hand it to Codex or Claude Code: the live screen opens beside the chat, and your agent can operate it.",
+      "USB 或无线，把真实 iPhone 放到 Mac 上。再一键交给 Codex 或 Claude Code：实时画面就在对话旁边，AI 可以直接操作。"
+    ],
+    [
+      "Claude desktop app",
+      "Claude 桌面版"
+    ],
+    [
+      "AI CLIENTS",
+      "AI 客户端"
+    ],
+    [
+      "Your phone, inside Codex",
+      "把手机，放进 Codex"
+    ],
+    [
+      "and Claude Code.",
+      "和 Claude Code。"
+    ],
+    [
+      "One click to connect. The live screen sits beside the chat.",
+      "一键接入，实时画面就在对话旁边。"
+    ],
+    [
+      "In Settings → MCP Automation, Connect Codex and Connect Claude Code each install the plugin and MCP tools together. Start a new session, and your agent can watch, tap, type and verify on the real device.",
+      "在「设置 → MCP 自动化」中，「接入 Codex」和「接入 Claude Code」都会一并安装插件和 MCP 工具。新开一个会话，AI 就能在真机上查看、点击、输入并验证。"
+    ],
+    [
+      "Plugin · embedded panel",
+      "插件 · 内嵌面板"
+    ],
+    [
+      "Plugin · Browser pane",
+      "插件 · 浏览器面板"
+    ],
+    [
+      "New chat · StupidMirror",
+      "新聊天 · StupidMirror"
+    ],
+    [
+      "Code · Browser",
+      "Code · 浏览器"
+    ],
+    [
+      "Live",
+      "实时"
+    ],
+    [
+      "The phone panel lives in your chat.",
+      "手机面板就在聊天里。"
+    ],
+    [
+      "Encrypted local WebRTC brings the screen into Codex. Switch devices, take manual control, or freeze a frame and send numbered annotations with Command-Enter.",
+      "加密的本机 WebRTC 把画面送进 Codex。可以切换设备、手动控制，也能冻结画面，用 Command-Enter 发送带编号的标注。"
+    ],
+    [
+      "Live video in the conversation",
+      "对话里的实时画面"
+    ],
+    [
+      "Manual control and device switching",
+      "手动控制与切换设备"
+    ],
+    [
+      "Annotated screenshots to the agent",
+      "把标注截图发给 AI"
+    ],
+    [
+      "Codex setup guide",
+      "Codex 使用指南"
+    ],
+    [
+      "The phone opens beside the conversation.",
+      "手机就在对话旁边打开。"
+    ],
+    [
+      "In the Claude desktop app, Claude opens the live viewer in the Browser pane the first time it works with a device. No link to copy, no window to arrange. In the terminal, ask for the viewer link.",
+      "在 Claude 桌面版里，Claude 第一次操作设备时会自动在浏览器面板中打开实时画面，不用复制链接，也不用摆放窗口。在终端里可以让它给出画面链接。"
+    ],
+    [
+      "Opens in the Browser pane by itself",
+      "自动在浏览器面板中打开"
+    ],
+    [
+      "Same video, device picker and manual control",
+      "画面、切换设备与手动控制一应俱全"
+    ],
+    [
+      "Works in local sessions, gateway setups included",
+      "本地会话可用，走网关的桌面版也支持"
+    ],
+    [
+      "Claude Code setup guide",
+      "Claude Code 使用指南"
+    ],
+    [
+      "Video stays on this Mac. Screenshots your AI requests and annotations you send follow your AI client’s data settings. Other MCP clients connect with the generated configuration.",
+      "视频只在这台 Mac 上传输；AI 请求的截图和你发送的标注受 AI 客户端的数据设置约束。其他 MCP 客户端可通过生成的配置接入。"
+    ],
+    [
+      "MCP tools and other clients",
+      "MCP 工具与其他客户端"
+    ],
+    [
+      "Claude Code & MCP",
+      "Claude Code 与 MCP"
+    ],
+    [
+      "Codex and Claude Code, each through a bundled plugin you connect with one click. Codex shows the live phone screen inside the chat, and the Claude desktop app opens it in the Browser pane beside the conversation. Other MCP clients use the local MCP server. StupidMirror needs no model API key.",
+      "Codex 和 Claude Code 都有内置插件，一键接入。Codex 在聊天里直接显示手机实时画面，Claude 桌面版则在对话旁边的浏览器面板中打开。其他 MCP 客户端通过本机 MCP Server 接入。StupidMirror 本身不需要模型 API Key。"
+    ],
+    [
+      "No. The Codex panel streams over encrypted local WebRTC and the Claude viewer is a page served from this Mac, neither through a cloud relay. The MCP server listens on this Mac only, and text recognition runs locally with Apple Vision.",
+      "不会。Codex 面板通过加密的本机 WebRTC 传输画面，Claude 里的实时画面是这台 Mac 本机提供的页面，都没有云端中转；MCP Server 只监听本机；文字识别用 Apple Vision 在本地完成。"
+    ],
+    [
+      "Codex · Claude",
+      "Codex · Claude"
     ]
   ],
   "attributes": [

@@ -304,6 +304,7 @@ section[id] {
   padding: 6px 12px;
   border-radius: 999px;
   font-size: 14px;
+  white-space: nowrap;
   color: var(--muted);
   transition: color 0.2s, background 0.2s;
 }
@@ -969,11 +970,7 @@ section[id] {
   align-self: center;
 }
 
-/* ---------- codex / steps ---------- */
-
-.codex {
-  padding-top: 170px;
-}
+/* ---------- steps (use cases) ---------- */
 
 .step-grid {
   display: grid;
@@ -1002,16 +999,224 @@ section[id] {
   margin-top: 64px;
 }
 
-.codex-foot {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 32px;
-  align-items: baseline;
-  margin-top: 28px;
+/* ---------- AI clients ----------
+   Two equal cards, each a quiet sketch of the client's window: the chat on
+   the left, the phone on the right. Codex keeps a cool cyan accent, Claude a
+   warm amber one, both taken from the brand gradient and used only as a
+   faint wash and a hairline. */
+
+.clients {
+  padding-top: 170px;
 }
 
-.codex-foot p {
-  max-width: 640px;
+.client-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
+.client-card {
+  --accent: var(--cyan);
+  --accent-soft: rgba(51, 207, 255, 0.07);
+  display: flex;
+  flex-direction: column;
+  padding: 30px 30px 32px;
+  background:
+    radial-gradient(120% 60% at 50% 0%, var(--accent-soft), transparent 62%),
+    linear-gradient(180deg, var(--card-2), var(--card));
+}
+
+.client-claude {
+  --accent: var(--amber);
+  --accent-soft: rgba(255, 181, 71, 0.07);
+}
+
+.client-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.client-name {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.client-tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.client-window {
+  position: relative;
+  margin-top: 26px;
+  border-radius: 14px;
+  border: 1px solid var(--line-2);
+  background: #0a0b0d;
+  box-shadow: 0 30px 60px -30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden;
+}
+
+.client-window::before {
+  content: "";
+  position: absolute;
+  inset: 0 18% auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.55;
+}
+
+.window-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.window-bar i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.window-bar span {
+  margin-left: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.window-body {
+  display: grid;
+  grid-template-columns: 1fr 0.72fr;
+  height: 236px;
+}
+
+.window-chat {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 20px 18px;
+}
+
+.window-chat b {
+  display: block;
+  height: 7px;
+  width: 88%;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.window-chat b.short {
+  width: 56%;
+}
+
+.window-chat em {
+  align-self: flex-end;
+  display: block;
+  width: 62%;
+  height: 26px;
+  margin: 6px 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--line);
+}
+
+.window-pane {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-left: 1px solid var(--line);
+  background: radial-gradient(80% 60% at 50% 40%, var(--accent-soft), transparent 70%), #0c0d10;
+}
+
+.pane-label {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 3px rgba(60, 207, 127, 0.15);
+}
+
+.mini-phone {
+  width: 86px;
+  margin-top: 14px;
+  padding: 3px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #3a3b40, #1b1c1f 40%, #2b2c30);
+  box-shadow: 0 18px 30px -12px rgba(0, 0, 0, 0.9);
+}
+
+.mini-phone img {
+  width: 100%;
+  border-radius: 13px;
+  transition: transform 0.8s var(--ease);
+}
+
+.client-card:hover .mini-phone img {
+  transform: scale(1.015);
+}
+
+.client-card h3 {
+  margin-top: 30px;
+  font-size: 20px;
+}
+
+.client-points {
+  margin: 20px 0 26px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 9px;
+}
+
+.client-points li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.client-points li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.62em;
+  width: 8px;
+  height: 1px;
+  background: var(--accent);
+}
+
+.client-card .text-link {
+  margin-top: auto;
+}
+
+.clients-note {
+  max-width: 720px;
+  margin-top: 26px;
   font-size: 14px;
   color: var(--faint);
 }
@@ -1452,10 +1657,10 @@ section[id] {
   .section-heading,
   .wireless-grid,
   .step-grid,
+  .client-grid,
   .claim-grid,
   .privacy-card,
-  .bento-wide,
-  .codex-foot {
+  .bento-wide {
     grid-template-columns: 1fr;
   }
 
@@ -1491,7 +1696,7 @@ section[id] {
   }
 
   .wireless,
-  .codex,
+  .clients,
   .gallery,
   .scenes {
     padding-top: 110px;
@@ -1543,6 +1748,24 @@ section[id] {
 
   .chip-grid {
     grid-template-columns: 1fr;
+  }
+
+  .client-card {
+    padding: 24px 22px 26px;
+  }
+
+  .window-body {
+    height: 210px;
+    grid-template-columns: 1fr 0.9fr;
+  }
+
+  .pane-url {
+    display: none;
+  }
+
+  .client-head {
+    flex-direction: column;
+    gap: 4px;
   }
 
   .stat-row {

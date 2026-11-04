@@ -7,6 +7,13 @@ import StupidMirrorConnection
 @main
 enum BridgeMain {
     static func main() async {
+        if CommandLine.arguments.dropFirst().first == "--browser-pane" {
+            guard let port = BrowserPaneLanding.port(fromArguments: Array(CommandLine.arguments.dropFirst())) else {
+                FileHandle.standardError.write(Data("Usage: StupidMirrorMCPBridge --browser-pane [--port N]\n".utf8))
+                exit(2)
+            }
+            BrowserPaneServer.run(port: port)
+        }
         do {
             guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--app" else {
                 throw HostError("Usage: StupidMirrorMCPBridge --app /Applications/StupidMirror.app")

@@ -18,7 +18,7 @@ enum StupidMirrorMCPToolCatalog {
             ])
         ),
         tool(
-            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code: in the Claude desktop app, open it by default when you start working with a device; elsewhere, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane origin; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
+            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code: in the Claude desktop app, open it by default when you start working with a device; elsewhere, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane launch configuration; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
             deviceProperties
         ),
         tool(
@@ -497,21 +497,28 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 let link = try viewer.makeLink(deviceID: preview.device?.id)
                 var structured: [String: Value] = [
                     "url": .string(link.url.absoluteString),
-                    "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt)),
-                    "browser_pane": .object([
-                        "launch_name": .string(MCPViewerGateway.launchName),
-                        "origin": .string(viewer.origin)
-                    ])
+                    "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt))
                 ]
+                let helper = ClaudeCodeMCPRegistration.helperPath(appPath: Bundle.main.bundleURL.path)
+                let paneAvailable = FileManager.default.isExecutableFile(atPath: helper)
+                if paneAvailable {
+                    structured["browser_pane"] = .object([
+                        "launch_name": .string(MCPViewerGateway.launchName),
+                        "launch_configuration": .object(MCPViewerGateway.browserPaneConfiguration(helperPath: helper))
+                    ])
+                }
                 if let device = preview.device {
                     structured["device_id"] = .string(device.id)
                     structured["device_name"] = .string(device.model)
                 }
                 if let message = preview.message { structured["message"] = .string(message) }
+                let paneSteps = paneAvailable ? """
+                In the Claude desktop app, open it in the Browser pane yourself: put browser_pane.launch_configuration into .claude/launch.json as the configuration named "\(MCPViewerGateway.launchName)" (replace any older entry of that name), call preview_start with that name, then run preview_eval with location.assign(<url>) to send the pane to the viewer link.
+                """ : "This copy of StupidMirror has no helper to open the Browser pane; show the link to the user."
                 return CallTool.Result(
                     content: [.text("""
                     Live phone viewer: \(link.url.absoluteString)
-                    In the Claude desktop app, open it in the Browser pane yourself: give .claude/launch.json a configuration named "\(MCPViewerGateway.launchName)" with url "\(viewer.origin)" and no command, call preview_start with that name, then navigate the pane to the viewer link. Elsewhere, show the link to the user. It opens one viewer and expires in 10 minutes if unused.
+                    \(paneSteps) Elsewhere, show the link to the user. It opens one viewer and expires in 10 minutes if unused.
                     """)],
                     structuredContent: .object(structured), isError: false
                 )
