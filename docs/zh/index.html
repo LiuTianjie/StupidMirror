@@ -84,12 +84,12 @@
             "@type": "SoftwareApplication",
             "@id": "https://stupidmirror.itool.tech/#software",
             "name": "StupidMirror",
-            "description": "Native macOS app that mirrors and controls real iPhone and Android devices over USB or Wi-Fi, with local Vision OCR, a localhost MCP server and a Codex plugin for AI agents.",
+            "description": "Native macOS app that mirrors and controls real iPhone and Android devices over USB or Wi-Fi, with local Vision OCR, a localhost MCP server, and one-click plugins for Codex and Claude Code.",
             "url": "https://stupidmirror.itool.tech/",
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "Device mirroring and automation",
             "operatingSystem": "macOS 15 or later",
-            "softwareVersion": "0.7.4",
+            "softwareVersion": "0.7.5",
             "downloadUrl": "https://github.com/LiuTianjie/StupidMirror/releases/latest",
             "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
             "screenshot": [
@@ -103,8 +103,9 @@
               "Real-time system touch on iOS 27+ and iOS Simulators",
               "Duo simulator posture and active-screen controls",
               "Local Apple Vision OCR and accessibility targeting",
-              "Localhost MCP server for Codex and Claude Code",
-              "Codex plugin with the live phone screen in chat"
+              "Localhost MCP server for Codex, Claude Code and other MCP clients",
+              "Codex plugin with the live phone screen in chat",
+              "Claude Code plugin with the live phone screen in the Claude desktop Browser pane"
             ],
             "license": "https://polyformproject.org/licenses/noncommercial/1.0.0",
             "offers": {
@@ -155,7 +156,7 @@
                 "name": "哪些 AI Agent 可以用？",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Codex 可以通过内置插件使用，聊天里能直接看到手机实时画面；Claude Code 和其他 MCP 客户端通过本机 MCP Server 接入。StupidMirror 本身不需要模型 API Key。"
+                  "text": "Codex 和 Claude Code 都有内置插件，一键接入。Codex 在聊天里直接显示手机实时画面，Claude 桌面版则在对话旁边的浏览器面板中打开。其他 MCP 客户端通过本机 MCP Server 接入。StupidMirror 本身不需要模型 API Key。"
                 }
               },
               {
@@ -163,7 +164,7 @@
                 "name": "画面和数据会经过云端吗？",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "不会。Codex 面板通过加密的本地 WebRTC 传输画面，没有云端中转；MCP Server 只监听本机；文字识别用 Apple Vision 在本地完成。"
+                  "text": "不会。Codex 面板通过加密的本机 WebRTC 传输画面，Claude 里的实时画面是这台 Mac 本机提供的页面，都没有云端中转；MCP Server 只监听本机；文字识别用 Apple Vision 在本地完成。"
                 }
               },
               {
@@ -239,7 +240,7 @@
         <div class="site-menu" id="site-menu" data-menu>
           <a href="#mirror">镜像</a>
           <a href="#wireless">无线</a>
-          <a href="#codex">Codex</a>
+          <a href="#ai">Codex · Claude</a>
           <a href="#automation">AI 自动化</a>
           <a href="#scenes">使用场景</a>
           <a href="changelog/">更新日志</a>
@@ -262,8 +263,8 @@
 
         <div class="hero-copy reveal">
           <a class="announce" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
-            <span class="announce-tag">0.7.4</span>
-            <span class="announce-text">常用设备操作直接可见，安卓外壳全新设计。</span>
+            <span class="announce-tag">0.7.5</span>
+            <span class="announce-text">手机实时画面在 Claude 浏览器面板中打开。</span>
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg>
           </a>
           <h1>
@@ -271,7 +272,7 @@
             <span class="hero-line hero-line-soft">剩下的交给 <span class="brand-gradient">StupidMirror。</span></span>
           </h1>
           <p class="hero-lead">
-            USB 或无线，把真实 iPhone 放到 Mac 上。再通过本地 OCR、访问树与 MCP，把它交给你和 AI 一起操作。
+            USB 或无线，把真实 iPhone 放到 Mac 上。再一键交给 Codex 或 Claude Code：实时画面就在对话旁边，AI 可以直接操作。
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/LiuTianjie/StupidMirror/releases/latest" target="_blank" rel="noreferrer">
@@ -285,7 +286,7 @@
             </a>
           </div>
           <div class="hero-meta" aria-label="产品信息">
-            <span>v0.6.0</span><i></i><span>macOS 15+</span><i></i><span>USB / LAN / LOCAL MCP</span>
+            <span>v0.7.5</span><i></i><span>macOS 15+</span><i></i><span>CODEX / CLAUDE CODE / MCP</span>
           </div>
         </div>
 
@@ -303,7 +304,7 @@
         <p class="marquee-label">适配</p>
         <div class="marquee" data-marquee>
           <div class="marquee-track">
-            <span>Codex</span><span>Claude Code</span><span>Model Context Protocol</span><span>iPhone · USB</span>
+            <span>Codex</span><span>Claude Code</span><span>Claude 桌面版</span><span>Model Context Protocol</span><span>iPhone · USB</span>
             <span>iPhone · 无线</span><span>Android 11+</span><span>Simulators</span><span>WebDriverAgent</span><span>Vision OCR</span>
             <span>VideoToolbox H.264</span><span>iOS 访问树</span>
           </div>
@@ -420,27 +421,72 @@
         </div>
       </section>
 
-      <!-- Codex: three steps in one row. -->
-      <section class="section-shell codex" id="codex">
+      <!-- AI clients: Codex and Claude Code, side by side. -->
+      <section class="section-shell clients" id="ai">
         <div class="section-heading reveal">
           <div>
-            <p class="section-index">CODEX</p>
-            <h2>把手机，放进 Codex。</h2>
+            <p class="section-index">AI 客户端</p>
+            <h2>把手机，放进 Codex<br /><span class="display-soft">和 Claude Code。</span></h2>
           </div>
           <div>
-            <p class="lead-strong">连接一次，查看、操作、标注。</p>
-            <p>在 MCP 自动化设置中点击「连接 Codex」，新建聊天并选中 StupidMirror，即可打开内嵌手机面板。</p>
+            <p class="lead-strong">一键接入，实时画面就在对话旁边。</p>
+            <p>在「设置 → MCP 自动化」中，「接入 Codex」和「接入 Claude Code」都会一并安装插件和 MCP 工具。新开一个会话，AI 就能在真机上查看、点击、输入并验证。</p>
           </div>
         </div>
-        <div class="step-grid">
-          <article class="card spotlight step reveal"><span class="step-number">01</span><h3>聊天里的实时画面</h3><p>通过本机 WebRTC 在 Codex 中查看手机画面；切换设备、暂停或继续，无需另开镜像窗口。</p></article>
-          <article class="card spotlight step reveal"><span class="step-number">02</span><h3>你和 AI 都能操作</h3><p>开启操作模式即可点击和拖动；AI 观察默认保留图片，搭配精简文字和目标操作工具。</p></article>
-          <article class="card spotlight step reveal"><span class="step-number">03</span><h3>用标注说清楚</h3><p>冻结画面，移动或缩放编号框，按 ⌘＋回车发送标注截图和说明。输入栏位于画面下方，不遮挡画面。</p></article>
+
+        <div class="client-grid">
+          <article class="card spotlight client-card client-codex reveal">
+            <div class="client-head">
+              <span class="client-name">Codex</span>
+              <span class="client-tag">插件 · 内嵌面板</span>
+            </div>
+            <div class="client-window" aria-hidden="true">
+              <div class="window-bar"><i></i><i></i><i></i><span>新聊天 · StupidMirror</span></div>
+              <div class="window-body">
+                <div class="window-chat"><b></b><b></b><b class="short"></b><em></em><b></b><b class="short"></b></div>
+                <div class="window-pane">
+                  <span class="pane-label"><i class="live-dot"></i>实时</span>
+                  <div class="mini-phone"><img src="../assets/automation-3.webp" alt="" loading="lazy" width="794" height="1812" /></div>
+                </div>
+              </div>
+            </div>
+            <h3>手机面板就在聊天里。</h3>
+            <p>加密的本机 WebRTC 把画面送进 Codex。可以切换设备、手动控制，也能冻结画面，用 Command-Enter 发送带编号的标注。</p>
+            <ul class="client-points">
+              <li>对话里的实时画面</li>
+              <li>手动控制与切换设备</li>
+              <li>把标注截图发给 AI</li>
+            </ul>
+            <a class="text-link" href="codex/">Codex 使用指南<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+          </article>
+
+          <article class="card spotlight client-card client-claude reveal">
+            <div class="client-head">
+              <span class="client-name">Claude Code</span>
+              <span class="client-tag">插件 · 浏览器面板</span>
+            </div>
+            <div class="client-window" aria-hidden="true">
+              <div class="window-bar"><i></i><i></i><i></i><span>Code · 浏览器</span></div>
+              <div class="window-body">
+                <div class="window-chat"><b></b><b class="short"></b><em></em><b></b><b></b><b class="short"></b></div>
+                <div class="window-pane">
+                  <span class="pane-label pane-url">127.0.0.1 · viewer</span>
+                  <div class="mini-phone"><img src="../assets/automation-1.webp" alt="" loading="lazy" width="794" height="1812" /></div>
+                </div>
+              </div>
+            </div>
+            <h3>手机就在对话旁边打开。</h3>
+            <p>在 Claude 桌面版里，Claude 第一次操作设备时会自动在浏览器面板中打开实时画面，不用复制链接，也不用摆放窗口。在终端里可以让它给出画面链接。</p>
+            <ul class="client-points">
+              <li>自动在浏览器面板中打开</li>
+              <li>画面、切换设备与手动控制一应俱全</li>
+              <li>本地会话可用，走网关的桌面版也支持</li>
+            </ul>
+            <a class="text-link" href="mcp/">Claude Code 使用指南<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+          </article>
         </div>
-        <div class="codex-foot reveal">
-          <a class="text-link" href="codex/">查看 Codex 使用指南<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
-          <p>视频在本机传输；AI 请求的截图和你发送的标注受 AI 客户端的数据设置约束。图片消息需要宿主支持。</p>
-        </div>
+
+        <p class="clients-note reveal">视频只在这台 Mac 上传输；AI 请求的截图和你发送的标注受 AI 客户端的数据设置约束。其他 MCP 客户端可通过生成的配置接入。</p>
       </section>
 
       <!-- Automation: tool marquee, three recognised screens, three claims. -->
@@ -453,7 +499,7 @@
             <p>
               StupidMirror 内置只监听本机的 MCP Server。不内置模型，不要求额外填写模型 API Key，把真机能力直接交给你已在使用的 Codex 或 Claude Code。
             </p>
-            <a class="text-link" href="mcp/">查看 Claude Code / MCP 接入指南<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
+            <a class="text-link" href="mcp/">MCP 工具与其他客户端<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5l5 5-5 5" /></svg></a>
           </div>
         </div>
 
@@ -582,11 +628,11 @@
           </details>
           <details class="faq-item">
             <summary><h3>哪些 AI Agent 可以用？</h3></summary>
-            <p>Codex 可以通过内置插件使用，聊天里能直接看到手机实时画面；Claude Code 和其他 MCP 客户端通过本机 MCP Server 接入。StupidMirror 本身不需要模型 API Key。</p>
+            <p>Codex 和 Claude Code 都有内置插件，一键接入。Codex 在聊天里直接显示手机实时画面，Claude 桌面版则在对话旁边的浏览器面板中打开。其他 MCP 客户端通过本机 MCP Server 接入。StupidMirror 本身不需要模型 API Key。</p>
           </details>
           <details class="faq-item">
             <summary><h3>画面和数据会经过云端吗？</h3></summary>
-            <p>不会。Codex 面板通过加密的本地 WebRTC 传输画面，没有云端中转；MCP Server 只监听本机；文字识别用 Apple Vision 在本地完成。</p>
+            <p>不会。Codex 面板通过加密的本机 WebRTC 传输画面，Claude 里的实时画面是这台 Mac 本机提供的页面，都没有云端中转；MCP Server 只监听本机；文字识别用 Apple Vision 在本地完成。</p>
           </details>
           <details class="faq-item">
             <summary><h3>StupidMirror 免费吗？</h3></summary>
@@ -618,7 +664,7 @@
       <div class="section-shell footer-inner">
         <a class="brand" href="#top"><img src="../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
         <p>原生 macOS iPhone 镜像与自动化工具。</p>
-        <nav class="guide-footer-nav" aria-label="指南"><a href="codex/">Codex 插件</a><a href="mcp/">MCP 配置</a><a href="changelog/">更新日志</a></nav>
+        <nav class="guide-footer-nav" aria-label="指南"><a href="codex/">Codex 插件</a><a href="mcp/">Claude Code 与 MCP</a><a href="changelog/">更新日志</a></nav>
         <span>© <span data-year></span> StupidMirror</span>
       </div>
     </footer>

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.5 - 2026-11-04
+
+- Claude Code opens the live phone in the Claude desktop app's Browser pane
+  by itself, beside the conversation, the way Codex shows its panel in the
+  chat. This now also works on installs that refuse launch configurations
+  holding only a URL, such as Claude Desktop routed through a gateway:
+  `open_viewer` returns a complete `.claude/launch.json` entry that starts
+  the app's helper as a small placeholder page on port 17374, and Claude
+  then sends the pane to the viewer link. The Claude plugin (0.1.5) replaces
+  the older URL-only entry.
+- The website puts Codex and Claude Code side by side: a new section shows
+  where the phone appears in each, and the MCP guide is now a Claude Code
+  guide.
+
 ## 0.7.4 - 2026-11-03
 
 - Show Refresh Thumbnail and Remove Device directly in the device toolbar,

@@ -125,10 +125,24 @@ final class MCPViewerGateway: @unchecked Sendable {
         ], body: Data(html.utf8))
     }
 
-    /// What a host needs to open the viewer in its own browser pane: a
-    /// configuration name and the origin it starts from.
     var origin: String { "http://127.0.0.1:\(port)" }
     static let launchName = "stupidmirror-viewer"
+    static let browserPanePort = 17_374
+
+    /// The `.claude/launch.json` entry that opens Claude's Browser pane. Some
+    /// installs refuse entries that only attach to a URL, so the pane starts the
+    /// app's helper, which serves a placeholder page on a port of its own; Claude
+    /// then sends the pane to a viewer link. With `autoPort`, Claude rewrites the
+    /// `--port` value when it moves the server to a free port.
+    static func browserPaneConfiguration(helperPath: String) -> [String: Value] {
+        [
+            "name": .string(launchName),
+            "runtimeExecutable": .string(helperPath),
+            "runtimeArgs": .array([.string("--browser-pane"), .string("--port"), .string(String(browserPanePort))]),
+            "port": .int(browserPanePort),
+            "autoPort": .bool(true)
+        ]
+    }
 
     private func rejectCrossOrigin(_ headers: [String: String]) -> MCPViewerResponse? {
         // Browsers always send Origin on fetch POST. Requiring our own origin

@@ -246,4 +246,16 @@ final class MCPViewerHTTPRoutingTests: XCTestCase {
         XCTAssertEqual(structured?["tool"] as? String, "screen_frame")
         await application.stop()
     }
+
+    func testBrowserPaneConfigurationStartsTheHelperOnItsOwnPort() {
+        let helper = "/Applications/StupidMirror.app/Contents/Helpers/StupidMirrorMCPBridge"
+        let configuration = MCPViewerGateway.browserPaneConfiguration(helperPath: helper)
+        XCTAssertEqual(configuration["name"], .string("stupidmirror-viewer"))
+        XCTAssertEqual(configuration["runtimeExecutable"], .string(helper))
+        XCTAssertEqual(configuration["runtimeArgs"], .array([.string("--browser-pane"), .string("--port"), .string("17374")]))
+        XCTAssertEqual(configuration["port"], .int(17_374))
+        XCTAssertEqual(configuration["autoPort"], .bool(true))
+        XCTAssertNil(configuration["url"], "Some Claude installs refuse URL-only entries")
+        XCTAssertNotEqual(MCPViewerGateway.browserPanePort, 17_373, "The app holds its own port")
+    }
 }

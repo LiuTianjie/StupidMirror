@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <script>if(location.hostname.endsWith("github.io"))location.replace("https://stupidmirror.itool.tech"+location.pathname.replace(/^\/StupidMirror/i,"")+location.search+location.hash)</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>iPhone &amp; Android MCP server for Claude Code | StupidMirror</title>
-    <meta name="description" content="StupidMirror runs a localhost MCP server on your Mac, so Claude Code, Codex or any MCP client can observe, tap, type and verify on a real iPhone or Android device." />
+    <title>Control an iPhone or Android from Claude Code | StupidMirror</title>
+    <meta name="description" content="Connect Claude Code to a real iPhone or Android in one click. The Claude desktop app opens the live phone screen in its Browser pane, and Claude taps, types and verifies through a localhost MCP server." />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#08090a" />
     <meta name="color-scheme" content="dark" />
@@ -16,15 +16,15 @@
     <meta property="og:type" content="article" />
     <meta property="og:site_name" content="StupidMirror" />
     <meta property="og:url" content="https://stupidmirror.itool.tech/mcp/" />
-    <meta property="og:title" content="iPhone &amp; Android MCP server for Claude Code | StupidMirror" />
-    <meta property="og:description" content="StupidMirror runs a localhost MCP server on your Mac, so Claude Code, Codex or any MCP client can observe, tap, type and verify on a real iPhone or Android device." />
+    <meta property="og:title" content="Control an iPhone or Android from Claude Code | StupidMirror" />
+    <meta property="og:description" content="Connect Claude Code to a real iPhone or Android in one click. The Claude desktop app opens the live phone screen in its Browser pane, and Claude taps, types and verifies through a localhost MCP server." />
     <meta property="og:image" content="https://stupidmirror.itool.tech/assets/og-image.jpg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="iPhone &amp; Android MCP server for Claude Code | StupidMirror" />
-    <meta name="twitter:description" content="StupidMirror runs a localhost MCP server on your Mac, so Claude Code, Codex or any MCP client can observe, tap, type and verify on a real iPhone or Android device." />
+    <meta name="twitter:title" content="Control an iPhone or Android from Claude Code | StupidMirror" />
+    <meta name="twitter:description" content="Connect Claude Code to a real iPhone or Android in one click. The Claude desktop app opens the live phone screen in its Browser pane, and Claude taps, types and verifies through a localhost MCP server." />
     <meta name="twitter:image" content="https://stupidmirror.itool.tech/assets/og-image.jpg" />
     <link rel="icon" type="image/png" sizes="128x128" href="../assets/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="../assets/apple-touch-icon.png" />
@@ -39,7 +39,7 @@
             "@type": "TechArticle",
             "@id": "https://stupidmirror.itool.tech/mcp/#article",
             "headline": "Give Claude Code a real iPhone or Android.",
-            "description": "StupidMirror runs a localhost MCP server on your Mac, so Claude Code, Codex or any MCP client can observe, tap, type and verify on a real iPhone or Android device.",
+            "description": "Connect Claude Code to a real iPhone or Android in one click. The Claude desktop app opens the live phone screen in its Browser pane, and Claude taps, types and verifies through a localhost MCP server.",
             "inLanguage": "en",
             "url": "https://stupidmirror.itool.tech/mcp/",
             "image": "https://stupidmirror.itool.tech/assets/og-image.jpg",
@@ -65,7 +65,7 @@
               {
                 "@type": "ListItem",
                 "position": 2,
-                "name": "MCP setup",
+                "name": "Claude Code & MCP",
                 "item": "https://stupidmirror.itool.tech/mcp/"
               }
             ]
@@ -88,7 +88,15 @@
                 "name": "Which clients work?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Codex and Claude Code through one-click setup that installs their plugin and MCP tools, and other MCP clients through the generated configuration with bearer authentication."
+                  "text": "Claude Code and Codex through one-click setup that installs their plugin and MCP tools, and other MCP clients through the generated configuration with bearer authentication."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where does the phone screen appear in Claude?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "In the Claude desktop app, in the Code tab's Browser pane, as a page served from this Mac. Claude adds a stupidmirror-viewer entry to the project's .claude/launch.json to open it. Annotations are a Codex feature; in Claude, select an element in the Browser pane or attach a screenshot."
                 }
               },
               {
@@ -142,19 +150,19 @@
     </header>
     <main>
       <section class="section-shell guide-hero">
-        <nav class="guide-breadcrumb" aria-label="Breadcrumb"><a href="../">StupidMirror</a><span aria-hidden="true">/</span><span aria-current="page">MCP setup</span></nav>
-        <p class="section-index">MCP SERVER</p>
+        <nav class="guide-breadcrumb" aria-label="Breadcrumb"><a href="../">StupidMirror</a><span aria-hidden="true">/</span><span aria-current="page">Claude Code &amp; MCP</span></nav>
+        <p class="section-index">CLAUDE CODE · MCP</p>
         <h1>Give Claude Code a real iPhone or Android.</h1>
-        <p class="guide-lead">StupidMirror exposes connected devices through an authenticated MCP server on this Mac. It embeds no model and needs no model API key: it hands the device to the agent you already use.</p>
+        <p class="guide-lead">One click installs the Claude Code plugin and MCP tools. In the Claude desktop app, the live phone screen opens in the Browser pane beside the conversation, the way the Codex panel sits in the chat. StupidMirror embeds no model and needs no model API key.</p>
         <figure class="guide-shot"><img src="../assets/site-mcp.webp" alt="The built-in StupidMirror MCP server settings" width="1441" height="1321" loading="lazy" decoding="async" /></figure>
       </section>
       <section class="section-shell guide-section">
-        <h2>Connect an MCP client</h2>
-        <p class="guide-note">In Settings → MCP Automation, Connect Codex and Connect Claude Code each install their plugin and MCP tools in one click; parts already in place are skipped. Other MCP clients use the generated configuration.</p>
+        <h2>Connect Claude Code</h2>
+        <p class="guide-note">In Settings → MCP Automation, Connect Claude Code installs the plugin and MCP tools in one click, and Connect Codex does the same for Codex; parts already in place are skipped. Other MCP clients use the generated configuration.</p>
         <div class="step-grid guide-grid">
           <article class="card step"><span class="step-number">01</span><h3>Turn on the MCP server</h3><p>Open Settings → MCP and enable the local MCP server. It listens only on http://127.0.0.1:&lt;port&gt;/mcp.</p></article>
           <article class="card step"><span class="step-number">02</span><h3>Pick your client</h3><p>Click Connect Claude Code (or Connect Codex) for one-click setup. For another MCP client, open Advanced connection settings · Other AI clients.</p></article>
-          <article class="card step"><span class="step-number">03</span><h3>Start a new session</h3><p>Open a new Claude Code session in the terminal or the Claude desktop app's Code tab. Ask for the live viewer to watch the phone: open_viewer returns a local link that opens in the desktop Browser pane. Manual clients instead copy the generated configuration, which includes the endpoint, bearer authentication and a 240-second tool timeout.</p></article>
+          <article class="card step"><span class="step-number">03</span><h3>Start a new session</h3><p>Open a new local session in the Claude desktop app's Code tab. The first time Claude works with a device, it opens the live viewer in the Browser pane by itself, with the same video, device picker and manual control as the Codex panel; this also works when the app is routed through a gateway. In the terminal, ask Claude for the viewer link. Manual clients instead copy the generated configuration, which includes the endpoint, bearer authentication and a 240-second tool timeout.</p></article>
           <article class="card step"><span class="step-number">04</span><h3>Ask the agent</h3><p>Keep StupidMirror open and try: “List my connected devices, start mirroring my iPhone, and highlight the visible clickable elements without tapping them.”</p></article>
         </div>
       </section>
@@ -182,7 +190,11 @@
           </details>
           <details class="faq-item">
             <summary><h3>Which clients work?</h3></summary>
-            <p>Codex and Claude Code through one-click setup that installs their plugin and MCP tools, and other MCP clients through the generated configuration with bearer authentication.</p>
+            <p>Claude Code and Codex through one-click setup that installs their plugin and MCP tools, and other MCP clients through the generated configuration with bearer authentication.</p>
+          </details>
+          <details class="faq-item">
+            <summary><h3>Where does the phone screen appear in Claude?</h3></summary>
+            <p>In the Claude desktop app, in the Code tab's Browser pane, as a page served from this Mac. Claude adds a stupidmirror-viewer entry to the project's .claude/launch.json to open it. Annotations are a Codex feature; in Claude, select an element in the Browser pane or attach a screenshot.</p>
           </details>
           <details class="faq-item">
             <summary><h3>Why is the first action slow?</h3></summary>
@@ -207,7 +219,7 @@
     <footer class="site-footer">
       <div class="section-shell footer-inner">
         <a class="brand" href="../"><img src="../assets/app-icon.webp" alt="" width="22" height="22" loading="lazy" /><span>StupidMirror</span></a>
-        <nav class="guide-footer-nav" aria-label="Guides"><a href="../codex/">Codex plugin</a><a href="../mcp/">MCP setup</a><a href="../changelog/">Changelog</a></nav>
+        <nav class="guide-footer-nav" aria-label="Guides"><a href="../codex/">Codex plugin</a><a href="../mcp/">Claude Code &amp; MCP</a><a href="../changelog/">Changelog</a></nav>
         <span>© 2026 StupidMirror</span>
       </div>
     </footer>
