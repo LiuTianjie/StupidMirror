@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.6 - 2026-11-04
+
+- In the Claude desktop app, the live phone now opens in the Browser pane
+  before Claude's first StupidMirror step, without being asked. The Claude
+  plugin (0.1.6) adds a hook: if the first StupidMirror call of a session is
+  not `open_viewer`, it is turned back once with instructions to open the
+  pane first. The terminal CLI is unaffected.
+- The viewer opens on the device Claude is working with and follows it when
+  Claude switches to another one, so there is no device to pick. Before
+  Claude names a device, it opens on the one already capturing, else the
+  first connected one.
+
 ## 0.7.5 - 2026-11-04
 
 - Claude Code opens the live phone in the Claude desktop app's Browser pane

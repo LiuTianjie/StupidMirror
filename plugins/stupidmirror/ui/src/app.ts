@@ -63,6 +63,7 @@ type Preview = {
   shell?: Shell | null;
   devices?: { device_id: string; name: string; platform?: string; connection_state: string; supports_continuous_touch?: boolean; supports_native_gestures?: boolean; touch_generation?: number }[];
   message?: string;
+  agent_device_id?: string | null;
 };
 type LiveState = 'connecting' | 'live' | 'paused' | 'offline';
 type EmptyState = 'connecting' | 'offline' | 'locked' | 'authentication' | 'paused' | 'unavailable';
@@ -102,6 +103,8 @@ const pauseLabel = document.getElementById('pause-label')!;
 let deviceOptions: HTMLButtonElement[] = [];
 let platform: string | undefined;
 let selectedDeviceId: string | undefined;
+let agentDeviceId: string | undefined;
+const standalone = isStandaloneViewer();
 let deviceListKey = '';
 let previewPaused = false;
 const liveText = document.getElementById('live-text')!;
@@ -540,6 +543,12 @@ function consume(value: unknown) {
       deviceListKey = key;
       renderDevices(preview.devices);
     }
+  }
+  // The standalone viewer follows the device the agent works with. A device the
+  // user picks stays until the agent moves to another one.
+  if (standalone && preview.agent_device_id && preview.agent_device_id !== agentDeviceId) {
+    agentDeviceId = preview.agent_device_id;
+    if (agentDeviceId !== selectedDeviceId && !acting) { void selectDevice(agentDeviceId); return; }
   }
   if (preview.device?.id && preview.device.id !== selectedDeviceId) {
     clearFrame(); liveVideo.retry(); selectedDeviceId = preview.device.id;

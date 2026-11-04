@@ -250,9 +250,34 @@ final class DeviceAutomationService: @unchecked Sendable {
         var deviceIDs: Set<String>
     }
     private let previewMedia = CodexPreviewMediaService()
+    /// The device the agent last named in an MCP call, by UDID when it has one
+    /// (a USB iPhone's session id changes once its UDID is known). The live
+    /// viewer opens on it and follows it, so the user never has to pick one.
+    private var agentDeviceReference: String?
 
     init(store: DeviceGalleryStore) {
         self.store = store
+    }
+
+    /// Records the device of an agent's MCP call. Viewer calls do not count.
+    /// Without a device_id the call uses the only connected device, if there is one.
+    func noteAgentDevice(_ requested: String?) {
+        guard let session = try? selectSession(deviceID: requested) else { return }
+        agentDeviceReference = session.device.udid ?? session.id
+    }
+
+    /// The connected device the agent is working with, if it named one.
+    var agentDeviceID: String? {
+        agentDeviceReference.flatMap { try? selectSession(deviceID: $0) }?.id
+    }
+
+    /// The device a viewer opens on: the one asked for, else the agent's,
+    /// else one already capturing, else the first connected one.
+    func viewerDeviceID(requested: String?) -> String? {
+        if let requested, !requested.isEmpty { return (try? selectSession(deviceID: requested))?.id ?? requested }
+        if let agentDeviceID { return agentDeviceID }
+        let connected = store.sessions.filter { $0.device.connectionState == .connected }
+        return (connected.first { $0.mirrorSession.state == .running } ?? connected.first)?.id
     }
 
     func listDevices() -> [AutomationDeviceSnapshot] {
