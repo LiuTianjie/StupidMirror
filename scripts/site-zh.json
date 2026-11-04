@@ -525,8 +525,8 @@
       "MCP 配置"
     ],
     [
-      "The live phone opens in Claude’s Browser pane.",
-      "手机实时画面在 Claude 浏览器面板中打开。"
+      "The live phone opens first, on the device Claude uses.",
+      "手机画面自动先打开，并跟随 Claude 正在用的设备。"
     ],
     [
       "Mirror a real iPhone over USB or Wi-Fi. Then hand it to Codex or Claude Code: the live screen opens beside the chat, and your agent can operate it.",

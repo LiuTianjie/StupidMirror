@@ -1,0 +1,21 @@
+{
+  "description": "In the Claude desktop app, open the live phone in the Browser pane before the first StupidMirror step.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__stupidmirror__.*",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/viewer-first.sh\" pre", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__stupidmirror__open_viewer",
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/viewer-first.sh\" post", "timeout": 5 }
+        ]
+      }
+    ]
+  }
+}

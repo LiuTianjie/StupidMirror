@@ -18,7 +18,7 @@ enum StupidMirrorMCPToolCatalog {
             ])
         ),
         tool(
-            "open_viewer", "Start capture like show_screen and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, device picker, refresh and manual control as the embedded panel. Use it in hosts that cannot render MCP Apps, such as Claude Code: in the Claude desktop app, open it by default when you start working with a device; elsewhere, when the user wants to watch or operate the phone. In the Claude desktop app, open it in the Browser pane with the result's browser_pane launch configuration; elsewhere show the url as a clickable link. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
+            "open_viewer", "Start capture and return a link to the live phone viewer, a local page on this Mac (127.0.0.1) with the same live video, refresh and manual control as the embedded panel. It opens on the device you are working with (or device_id) and follows you when you switch devices, so the user never picks one. In the Claude desktop app, open it in the Browser pane before anything else with a StupidMirror device, without being asked: use the result's browser_pane launch configuration. Elsewhere show the url as a clickable link when the user wants to watch. The link opens one viewer and expires after 10 minutes unused; call again for a new one.",
             deviceProperties
         ),
         tool(
@@ -469,6 +469,19 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
         self.automation = automation
     }
 
+    /// Tools that never move the viewer: discovery, diagnostics and the panel's own transport.
+    nonisolated static let deviceNeutralTools: Set<String> = [
+        "list_devices", "refresh_devices", "get_diagnostics", "screen_frame", "screen_action", "screen_signal"
+    ]
+
+    /// An MCP client's call (not the viewer's): remembers the device it works on.
+    func callFromAgent(name: String, arguments: [String: Value]?) async -> CallTool.Result {
+        if !Self.deviceNeutralTools.contains(name) {
+            automation.noteAgentDevice(arguments?["device_id"]?.stringValue)
+        }
+        return await call(name: name, arguments: arguments)
+    }
+
     func call(name: String, arguments: [String: Value]?) async -> CallTool.Result {
         let args = arguments ?? [:]
         do {
@@ -486,6 +499,7 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                     deviceID: optionalString("device_id", args), action: optionalString("action", args) ?? "open"
                 )
                 preview.frame = nil
+                preview.agentDeviceID = automation.agentDeviceID
                 return CallTool.Result(
                     content: [.text(preview.message ?? "The embedded phone preview is ready.")],
                     structuredContent: Optional.some(try Value(preview)), isError: false,
@@ -493,8 +507,10 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
                 )
             case "open_viewer":
                 guard let viewer else { throw DeviceAutomationError.controlFailed("The viewer is unavailable while the MCP server is stopped.") }
-                let preview = try await automation.showScreen(deviceID: optionalString("device_id", args), action: "open")
-                let link = try viewer.makeLink(deviceID: preview.device?.id)
+                // Never ask the user to pick: open on the device the agent works with.
+                let deviceID = automation.viewerDeviceID(requested: optionalString("device_id", args))
+                let preview = try await automation.showScreen(deviceID: deviceID, action: "open")
+                let link = try viewer.makeLink(deviceID: preview.device?.id ?? deviceID)
                 var structured: [String: Value] = [
                     "url": .string(link.url.absoluteString),
                     "expires_at": .string(ISO8601DateFormatter().string(from: link.expiresAt))
@@ -525,11 +541,12 @@ final class StupidMirrorMCPToolRouter: @unchecked Sendable {
             case "screen_frame":
                 let afterSequence = args["after_seq"]?.intValue ?? 0
                 guard afterSequence >= 0 else { throw DeviceAutomationError.invalidArgument("after_seq must be nonnegative") }
-                let preview = try await automation.screenFrame(
+                var preview = try await automation.screenFrame(
                     deviceID: optionalString("device_id", args), afterSequence: UInt64(afterSequence),
                     includeFrame: optionalBool("include_frame", args) ?? true,
                     includeShellImages: true, knownShellID: optionalString("shell_id", args), knownModelID: optionalString("model_id", args)
                 )
+                preview.agentDeviceID = automation.agentDeviceID
                 // Encoding a first model payload must not stall native display
                 // links. All of the preview's data is an immutable snapshot.
                 let structured = try await Task.detached(priority: .utility) { try Value(preview) }.value

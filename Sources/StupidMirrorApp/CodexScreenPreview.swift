@@ -77,11 +77,14 @@ struct CodexPreviewState: Codable, Sendable {
     var shell: CodexPreviewShell?
     let devices: [AutomationDeviceSnapshot]
     var message: String?
+    /// The device the agent is working with; the standalone viewer follows it.
+    var agentDeviceID: String?
     let events: [String] = []
 
     enum CodingKeys: String, CodingKey {
         case serverTime = "server_time", streamID = "stream_id"
         case frameAvailable = "frame_available", pauseReason = "pause_reason"
+        case agentDeviceID = "agent_device_id"
         case frame, viewport, busy, paused, device, shell, devices, message, events
     }
 }
