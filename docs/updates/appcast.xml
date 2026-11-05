@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.8.0</title>
-      <pubDate>Thu, 05 Nov 2026 11:15:15 +0000</pubDate>
-      <sparkle:version>202611051852</sparkle:version>
-      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+      <title>StupidMirror 0.8.1</title>
+      <pubDate>Thu, 05 Nov 2026 13:36:13 +0000</pubDate>
+      <sparkle:version>202611052121</sparkle:version>
+      <sparkle:shortVersionString>0.8.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>Multiple devices at once, in the app and through MCP, are now part of the iTool yearly membership (¥99/year, all iTool products). Sign in with your iTool account under Membership &amp; Account; join or upgrade at https://itool.tech/pro?from=stupidmirror. A monthly membership offers an upgrade to yearly.</li><li>One device stays free without signing in: mirror, control, audio, thumbnails, floating windows, diagnostics, and settings.</li><li>SM- activation codes are retired. The app no longer accepts codes or installation receipts. Codes bought for 0.7.x keep working in 0.7.x.</li><li>After a successful check, multi-device keeps working offline for up to 7 days, never past the membership end date. Setting the Mac clock back does not extend it. The app checks again at launch, after wake, when the network returns, when it becomes active, and daily; a lapsed membership takes effect at the next check.</li><li>MCP errors for a second device now say <code>sign_in_required</code> or <code>membership_required</code> instead of <code>activation_required</code>.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.8.0/StupidMirror-v0.8.0-macos.zip" type="application/octet-stream" sparkle:edSignature="+ec0iUSz/32D/l2f/LIAgOj9UNoqE9GgwT5mWHaBJi4HUDVP62tI0G+1f9LD4jve873fRLhsKwdM0v2dWfc9CQ==" length="164245876" />
+      <description><![CDATA[<ul><li>Google and GitHub sign-in now opens as a tab in your own browser, where you may already be signed in, instead of a separate sign-in window. 0.8.0 quit as soon as that window reported back. The account row shows a Cancel button while it waits.</li><li>Install and Relaunch no longer leaves the app stuck. Quitting waits at most four seconds for devices, recordings and agents to close, then stops what is left and exits.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.8.1/StupidMirror-v0.8.1-macos.zip" type="application/octet-stream" sparkle:edSignature="7/6fulmel1mqvanjbZTXq75NW/MlvKyQgKOqddkxLKTWltA/JAheBAkcYecCtiBihDccji8bH803tiKZVNBOAQ==" length="164264767" />
     </item>
   </channel>
 </rss>
