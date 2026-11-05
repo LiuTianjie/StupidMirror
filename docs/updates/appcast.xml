@@ -6,13 +6,13 @@
     <description>StupidMirror updates</description>
     <language>en</language>
     <item>
-      <title>StupidMirror 0.7.6</title>
-      <pubDate>Wed, 04 Nov 2026 10:10:28 +0000</pubDate>
-      <sparkle:version>202611041758</sparkle:version>
-      <sparkle:shortVersionString>0.7.6</sparkle:shortVersionString>
+      <title>StupidMirror 0.8.0</title>
+      <pubDate>Thu, 05 Nov 2026 11:15:15 +0000</pubDate>
+      <sparkle:version>202611051852</sparkle:version>
+      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-      <description><![CDATA[<ul><li>In the Claude desktop app, the live phone now opens in the Browser pane before Claude&#x27;s first StupidMirror step, without being asked. The Claude plugin (0.1.6) adds a hook: if the first StupidMirror call of a session is not <code>open_viewer</code>, it is turned back once with instructions to open the pane first. The terminal CLI is unaffected.</li><li>The viewer opens on the device Claude is working with and follows it when Claude switches to another one, so there is no device to pick. Before Claude names a device, it opens on the one already capturing, else the first connected one.</li></ul>]]></description>
-      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.7.6/StupidMirror-v0.7.6-macos.zip" type="application/octet-stream" sparkle:edSignature="VwWha8BMParQ5dKZ60Q30StX6qA5krCiSOaPibvs4wlgrYLx4/Iil3/VOukJpnFar4IZX+1htBPyu2Q/XNaMAg==" length="164271283" />
+      <description><![CDATA[<ul><li>Multiple devices at once, in the app and through MCP, are now part of the iTool yearly membership (¥99/year, all iTool products). Sign in with your iTool account under Membership &amp; Account; join or upgrade at https://itool.tech/pro?from=stupidmirror. A monthly membership offers an upgrade to yearly.</li><li>One device stays free without signing in: mirror, control, audio, thumbnails, floating windows, diagnostics, and settings.</li><li>SM- activation codes are retired. The app no longer accepts codes or installation receipts. Codes bought for 0.7.x keep working in 0.7.x.</li><li>After a successful check, multi-device keeps working offline for up to 7 days, never past the membership end date. Setting the Mac clock back does not extend it. The app checks again at launch, after wake, when the network returns, when it becomes active, and daily; a lapsed membership takes effect at the next check.</li><li>MCP errors for a second device now say <code>sign_in_required</code> or <code>membership_required</code> instead of <code>activation_required</code>.</li></ul>]]></description>
+      <enclosure url="https://github.com/LiuTianjie/StupidMirror/releases/download/v0.8.0/StupidMirror-v0.8.0-macos.zip" type="application/octet-stream" sparkle:edSignature="+ec0iUSz/32D/l2f/LIAgOj9UNoqE9GgwT5mWHaBJi4HUDVP62tI0G+1f9LD4jve873fRLhsKwdM0v2dWfc9CQ==" length="164245876" />
     </item>
   </channel>
 </rss>
