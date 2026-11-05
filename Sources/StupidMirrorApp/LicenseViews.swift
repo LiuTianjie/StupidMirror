@@ -10,6 +10,7 @@ struct LicenseActivationView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var errorMessage: String?
+    @State private var browserSignIn: Task<Void, Never>?
 
     private var isBusy: Bool { licenseManager.isSigningIn }
 
@@ -197,16 +198,27 @@ struct LicenseActivationView: View {
                 signedInRow(session)
             } else {
                 SettingRow(store.t("license.page.signIn.quick")) {
-                    HStack(spacing: 8) {
-                        if licenseManager.isSigningIn {
+                    if browserSignIn != nil {
+                        HStack(spacing: 8) {
                             StatusGlyph(kind: .working, size: 18)
+                            Text(store.t("license.signIn.waitingBrowser"))
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.Ink.secondary)
+                            Button(store.t("common.cancel")) { browserSignIn?.cancel() }
+                                .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
                         }
-                        Button("Google") { signIn(.google) }
-                            .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-                        Button("GitHub") { signIn(.github) }
-                            .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                    } else {
+                        HStack(spacing: 8) {
+                            if licenseManager.isSigningIn {
+                                StatusGlyph(kind: .working, size: 18)
+                            }
+                            Button("Google") { signIn(.google) }
+                                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                            Button("GitHub") { signIn(.github) }
+                                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
+                        }
+                        .disabled(isBusy)
                     }
-                    .disabled(isBusy)
                 }
                 RowDivider()
                 VStack(alignment: .leading, spacing: 10) {
@@ -300,12 +312,16 @@ struct LicenseActivationView: View {
         }
     }
 
+    /// The sign-in page opens as a tab in the default browser; the row waits and can cancel.
     private func signIn(_ provider: LicenseAuthProvider) {
         errorMessage = nil
-        Task { @MainActor in
+        browserSignIn = Task { @MainActor in
+            defer { browserSignIn = nil }
             do {
                 try await store.signInLicense(provider: provider)
             } catch LicenseAuthError.cancelled {
+                errorMessage = nil
+            } catch is CancellationError {
                 errorMessage = nil
             } catch {
                 errorMessage = localizedError(error)

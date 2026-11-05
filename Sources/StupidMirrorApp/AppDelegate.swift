@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         terminationTask = Task { @MainActor [weak self] in
-            await store.shutdown()
+            await Self.shutdown(store)
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: true)
                 return
@@ -60,6 +60,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    /// How long quitting waits for a clean shutdown. Sparkle's "Install and Relaunch" quits
+    /// the app and waits for it to exit; an unbounded wait here left the update stuck.
+    static let shutdownLimit: Duration = .seconds(4)
+
+    /// The clean shutdown, or after `shutdownLimit` the synchronous process reap, whichever
+    /// comes first; the clean one may keep running but no longer holds up quitting.
+    @MainActor
+    static func shutdown(_ store: DeviceGalleryStore, limit: Duration = shutdownLimit) async {
+        let finishedInTime = await firstToFinish(limit: limit) { await store.shutdown() }
+        if !finishedInTime {
+            store.stopAll()
+            store.appiumService.stopForShutdown()
+        }
+    }
+
+    /// True when `work` ends within `limit`, false when the limit comes first. Does not
+    /// wait for `work` after the limit: it may ignore cancellation.
+    @MainActor
+    static func firstToFinish(limit: Duration, _ work: @escaping @MainActor () async -> Void) async -> Bool {
+        let race = ShutdownRace()
+        return await withCheckedContinuation { continuation in
+            race.continuation = continuation
+            Task { @MainActor in
+                await work()
+                race.finish(true)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: limit)
+                race.finish(false)
+            }
+        }
     }
 
     @MainActor
@@ -96,7 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         terminationTask = Task { @MainActor [weak self] in
-            await store.shutdown()
+            await Self.shutdown(store)
             guard let self else {
                 NSApp.terminate(nil)
                 return
@@ -122,5 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             source.resume()
             signalSources.append(source)
         }
+    }
+}
+
+@MainActor
+final class ShutdownRace {
+    var continuation: CheckedContinuation<Bool, Never>?
+
+    func finish(_ inTime: Bool) {
+        continuation?.resume(returning: inTime)
+        continuation = nil
     }
 }

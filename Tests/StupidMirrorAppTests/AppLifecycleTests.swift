@@ -53,3 +53,23 @@ final class AppLifecycleTests: XCTestCase {
         ]), .accessory)
     }
 }
+
+/// Sparkle's "Install and Relaunch" quits and waits for the exit; quitting must not wait on a
+/// shutdown step that never returns.
+final class BoundedShutdownTests: XCTestCase {
+    @MainActor
+    func testQuitDoesNotWaitPastTheLimit() async {
+        let start = ContinuousClock.now
+        let inTime = await AppDelegate.firstToFinish(limit: .milliseconds(200)) {
+            try? await Task.sleep(for: .seconds(30))
+        }
+        XCTAssertFalse(inTime)
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(2))
+    }
+
+    @MainActor
+    func testFastShutdownCountsAsInTime() async {
+        let inTime = await AppDelegate.firstToFinish(limit: .seconds(5)) {}
+        XCTAssertTrue(inTime)
+    }
+}

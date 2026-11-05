@@ -1,5 +1,4 @@
 import AppKit
-import AuthenticationServices
 import CryptoKit
 import Foundation
 import LocalAuthentication
@@ -8,12 +7,6 @@ import Security
 enum LicenseAuthProvider: String, Equatable, Sendable {
     case google
     case github
-}
-
-/// OAuth callback for the iTool (Supabase) sign-in.
-enum LicensePurchaseLinks {
-    static let callbackScheme = "stupidmirror"
-    static let callbackURL = URL(string: "stupidmirror://auth-callback")!
 }
 
 struct LicenseAuthSession: Codable, Equatable, Sendable {
@@ -181,22 +174,10 @@ struct SupabaseLicenseAuthClient: LicenseAuthFlowPerforming {
 
         let verifier = Self.makeCodeVerifier()
         let challenge = Self.makeCodeChallenge(verifier)
-        var components = URLComponents(
-            url: authBase.appending(path: "authorize"),
-            resolvingAgainstBaseURL: false
-        )
-        components?.queryItems = [
-            URLQueryItem(name: "provider", value: provider.rawValue),
-            URLQueryItem(name: "redirect_to", value: LicensePurchaseLinks.callbackURL.absoluteString),
-            URLQueryItem(name: "code_challenge", value: challenge),
-            URLQueryItem(name: "code_challenge_method", value: "s256"),
-            URLQueryItem(name: "apikey", value: configuration.publishableKey)
-        ]
-        guard let authorizeURL = components?.url else {
-            throw LicenseAuthError.notConfigured
+        let key = configuration.publishableKey
+        let callbackURL = try await browser.authorize { redirect in
+            Self.authorizeURL(authBase: authBase, provider: provider, redirect: redirect, challenge: challenge, publishableKey: key)
         }
-
-        let callbackURL = try await browser.open(authorizeURL, callbackScheme: LicensePurchaseLinks.callbackScheme)
         let authCode = try Self.authCode(from: callbackURL)
         return try await exchange(authCode: authCode, codeVerifier: verifier, authBase: authBase)
     }
@@ -335,13 +316,29 @@ struct SupabaseLicenseAuthClient: LicenseAuthFlowPerforming {
         )
     }
 
-    private static func authCode(from callbackURL: URL) throws -> String {
+    static func authorizeURL(authBase: URL, provider: LicenseAuthProvider, redirect: URL, challenge: String, publishableKey: String) -> URL {
+        var components = URLComponents(url: authBase.appending(path: "authorize"), resolvingAgainstBaseURL: false)!
+        var items = [
+            URLQueryItem(name: "provider", value: provider.rawValue),
+            URLQueryItem(name: "redirect_to", value: redirect.absoluteString),
+            URLQueryItem(name: "code_challenge", value: challenge),
+            URLQueryItem(name: "code_challenge_method", value: "s256"),
+            URLQueryItem(name: "apikey", value: publishableKey)
+        ]
+        // Without user:email a GitHub account with a private address has none.
+        if provider == .github { items.append(URLQueryItem(name: "scopes", value: "read:user user:email")) }
+        components.queryItems = items
+        return components.url!
+    }
+
+    static func authCode(from callbackURL: URL) throws -> String {
         let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
-        if let error = components?.queryItems?.first(where: { $0.name == "error" })?.value {
-            if error == "access_denied" {
+        let item = { (name: String) in components?.queryItems?.first(where: { $0.name == name })?.value }
+        if let error = item("error") ?? item("error_code") {
+            if error == "access_denied" || error == "no_code" {
                 throw LicenseAuthError.cancelled
             }
-            throw LicenseAuthError.rejected(error)
+            throw LicenseAuthError.rejected(item("error_description") ?? error)
         }
         if let code = components?.queryItems?.first(where: { $0.name == "code" })?.value, !code.isEmpty {
             return code
@@ -368,45 +365,23 @@ struct SupabaseLicenseAuthClient: LicenseAuthFlowPerforming {
 }
 
 protocol LicenseOAuthBrowsing: Sendable {
-    func open(_ url: URL, callbackScheme: String) async throws -> URL
+    /// Opens the authorize URL built for `redirect` and returns the URL the browser came back to.
+    func authorize(_ build: @escaping @Sendable (URL) -> URL) async throws -> URL
 }
 
+/// The person's own browser, back to a loopback listener (LoopbackOAuth.swift).
 struct SystemLicenseOAuthBrowser: LicenseOAuthBrowsing {
-    func open(_ url: URL, callbackScheme: String) async throws -> URL {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.main.async {
-                let session = ASWebAuthenticationSession(
-                    url: url,
-                    callbackURLScheme: callbackScheme
-                ) { callbackURL, error in
-                    if let callbackURL {
-                        continuation.resume(returning: callbackURL)
-                        return
-                    }
-                    if let error = error as? ASWebAuthenticationSessionError,
-                       error.code == .canceledLogin {
-                        continuation.resume(throwing: LicenseAuthError.cancelled)
-                        return
-                    }
-                    continuation.resume(throwing: error ?? LicenseAuthError.invalidCallback)
-                }
-                session.presentationContextProvider = LicenseOAuthPresentationAnchor.shared
-                session.prefersEphemeralWebBrowserSession = false
-                if !session.start() {
-                    continuation.resume(throwing: LicenseAuthError.invalidCallback)
-                }
-            }
+    func authorize(_ build: @escaping @Sendable (URL) -> URL) async throws -> URL {
+        do {
+            let url = try await LoopbackOAuth.run(productName: "StupidMirror", authorize: build)
+            await MainActor.run { NSApp.activate() }
+            return url
+        } catch LoopbackOAuthError.cancelled {
+            throw LicenseAuthError.cancelled
+        } catch LoopbackOAuthError.timedOut {
+            throw LicenseAuthError.rejected("Sign-in timed out. Try again.")
+        } catch LoopbackOAuthError.unavailable {
+            throw LicenseAuthError.rejected("Could not start sign-in. Try again.")
         }
-    }
-}
-
-private final class LicenseOAuthPresentationAnchor: NSObject, ASWebAuthenticationPresentationContextProviding {
-    static let shared = LicenseOAuthPresentationAnchor()
-
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        NSApp.windows.first(where: \.isVisible)
-            ?? NSApp.keyWindow
-            ?? NSApp.windows.first
-            ?? ASPresentationAnchor()
     }
 }

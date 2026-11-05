@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1 - 2026-11-05
+
+- Google and GitHub sign-in now opens as a tab in your own browser, where you
+  may already be signed in, instead of a separate sign-in window. 0.8.0 quit
+  as soon as that window reported back. The account row shows a Cancel button
+  while it waits.
+- Install and Relaunch no longer leaves the app stuck. Quitting waits at most
+  four seconds for devices, recordings and agents to close, then stops what is
+  left and exits.
+
 ## 0.8.0 - 2026-11-05
 
 - Multiple devices at once, in the app and through MCP, are now part of the

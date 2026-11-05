@@ -3,6 +3,7 @@ import AppKit
 import Combine
 import Foundation
 import SwiftUI
+import os
 
 enum DashboardSheet: String, Identifiable, Equatable, Sendable {
     case diagnostics
@@ -1623,9 +1624,13 @@ final class DeviceGalleryStore: ObservableObject {
     private func performShutdown() async {
         // Stop accepting automation first. In-flight MCP calls are allowed to
         // finish or are cancelled before the underlying WDA/Appium sessions.
+        let clock = ShutdownStepClock()
         await mcpServer.shutdown()
+        clock.mark("mcp")
         await automationService.shutdownPreview()
+        clock.mark("preview")
         await automationService.finishAllRecordings()
+        clock.mark("recordings")
         refreshGeneration &+= 1
         refreshTask?.cancel()
         refreshTask = nil
@@ -1668,11 +1673,13 @@ final class DeviceGalleryStore: ObservableObject {
             session.mirrorSession.dispose()
             session.iosAgent?.stop()
         }
+        clock.mark("mirrors")
         // The control sessions close their WebDriverAgent sessions before the
         // tunnels they ride on go away.
         for session in activeSessions {
             await session.controlSession.shutdown()
         }
+        clock.mark("control")
         // App shutdown is the one place the shared runner must actually be
         // terminated, so the agent does not keep running after the app exits.
         // The setup guide starts one over USB too, so this is not limited to
@@ -1687,7 +1694,9 @@ final class DeviceGalleryStore: ObservableObject {
             }
             group.addTask { await SimulatorAgentService.shared.stopAll() }
         }
+        clock.mark("agents")
         await appiumService.shutdown()
+        clock.mark("appium")
 
         sessions.removeAll()
         disconnectedSince.removeAll()
@@ -2925,6 +2934,21 @@ final class DeviceGalleryStore: ObservableObject {
                 self.thumbnailErrors[sessionID] = error.localizedDescription
             }
         }
+    }
+}
+
+/// Logs how long each shutdown step took, so a slow quit names its cause.
+@MainActor
+final class ShutdownStepClock {
+    private static let logger = Logger(subsystem: "com.stupidmirror.app", category: "Shutdown")
+    private var last = ContinuousClock.now
+
+    func mark(_ step: StaticString) {
+        let now = ContinuousClock.now
+        let elapsed = now - last
+        last = now
+        let milliseconds = Int(elapsed.components.seconds * 1_000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
+        Self.logger.notice("shutdown step \(step, privacy: .public) took \(milliseconds, privacy: .public) ms")
     }
 }
 
