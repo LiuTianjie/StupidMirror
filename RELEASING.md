@@ -98,7 +98,8 @@ updates.
 Before an artifact is uploaded, the release script asserts:
 
 - the fixed bundle ID and signing Team ID;
-- the fixed HTTPS license endpoint and non-secret Supabase publishable key;
+- the fixed Supabase project URL, the itool.tech membership entitlement URL,
+  and the non-secret Supabase publishable key;
 - a non-empty Camera usage description in the base, English, and Simplified
   Chinese resources;
 - the Camera entitlement on the app;

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.0 - 2026-11-05
+
+- Multiple devices at once, in the app and through MCP, are now part of the
+  iTool yearly membership (¥99/year, all iTool products). Sign in with your
+  iTool account under Membership & Account; join or upgrade at
+  https://itool.tech/pro?from=stupidmirror. A monthly membership offers an
+  upgrade to yearly.
+- One device stays free without signing in: mirror, control, audio,
+  thumbnails, floating windows, diagnostics, and settings.
+- SM- activation codes are retired. The app no longer accepts codes or
+  installation receipts. Codes bought for 0.7.x keep working in 0.7.x.
+- After a successful check, multi-device keeps working offline for up to
+  7 days, never past the membership end date. Setting the Mac clock back
+  does not extend it. The app checks again at launch, after wake, when the
+  network returns, when it becomes active, and daily; a lapsed membership
+  takes effect at the next check.
+- MCP errors for a second device now say `sign_in_required` or
+  `membership_required` instead of `activation_required`.
+
 ## 0.7.6 - 2026-11-04
 
 - In the Claude desktop app, the live phone now opens in the Browser pane

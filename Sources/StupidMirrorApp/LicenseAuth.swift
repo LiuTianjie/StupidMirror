@@ -5,26 +5,16 @@ import Foundation
 import LocalAuthentication
 import Security
 
-enum LicensePrincipal: String, Codable, Equatable, Sendable {
-    case installation
-    case account
-}
-
 enum LicenseAuthProvider: String, Equatable, Sendable {
     case google
     case github
 }
 
-/// OAuth callback + purchase URL alias.
-/// Purchase destination is LicensePurchaseURLs.buyURL.
-/// Do not redeem iTool IT- codes here.
+/// OAuth callback for the iTool (Supabase) sign-in.
 enum LicensePurchaseLinks {
-    static let buyURL = LicensePurchaseURLs.buyURL
     static let callbackScheme = "stupidmirror"
     static let callbackURL = URL(string: "stupidmirror://auth-callback")!
 }
-
-
 
 struct LicenseAuthSession: Codable, Equatable, Sendable {
     var userID: UUID
@@ -268,7 +258,12 @@ struct SupabaseLicenseAuthClient: LicenseAuthFlowPerforming {
 
         let (data, response) = try await transport.data(for: request)
         guard (200..<300).contains(response.statusCode) else {
-            throw LicenseAuthError.rejected("Could not refresh the sign-in session.")
+            // 4xx: the refresh token was refused and the sign-in is over.
+            // 5xx or a gateway error is an outage, not a sign-out.
+            if (400..<500).contains(response.statusCode), response.statusCode != 429 {
+                throw LicenseAuthError.rejected("Could not refresh the sign-in session.")
+            }
+            throw MembershipCheckError.temporarilyUnavailable
         }
         return try Self.decodeSession(from: data, fallbackProvider: session.provider)
     }

@@ -1,17 +1,17 @@
 import AppKit
 import SwiftUI
 
+/// The Membership page: one device stays free without an account; several
+/// devices at once need the iTool yearly membership on a signed-in account.
 struct LicenseActivationView: View {
     @EnvironmentObject private var store: DeviceGalleryStore
     @ObservedObject var licenseManager: LicenseManager
 
-    @State private var code = ""
     @State private var email = ""
     @State private var password = ""
     @State private var errorMessage: String?
 
-    private var isBusy: Bool { licenseManager.isActivating || licenseManager.isSigningIn }
-    private var isActivated: Bool { licenseManager.state.isActivated }
+    private var isBusy: Bool { licenseManager.isSigningIn }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 28) {
@@ -21,8 +21,7 @@ struct LicenseActivationView: View {
                     errorLine(errorMessage)
                 }
             }
-            if !isActivated {
-                codeGroup
+            if !licenseManager.state.isEntitled {
                 purchaseGroup
             }
             accountGroup
@@ -50,7 +49,7 @@ struct LicenseActivationView: View {
             Spacer(minLength: 12)
             if licenseManager.state == .checking {
                 StatusGlyph(kind: .working, size: 20)
-            } else if isActivated {
+            } else if licenseManager.state.isEntitled {
                 StatusPill(title: store.t("license.page.pill.multiDevice"), color: Theme.Palette.live)
             }
         }
@@ -62,25 +61,28 @@ struct LicenseActivationView: View {
 
     private var statusSymbol: String {
         switch licenseManager.state {
-        case .licensed: "checkmark.seal.fill"
-        case .unlicensed: "key.fill"
+        case .member: "checkmark.seal.fill"
+        case .signedOut, .notMember: "person.crop.circle"
         case .checking: "hourglass"
+        case .unverified: "wifi.exclamationmark"
         case .unavailable: "exclamationmark.triangle.fill"
         }
     }
 
     private var statusColor: Color {
         switch licenseManager.state {
-        case .licensed: Theme.Palette.live
-        case .unlicensed, .checking: Theme.Ink.secondary
+        case .member: Theme.Palette.live
+        case .signedOut, .notMember, .checking: Theme.Ink.secondary
+        case .unverified: Theme.Palette.pending
         case .unavailable: Theme.Palette.danger
         }
     }
 
     private var statusBackground: Color {
         switch licenseManager.state {
-        case .licensed: Theme.tint(Theme.Palette.live)
-        case .unlicensed, .checking: Theme.Surface.raised
+        case .member: Theme.tint(Theme.Palette.live)
+        case .signedOut, .notMember, .checking: Theme.Surface.raised
+        case .unverified: Theme.tint(Theme.Palette.pending)
         case .unavailable: Theme.tint(Theme.Palette.danger)
         }
     }
@@ -88,8 +90,13 @@ struct LicenseActivationView: View {
     private var statusTitle: String {
         switch licenseManager.state {
         case .checking: store.t("license.status.checking")
-        case .unlicensed: store.t("license.page.unlicensed.title")
-        case .licensed: store.t("license.page.licensed.title")
+        case .signedOut: store.t("license.page.free.title")
+        case let .notMember(status):
+            status.tier == .monthly
+                ? store.t("license.page.monthly.title")
+                : store.t("license.page.notMember.title")
+        case .member: store.t("license.page.member.title")
+        case .unverified: store.t("license.page.unverified.title")
         case .unavailable: store.t("license.status.unavailable")
         }
     }
@@ -97,16 +104,37 @@ struct LicenseActivationView: View {
     private var statusDetail: String {
         switch licenseManager.state {
         case .checking:
-            store.t("license.capabilities.checking")
-        case .unlicensed:
-            store.t("license.page.unlicensed.detail")
-        case .licensed:
-            licenseManager.principal == .account
-                ? store.t("license.page.account.detail")
-                : store.t("license.page.licensed.detail")
+            return store.t("license.capabilities.checking")
+        case .signedOut:
+            return store.t("license.page.free.detail")
+        case let .notMember(status):
+            if status.tier == .monthly {
+                return expiryLine("license.page.monthly.detail", status.memberUntil)
+            }
+            return store.t("license.page.notMember.detail")
+        case let .member(status):
+            guard let validUntil = status.validUntil else {
+                return store.t("license.page.member.detailNoEnd")
+            }
+            return expiryLine("license.page.member.detail", validUntil)
+        case .unverified:
+            return store.t("license.page.unverified.detail")
         case .unavailable:
-            store.t("license.error.storage")
+            return store.t("license.error.storage")
         }
+    }
+
+    private func expiryLine(_ key: String, _ date: Date?) -> String {
+        guard let date else { return store.t(key + "NoDate") }
+        return String(format: store.t(key), formatted(date))
+    }
+
+    private func formatted(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: store.language.usesChinese ? "zh_CN" : "en_US")
+        formatter.dateStyle = .long
+        formatter.timeStyle = .none
+        return formatter.string(from: date)
     }
 
     private func errorLine(_ message: String) -> some View {
@@ -120,37 +148,40 @@ struct LicenseActivationView: View {
         .padding(.horizontal, 4)
     }
 
-    // MARK: Activation code
+    // MARK: Membership
 
-    private var codeGroup: some View {
-        SettingsGroup(title: store.t("license.code"), footer: store.t("license.code.help")) {
-            HStack(spacing: 10) {
-                TextField(store.t("license.code.placeholder"), text: $code)
-                    .fieldSurface(monospaced: true)
-                    .disabled(isBusy)
-                    .onSubmit(submit)
-                Button(action: submit) {
-                    if licenseManager.isActivating {
-                        Label(store.t("license.redeeming"), systemImage: "hourglass")
-                    } else {
-                        Text(store.t("license.redeem"))
-                    }
-                }
-                .buttonStyle(PillButtonStyle(kind: .primary))
-                .keyboardShortcut(.defaultAction)
-                .disabled(code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isBusy)
-            }
-            .padding(14)
-        }
+    private var isMonthlyMember: Bool {
+        if case let .notMember(status) = licenseManager.state { return status.tier == .monthly }
+        return false
     }
 
     private var purchaseGroup: some View {
-        SettingsGroup(title: "") {
-            SettingRow(store.t("license.page.purchase.title"), help: store.t("license.page.purchase.help")) {
-                Link(destination: LicensePurchaseURLs.buyURL) {
-                    Label(store.t("license.purchase.online"), systemImage: "arrow.up.right")
+        SettingsGroup(title: store.t("license.page.membership.title"), footer: store.t("license.page.purchase.footer")) {
+            SettingRow(
+                store.t(isMonthlyMember ? "license.purchase.upgrade" : "license.purchase.join"),
+                help: store.t(isMonthlyMember ? "license.page.upgrade.help" : "license.page.purchase.help")
+            ) {
+                HStack(spacing: 8) {
+                    if licenseManager.isSignedIn {
+                        Button {
+                            refresh()
+                        } label: {
+                            if licenseManager.isChecking {
+                                Label(store.t("license.refreshing"), systemImage: "hourglass")
+                            } else {
+                                Label(store.t("license.refresh"), systemImage: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                        .disabled(licenseManager.isChecking)
+                    }
+                    Button {
+                        store.openMembershipPurchase()
+                    } label: {
+                        Label(store.t(isMonthlyMember ? "license.purchase.upgradeButton" : "license.purchase.online"), systemImage: "arrow.up.right")
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
                 }
-                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
             }
         }
     }
@@ -159,23 +190,11 @@ struct LicenseActivationView: View {
 
     private var accountGroup: some View {
         SettingsGroup(
-            title: store.t("license.account.optional"),
-            footer: licenseManager.authSession == nil
-                ? store.t(licenseManager.needsClaim ? "license.claim.help" : "license.page.account.footer")
-                : nil
+            title: store.t("license.account"),
+            footer: licenseManager.authSession == nil ? store.t("license.page.account.footer") : nil
         ) {
             if let session = licenseManager.authSession {
                 signedInRow(session)
-                if licenseManager.needsClaim {
-                    RowDivider()
-                    SettingRow(store.t("license.claim.title"), help: store.t("license.claim.help")) {
-                        Button(action: claim) {
-                            Text(store.t("license.claim"))
-                        }
-                        .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
-                        .disabled(isBusy)
-                    }
-                }
             } else {
                 SettingRow(store.t("license.page.signIn.quick")) {
                     HStack(spacing: 8) {
@@ -230,11 +249,20 @@ struct LicenseActivationView: View {
                     .foregroundStyle(Theme.Ink.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(store.t("license.signedIn"))
+                Text(tierLabel)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.Ink.tertiary)
             }
             Spacer(minLength: 12)
+            if licenseManager.state.isEntitled {
+                Button {
+                    refresh()
+                } label: {
+                    Label(store.t("license.refresh"), systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
+                .disabled(licenseManager.isChecking)
+            }
             Button(store.t("license.signOut")) {
                 Task { @MainActor in
                     await store.signOutLicense()
@@ -247,13 +275,27 @@ struct LicenseActivationView: View {
         .padding(.vertical, 12)
     }
 
-    private func claim() {
+    private var tierLabel: String {
+        switch licenseManager.state {
+        case let .member(status), let .notMember(status):
+            switch status.tier {
+            case .yearly: return store.t("license.tier.yearly")
+            case .monthly: return store.t("license.tier.monthly")
+            case .free: return store.t("license.tier.free")
+            }
+        case .checking:
+            return store.t("license.status.checking")
+        default:
+            return store.t("license.signedIn")
+        }
+    }
+
+    private func refresh() {
         errorMessage = nil
         Task { @MainActor in
-            do {
-                try await store.claimLicense()
-            } catch {
-                errorMessage = localizedActivationError(error)
+            await store.refreshMembership()
+            if licenseManager.lastCheckFailed {
+                errorMessage = store.t("license.error.offline")
             }
         }
     }
@@ -266,7 +308,7 @@ struct LicenseActivationView: View {
             } catch LicenseAuthError.cancelled {
                 errorMessage = nil
             } catch {
-                errorMessage = localizedActivationError(error)
+                errorMessage = localizedError(error)
             }
         }
     }
@@ -278,125 +320,18 @@ struct LicenseActivationView: View {
                 try await store.signInLicense(email: email, password: password)
                 password = ""
             } catch {
-                errorMessage = localizedActivationError(error)
+                errorMessage = localizedError(error)
             }
         }
     }
 
-    private func submit() {
-        guard !licenseManager.isActivating, !licenseManager.isSigningIn,
-              !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        errorMessage = nil
-        Task { @MainActor in
-            do {
-                try await store.activateLicense(code: code)
-            } catch {
-                errorMessage = localizedActivationError(error)
-            }
-        }
-    }
-
-    private func localizedActivationError(_ error: Error) -> String {
-        if case LicenseServiceError.loginRequired = error {
-            return store.t("license.error.loginRequired")
-        }
-        if case LicenseServiceError.iToolCodeNotAccepted = error {
-            return store.t("license.error.itool")
-        }
+    private func localizedError(_ error: Error) -> String {
         if case LicenseAuthError.notConfigured = error {
             return store.t("license.error.notConfigured")
         }
-        guard case let LicenseServiceError.rejected(code, _) = error else {
-            if case LicenseServiceError.notConfigured = error {
-                return store.t("license.error.notConfigured")
-            }
-            return error.localizedDescription
+        if error is MembershipCheckError || error is URLError {
+            return store.t("license.error.offline")
         }
-        switch code {
-        case "invalid_or_unavailable":
-            return store.t("license.error.invalid")
-        case "rate_limited":
-            return store.t("license.error.rateLimited")
-        case "license_revoked":
-            return store.t("license.error.revoked")
-        case "login_required":
-            return store.t("license.error.loginRequired")
-        case "already_licensed":
-            return store.t("license.error.alreadyLicensed")
-        case "already_claimed":
-            return store.t("license.error.alreadyClaimed")
-        case "claim_required":
-            return store.t("license.error.claimRequired")
-        case "itool_code_not_accepted":
-            return store.t("license.error.itool")
-        default:
-            return error.localizedDescription
-        }
-    }
-}
-
-struct LicenseSettingsSection: View {
-    @EnvironmentObject private var store: DeviceGalleryStore
-    @ObservedObject var licenseManager: LicenseManager
-    var showsTitle = true
-
-    var body: some View {
-        SettingsGroup(title: showsTitle ? store.t("license.section") : "") {
-            HStack(spacing: 12) {
-                StatusGlyph(kind: statusGlyph)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(statusTitle)
-                        .font(.system(size: 13, weight: .medium))
-                    Text(capabilitySummary)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.Ink.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if case .unavailable = licenseManager.state {
-                        Text(store.t("license.error.storage"))
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.Palette.danger)
-                    }
-                }
-                Spacer(minLength: 12)
-                Button {
-                    store.presentActivation()
-                } label: {
-                    Label(store.t("license.openActivation"), systemImage: "key")
-                }
-                .buttonStyle(PillButtonStyle(kind: .secondary, compact: true))
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-        }
-    }
-
-    private var statusGlyph: StatusGlyph.Kind {
-        switch licenseManager.state {
-        case .licensed: licenseManager.needsClaim ? .warning : .done
-        case .unlicensed: .warning
-        case .checking: .working
-        case .unavailable: .failed
-        }
-    }
-
-    private var statusTitle: String {
-        switch licenseManager.state {
-        case .checking: store.t("license.status.checking")
-        case .unlicensed: store.t("license.status.unlicensed")
-        case .licensed: store.t("license.status.licensed")
-        case .unavailable: store.t("license.status.unavailable")
-        }
-    }
-
-    private var capabilitySummary: String {
-        if licenseManager.needsClaim {
-            return store.t("license.capabilities.needsClaim")
-        }
-        if licenseManager.state.isActivated {
-            return licenseManager.principal == .account
-                ? store.t("license.capabilities.account")
-                : store.t("license.capabilities.activated")
-        }
-        return store.t("license.capabilities.unactivated")
+        return error.localizedDescription
     }
 }

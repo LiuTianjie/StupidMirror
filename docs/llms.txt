@@ -16,7 +16,7 @@
 
 ## Pricing
 
-One device can be mirrored and controlled without signing in. An SM- activation code unlocks several devices at once.
+One device can be mirrored and controlled without signing in. Several devices at once are included in the iTool yearly membership (¥99/year, all iTool products) and need sign-in: https://itool.tech/pro?from=stupidmirror
 
 ## Docs
 

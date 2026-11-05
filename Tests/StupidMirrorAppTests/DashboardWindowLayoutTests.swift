@@ -14,9 +14,11 @@ final class DashboardWindowLayoutTests: XCTestCase {
 
     func testDashboardShowsActivationEntryUntilLicensed() {
         XCTAssertFalse(LicenseState.checking.showsDashboardActivationEntry)
-        XCTAssertTrue(LicenseState.unlicensed.showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.signedOut.showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.unverified.showsDashboardActivationEntry)
+        XCTAssertTrue(LicenseState.notMember(MembershipStatus(tier: .monthly, validUntil: nil)).showsDashboardActivationEntry)
         XCTAssertTrue(LicenseState.unavailable("offline").showsDashboardActivationEntry)
-        XCTAssertFalse(LicenseState.licensed(lastValidatedAt: nil).showsDashboardActivationEntry)
+        XCTAssertFalse(LicenseState.member(MembershipStatus(tier: .yearly, validUntil: nil)).showsDashboardActivationEntry)
     }
 
     func testLargeScreenUsesPreferredContentSize() {

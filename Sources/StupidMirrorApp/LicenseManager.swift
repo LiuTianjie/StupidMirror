@@ -1,36 +1,66 @@
+import AppKit
 import Combine
-import CryptoKit
 import Foundation
 import LocalAuthentication
+import Network
 import Security
+
+/// The iTool membership tier the server reports for the signed-in account.
+enum MembershipTier: String, Codable, Equatable, Sendable {
+    case free
+    case monthly
+    case yearly
+
+    init(serverValue: String?) {
+        self = MembershipTier(rawValue: serverValue ?? "") ?? .free
+    }
+}
+
+/// StupidMirror's multi-device capability is part of the iTool yearly
+/// membership. The server decides; these constants only name the product.
+enum MembershipProduct {
+    static let key = "stupidmirror"
+    static let requiredTier = MembershipTier.yearly
+}
+
+struct MembershipStatus: Equatable, Sendable {
+    var tier: MembershipTier
+    /// When StupidMirror's entitlement ends. `nil` means no end date.
+    var validUntil: Date?
+    var memberUntil: Date? = nil
+    var yearlyUntil: Date? = nil
+}
 
 enum LicenseState: Equatable, Sendable {
     case checking
-    case unlicensed
-    case licensed(lastValidatedAt: Date?)
+    /// No iTool account signed in: the free one-device path.
+    case signedOut
+    /// Signed in with an active StupidMirror entitlement (yearly member).
+    case member(MembershipStatus)
+    /// Signed in, and the server said the account is not entitled.
+    case notMember(MembershipStatus)
+    /// Signed in, but the membership could not be confirmed (offline for
+    /// longer than the grace window, clock rollback, or never checked).
+    case unverified
     case unavailable(String)
 
-    var isActivated: Bool {
-        if case .licensed = self { return true }
+    var isEntitled: Bool {
+        if case .member = self { return true }
         return false
     }
 
     var capabilities: LicenseCapabilities {
-        isActivated ? .activated : .unactivated
+        isEntitled ? .activated : .unactivated
     }
 
     var showsDashboardActivationEntry: Bool {
         switch self {
-        case .checking, .licensed:
+        case .checking, .member:
             false
-        case .unlicensed, .unavailable:
+        case .signedOut, .notMember, .unverified, .unavailable:
             true
         }
     }
-}
-
-enum LicenseClientProtocol {
-    static let accountBound = 2
 }
 
 struct LicenseCapabilities: Equatable, Sendable {
@@ -99,74 +129,85 @@ enum LicenseCapabilityPolicy {
     }
 }
 
-struct LocalLicenseRecord: Codable, Equatable, Sendable {
+/// One answer from the entitlement endpoint.
+struct MembershipEntitlement: Equatable, Sendable {
+    let active: Bool
+    let tier: MembershipTier
+    let validUntil: Date?
+    let memberUntil: Date?
+    let yearlyUntil: Date?
+    let serverTime: Date
+
+    var status: MembershipStatus {
+        MembershipStatus(tier: tier, validUntil: validUntil, memberUntil: memberUntil, yearlyUntil: yearlyUntil)
+    }
+}
+
+/// The last confirmed entitlement, kept in the Keychain so a member can keep
+/// using several devices offline for a bounded time.
+struct EntitlementCache: Codable, Equatable, Sendable {
     var schemaVersion = 1
-    let installationID: UUID
-    var trialStartedAt: Date?
-    var lastTrustedTime: Date?
-    var activationReceipt: String?
-    var lastValidatedAt: Date?
-    var licensePrincipal: LicensePrincipal?
-    var claimedUserID: UUID?
-    var claimDeadline: Date?
-    var accountClaimRequired: Bool?
+    let userID: UUID
+    let validUntil: Date?
+    /// Server time of the last successful check.
+    let checkedAt: Date
+    let tier: MembershipTier
+    let memberUntil: Date?
+    let yearlyUntil: Date?
 
-    init(installationID: UUID = UUID()) {
-        self.installationID = installationID
+    init(userID: UUID, entitlement: MembershipEntitlement) {
+        self.userID = userID
+        validUntil = entitlement.validUntil
+        checkedAt = entitlement.serverTime
+        tier = entitlement.tier
+        memberUntil = entitlement.memberUntil
+        yearlyUntil = entitlement.yearlyUntil
     }
 
-    var principal: LicensePrincipal {
-        licensePrincipal ?? .installation
+    var status: MembershipStatus {
+        MembershipStatus(tier: tier, validUntil: validUntil, memberUntil: memberUntil, yearlyUntil: yearlyUntil)
     }
-}
 
-struct LicenseActivation: Equatable, Sendable {
-    let receipt: String
-    let serverTime: Date
-}
+    /// The cache grants multi-device use only to the same account, for at
+    /// most `offlineWindow` after the last check, never past `validUntil`,
+    /// and never when the local clock reads earlier than the server did at
+    /// the last check (allowing `clockTolerance` of ordinary skew).
+    func isUsable(
+        for userID: UUID,
+        now: Date,
+        offlineWindow: TimeInterval,
+        clockTolerance: TimeInterval
+    ) -> Bool {
+        guard self.userID == userID else { return false }
+        guard now >= checkedAt.addingTimeInterval(-clockTolerance) else { return false }
+        guard now.timeIntervalSince(checkedAt) <= offlineWindow else { return false }
+        if let validUntil, now >= validUntil { return false }
+        return true
+    }
 
-struct LicenseValidation: Equatable, Sendable {
-    let isValid: Bool
-    let refreshedReceipt: String?
-    let serverTime: Date
-    var principal: LicensePrincipal = .installation
-    var needsClaim: Bool = false
-    var claimDeadline: Date? = nil
-}
-
-enum LicenseReceiptFormat {
-    /// Mirrors the Edge Function's UUID contract: canonical 8-4-4-4-12 hex,
-    /// UUID version 1...8, and RFC 4122 variant bits.
-    static func isValid(_ value: String) -> Bool {
-        let bytes = Array(value.utf8)
-        guard bytes.count == 36,
-              bytes[8] == 45, bytes[13] == 45, bytes[18] == 45, bytes[23] == 45,
-              (49...56).contains(bytes[14]),
-              [56, 57, 65, 66, 97, 98].contains(bytes[19]) else {
-            return false
-        }
-
-        for (index, byte) in bytes.enumerated() where ![8, 13, 18, 23].contains(index) {
-            let isDigit = (48...57).contains(byte)
-            let isLowerHex = (97...102).contains(byte)
-            let isUpperHex = (65...70).contains(byte)
-            guard isDigit || isLowerHex || isUpperHex else { return false }
-        }
-        return UUID(uuidString: value) != nil
+    func expiry(offlineWindow: TimeInterval) -> Date {
+        let window = checkedAt.addingTimeInterval(offlineWindow)
+        guard let validUntil else { return window }
+        return min(window, validUntil)
     }
 }
 
-protocol LicenseRecordStoring: Sendable {
-    func load() throws -> LocalLicenseRecord?
-    func save(_ record: LocalLicenseRecord) throws
+protocol EntitlementCacheStoring: Sendable {
+    func load() throws -> EntitlementCache?
+    func save(_ cache: EntitlementCache) throws
+    func clear() throws
 }
 
-protocol LicenseRemoteServicing: Sendable {
-    func activate(code: String, installationID: UUID) async throws -> LicenseActivation
-    func validate(receipt: String, installationID: UUID) async throws -> LicenseValidation
-    func redeem(code: String, installationID: UUID, accessToken: String) async throws -> LicenseActivation
-    func claim(receipt: String, installationID: UUID, accessToken: String) async throws -> LicenseActivation
-    func validateAccount(installationID: UUID, accessToken: String) async throws -> LicenseValidation
+protocol MembershipEntitlementServicing: Sendable {
+    func entitlement(accessToken: String) async throws -> MembershipEntitlement
+}
+
+enum MembershipCheckError: Error, Equatable, Sendable {
+    case notConfigured
+    /// The server rejected the access token.
+    case loginRequired
+    /// Network failure, 502/503, or an unexpected answer: keep the cache.
+    case temporarilyUnavailable
 }
 
 protocol LicenseClock: Sendable {
@@ -178,75 +219,82 @@ struct SystemLicenseClock: LicenseClock {
 }
 
 enum LicenseServiceError: LocalizedError, Equatable, Sendable {
-    case notConfigured
-    case emptyCode
     case requestInProgress
-    case invalidResponse
-    case loginRequired
-    case iToolCodeNotAccepted
-    case rejected(code: String, message: String)
     case storage(String)
 
     var errorDescription: String? {
         switch self {
-        case .notConfigured:
-            "License activation is not configured in this build."
-        case .emptyCode:
-            "Enter an activation code."
         case .requestInProgress:
-            "A license request is already in progress."
-        case .invalidResponse:
-            "The license server returned an invalid response."
-        case .loginRequired:
-            "Sign in to restore or bind an account license. Code activation does not require sign-in."
-        case .iToolCodeNotAccepted:
-            "iTool Pro codes cannot be redeemed in StupidMirror. Use an SM- activation code."
-        case let .rejected(_, message):
-            message
+            "A membership request is already in progress."
         case let .storage(message):
             message
         }
     }
 }
 
-/// Owns the app-wide license state. It intentionally has no timer or long-lived
-/// process: activated installations work from their cached receipt immediately,
-/// and a stale receipt is validated in one coalesced background request.
+/// Why a request beyond the free one-device path was refused.
+enum MembershipRequirement: Equatable, Sendable {
+    /// No account signed in.
+    case signIn
+    /// Signed in, but the account is not a yearly member.
+    case yearly
+    /// Signed in, but the membership could not be confirmed.
+    case verification
+}
+
+/// Owns the membership state. The free one-device path never needs an
+/// account; several devices at once need a signed-in iTool account whose
+/// StupidMirror entitlement (the yearly tier) is active.
 @MainActor
 final class LicenseManager: ObservableObject {
-    static let validationInterval: TimeInterval = 24 * 60 * 60
-    static let maximumServerClockSkew: TimeInterval = 5 * 60
+    static let offlineWindow: TimeInterval = 7 * 24 * 60 * 60
+    static let revalidationInterval: TimeInterval = 24 * 60 * 60
+    static let clockTolerance: TimeInterval = 5 * 60
+    /// Minimum spacing for checks the user did not ask for (app activation,
+    /// wake, network return), so switching apps does not flood the server.
+    static let automaticCheckSpacing: TimeInterval = 30
+    static let maximumTimerInterval: TimeInterval = 60 * 60
+
+    enum RevalidationTrigger: Sendable {
+        case launch
+        case user
+        case wake
+        case network
+        case activation
+        case periodic
+    }
 
     @Published private(set) var state: LicenseState = .checking
-    @Published private(set) var isActivating = false
     @Published private(set) var isSigningIn = false
-    @Published private(set) var needsClaim = false
-    @Published private(set) var principal: LicensePrincipal = .installation
+    @Published private(set) var isChecking = false
     @Published private(set) var authSession: LicenseAuthSession?
+    /// Set when the last check could not reach the server.
+    @Published private(set) var lastCheckFailed = false
 
-    private let store: any LicenseRecordStoring
-    private let remote: any LicenseRemoteServicing
+    private let cacheStore: any EntitlementCacheStoring
+    private let remote: any MembershipEntitlementServicing
     private let clock: any LicenseClock
-    private let validationInterval: TimeInterval
     private let authStore: any LicenseAuthSessionStoring
     private let authFlow: any LicenseAuthFlowPerforming
 
-    private var record: LocalLicenseRecord?
+    private var cache: EntitlementCache?
     private var didBootstrap = false
-    private var validationTask: Task<Void, Never>?
+    private var checkTask: Task<Void, Never>?
+    private var lastAttemptAt: Date?
+    private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    private var pathMonitor: NWPathMonitor?
+    private var timerTask: Task<Void, Never>?
 
     init(
-        store: any LicenseRecordStoring,
-        remote: any LicenseRemoteServicing,
+        cacheStore: any EntitlementCacheStoring,
+        remote: any MembershipEntitlementServicing,
         clock: any LicenseClock = SystemLicenseClock(),
-        validationInterval: TimeInterval = LicenseManager.validationInterval,
         authStore: any LicenseAuthSessionStoring = MemoryLicenseAuthStore(),
         authFlow: any LicenseAuthFlowPerforming = UnavailableLicenseAuthFlow()
     ) {
-        self.store = store
+        self.cacheStore = cacheStore
         self.remote = remote
         self.clock = clock
-        self.validationInterval = validationInterval
         self.authStore = authStore
         self.authFlow = authFlow
     }
@@ -254,449 +302,388 @@ final class LicenseManager: ObservableObject {
     static func live(bundle: Bundle = .main) -> LicenseManager {
         let configuration = LicenseRemoteConfiguration.from(bundle: bundle)
         return LicenseManager(
-            store: KeychainLicenseStore(),
-            remote: SupabaseLicenseRemoteClient(configuration: configuration),
+            cacheStore: KeychainEntitlementStore(),
+            remote: MembershipEntitlementClient(configuration: configuration),
             authStore: KeychainLicenseAuthStore(),
             authFlow: SupabaseLicenseAuthClient(configuration: configuration)
         )
-    }
-
-    var installationID: UUID? {
-        record?.installationID
     }
 
     var showsDashboardActivationEntry: Bool {
         state.showsDashboardActivationEntry
     }
 
+    var isSignedIn: Bool {
+        authSession != nil
+    }
+
+    var membershipRequirement: MembershipRequirement {
+        guard authSession != nil else { return .signIn }
+        if case .notMember = state { return .yearly }
+        return .verification
+    }
+
     func bootstrap() async {
         guard !didBootstrap else { return }
-
         do {
-            if let existing = try store.load() {
-                record = existing
-            } else {
-                let created = LocalLicenseRecord()
-                try store.save(created)
-                record = created
-            }
-            try invalidateMalformedLocalReceiptIfNeeded()
-            authSession = try? authStore.load()
-            refreshStateFromLocalRecord()
-            didBootstrap = true
-            validateInBackgroundIfNeeded()
+            cache = try cacheStore.load()
         } catch {
-            didBootstrap = false
             state = .unavailable(storageMessage(for: error))
-        }
-    }
-
-    func activate(code: String) async throws {
-        await bootstrap()
-        // Account owners keep account redemption; a fresh installation only
-        // needs the code and never starts an authentication flow.
-        if authSession != nil {
-            try await redeem(code: code)
             return
         }
-        guard !isActivating else { throw LicenseServiceError.requestInProgress }
-        guard var record else { throw LicenseServiceError.storage(unavailableStateMessage) }
+        authSession = try? authStore.load()
+        didBootstrap = true
 
-        if Self.isIToolCode(code) { throw LicenseServiceError.iToolCodeNotAccepted }
-        let normalizedCode = Self.normalize(code: code)
-        guard !normalizedCode.isEmpty else { throw LicenseServiceError.emptyCode }
-
-        isActivating = true
-        defer { isActivating = false }
-
-        let activation = try await remote.activate(
-            code: normalizedCode,
-            installationID: record.installationID
-        )
-        guard LicenseReceiptFormat.isValid(activation.receipt) else {
-            throw LicenseServiceError.invalidResponse
+        guard let session = authSession else {
+            // Signing out clears the cache; a stray one grants nothing.
+            clearCache()
+            state = .signedOut
+            return
         }
-        let validatedAt = boundedValidationTime(activation.serverTime)
-        record.activationReceipt = activation.receipt
-        record.lastValidatedAt = validatedAt
-        record.lastTrustedTime = max(record.lastTrustedTime ?? validatedAt, validatedAt)
-        record.licensePrincipal = .installation
-        record.claimedUserID = nil
-        record.claimDeadline = nil
-        record.accountClaimRequired = false
-        try save(record)
-        principal = .installation
-        needsClaim = true
-        state = .licensed(lastValidatedAt: validatedAt)
-    }
-
-    func redeem(code: String) async throws {
-        await bootstrap()
-        try await refreshAuthSessionIfNeeded()
-        guard authSession != nil else { throw LicenseServiceError.loginRequired }
-        guard !isActivating else { throw LicenseServiceError.requestInProgress }
-        guard var record else { throw LicenseServiceError.storage(unavailableStateMessage) }
-        if Self.isIToolCode(code) { throw LicenseServiceError.iToolCodeNotAccepted }
-        let normalizedCode = Self.normalize(code: code)
-        guard !normalizedCode.isEmpty else { throw LicenseServiceError.emptyCode }
-
-        isActivating = true
-        defer { isActivating = false }
-
-        let accessToken = try await validAccessToken()
-        let activation = try await remote.redeem(
-            code: normalizedCode,
-            installationID: record.installationID,
-            accessToken: accessToken
-        )
-        try persistAccountActivation(activation, on: &record)
-    }
-
-    func claimFromReceipt() async throws {
-        await bootstrap()
-        try await refreshAuthSessionIfNeeded()
-        guard authSession != nil else { throw LicenseServiceError.loginRequired }
-        guard !isActivating else { throw LicenseServiceError.requestInProgress }
-        guard var record else { throw LicenseServiceError.storage(unavailableStateMessage) }
-        guard let receipt = record.activationReceipt, LicenseReceiptFormat.isValid(receipt) else {
-            throw LicenseServiceError.rejected(code: "invalid_receipt", message: "There is no local license to claim.")
+        if let cache, cache.userID != session.userID {
+            clearCache()
         }
-
-        isActivating = true
-        defer { isActivating = false }
-
-        let accessToken = try await validAccessToken()
-        let activation = try await remote.claim(
-            receipt: receipt,
-            installationID: record.installationID,
-            accessToken: accessToken
-        )
-        try persistAccountActivation(activation, on: &record)
+        if let status = usableCacheStatus() {
+            state = .member(status)
+        } else {
+            state = .checking
+        }
+        revalidate(.launch)
     }
+
+    // MARK: Sign-in
 
     func signIn(provider: LicenseAuthProvider) async throws {
-        await bootstrap()
-        guard !isSigningIn else { throw LicenseServiceError.requestInProgress }
-        isSigningIn = true
-        defer { isSigningIn = false }
-        let session = try await authFlow.signIn(provider: provider)
-        try authStore.save(session)
-        authSession = session
-        refreshStateFromLocalRecord()
-        validateInBackgroundIfNeeded(force: true)
+        try await performSignIn { try await self.authFlow.signIn(provider: provider) }
     }
 
     func signIn(email: String, password: String) async throws {
+        try await performSignIn { try await self.authFlow.signIn(email: email, password: password) }
+    }
+
+    private func performSignIn(_ flow: () async throws -> LicenseAuthSession) async throws {
         await bootstrap()
         guard !isSigningIn else { throw LicenseServiceError.requestInProgress }
         isSigningIn = true
         defer { isSigningIn = false }
-        let session = try await authFlow.signIn(email: email, password: password)
+        let session = try await flow()
         try authStore.save(session)
+        if cache?.userID != session.userID {
+            clearCache()
+        }
+        checkTask?.cancel()
+        checkTask = nil
         authSession = session
-        refreshStateFromLocalRecord()
-        validateInBackgroundIfNeeded(force: true)
+        lastAttemptAt = nil
+        if let status = usableCacheStatus() {
+            state = .member(status)
+        } else {
+            state = .checking
+        }
+        revalidate(.user)
+        await checkTask?.value
     }
 
     func signOut() async {
         if let session = authSession {
             await authFlow.signOut(session)
         }
-        try? authStore.clear()
-        authSession = nil
-        refreshStateFromLocalRecord()
+        signOutLocally()
     }
 
-    func validateInBackgroundIfNeeded(force: Bool = false) {
-        guard validationTask == nil, let record else { return }
+    private func signOutLocally() {
+        checkTask?.cancel()
+        checkTask = nil
+        isChecking = false
+        try? authStore.clear()
+        authSession = nil
+        clearCache()
+        lastCheckFailed = false
+        state = .signedOut
+    }
 
-        if !force,
-           let lastValidatedAt = record.lastValidatedAt,
-           clock.now.timeIntervalSince(lastValidatedAt) >= 0 {
-            let age = clock.now.timeIntervalSince(lastValidatedAt)
-            if age < validationInterval { return }
+    // MARK: Revalidation
+
+    /// Checks the entitlement now (the Refresh button) and waits for it.
+    func checkNow() async {
+        await bootstrap()
+        revalidate(.user)
+        await checkTask?.value
+    }
+
+    func revalidate(_ trigger: RevalidationTrigger) {
+        guard didBootstrap, authSession != nil, checkTask == nil else { return }
+        let now = clock.now
+
+        switch trigger {
+        case .launch, .user:
+            break
+        case .wake, .network:
+            if isRecentAttempt(now) { return }
+        case .activation:
+            if isFreshlyChecked(now) || isRecentAttempt(now) { return }
+        case .periodic:
+            reevaluateCachedState()
+            if isFreshlyChecked(now) || isRecentAttempt(now) { return }
         }
 
-        let installationID = record.installationID
-        let receipt = record.activationReceipt
-        let hasReceipt = receipt.map(LicenseReceiptFormat.isValid) ?? false
-        let hasSession = authSession != nil
-        if !hasSession && !hasReceipt { return }
-
-        validationTask = Task { @MainActor [weak self] in
+        lastAttemptAt = now
+        isChecking = true
+        checkTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.validationTask = nil }
-            do {
-                try await self.refreshAuthSessionIfNeeded()
-                let validation: LicenseValidation
-                if let session = self.authSession {
-                    do {
-                        validation = try await self.remote.validateAccount(
-                            installationID: installationID,
-                            accessToken: session.accessToken
-                        )
-                    } catch let LicenseServiceError.rejected(code, _) where code == "invalid_receipt" {
-                        if let receipt, LicenseReceiptFormat.isValid(receipt) {
-                            let fallback = try await self.remote.validate(
-                                receipt: receipt,
-                                installationID: installationID
-                            )
-                            guard !Task.isCancelled else { return }
-                            self.apply(validation: fallback, originalReceipt: receipt)
-                            return
-                        }
-                        throw LicenseServiceError.rejected(code: code, message: "This account does not have an active StupidMirror license.")
-                    }
-                } else if let receipt, LicenseReceiptFormat.isValid(receipt) {
-                    validation = try await self.remote.validate(
-                        receipt: receipt,
-                        installationID: installationID
-                    )
-                } else {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                self.apply(validation: validation, originalReceipt: receipt)
-            } catch {
-                guard !Task.isCancelled else { return }
-                guard self.record?.activationReceipt == receipt else { return }
-                if case let LicenseServiceError.rejected(code, _) = error {
-                    if code == "login_required" {
-                        try? self.authStore.clear()
-                        self.authSession = nil
-                        self.refreshStateFromLocalRecord()
-                        return
-                    }
-                    if ["license_revoked", "invalid_receipt", "claim_required"].contains(code) {
-                        if code == "claim_required" {
-                            guard self.record?.activationReceipt == receipt else { return }
-                            self.needsClaim = true
-                            self.principal = .installation
-                            if var record = self.record {
-                                record.accountClaimRequired = true
-                                try? self.save(record)
-                            }
-                            // An explicit server rejection still takes effect;
-                            // only the historical local deadline is optional.
-                            self.state = .unlicensed
-                            return
-                        }
-                        if let receipt {
-                            self.revokeLocalReceipt(matching: receipt)
-                        } else {
-                            self.refreshStateFromLocalRecord()
-                        }
-                    }
-                }
+            await self.performCheck()
+            if !Task.isCancelled {
+                self.checkTask = nil
+                self.isChecking = false
             }
         }
     }
 
     func waitForBackgroundValidation() async {
-        await validationTask?.value
+        await checkTask?.value
+    }
+
+    /// Re-applies the offline rule to the cached entitlement. A member whose
+    /// grace window ran out, whose entitlement ended, or whose clock went
+    /// backwards loses multi-device use until the next successful check.
+    func reevaluateCachedState() {
+        guard didBootstrap else { return }
+        guard authSession != nil else {
+            state = .signedOut
+            return
+        }
+        if let status = usableCacheStatus() {
+            state = .member(status)
+        } else if state.isEntitled {
+            state = .unverified
+        }
     }
 
     func cancel() {
-        validationTask?.cancel()
-        validationTask = nil
+        checkTask?.cancel()
+        checkTask = nil
+        isChecking = false
+        stopAutomaticRevalidation()
     }
 
-    func checkpointTrustedTime() {
-        refreshStateFromLocalRecord()
+    private func isRecentAttempt(_ now: Date) -> Bool {
+        guard let lastAttemptAt else { return false }
+        let elapsed = now.timeIntervalSince(lastAttemptAt)
+        return elapsed >= 0 && elapsed < Self.automaticCheckSpacing
     }
 
-    static func normalize(code: String) -> String {
-        code
-            .uppercased()
-            .filter { $0.isLetter || $0.isNumber }
+    private func isFreshlyChecked(_ now: Date) -> Bool {
+        guard state.isEntitled, let cache else { return false }
+        let age = now.timeIntervalSince(cache.checkedAt)
+        return age >= -Self.clockTolerance && age < Self.revalidationInterval
     }
 
-    static func isIToolCode(_ code: String) -> Bool {
-        normalize(code: code).hasPrefix("IT")
-    }
-
-    private func apply(validation: LicenseValidation, originalReceipt: String?) {
-        guard var record else { return }
-        // An older validation request must never overwrite or revoke a receipt
-        // installed by a newer activation request.
-        guard record.activationReceipt == originalReceipt else { return }
-        guard validation.isValid else {
-            if let originalReceipt {
-                revokeLocalReceipt(matching: originalReceipt)
-            } else {
-                refreshStateFromLocalRecord()
-            }
-            return
+    private func usableCacheStatus() -> MembershipStatus? {
+        guard let session = authSession, let cache,
+              cache.isUsable(
+                  for: session.userID,
+                  now: clock.now,
+                  offlineWindow: Self.offlineWindow,
+                  clockTolerance: Self.clockTolerance
+              ) else {
+            return nil
         }
+        return cache.status
+    }
 
-        let receipt = validation.refreshedReceipt ?? originalReceipt ?? ""
-        guard LicenseReceiptFormat.isValid(receipt) else {
-            if let originalReceipt {
-                revokeLocalReceipt(matching: originalReceipt)
-            }
-            return
+    private enum CheckOutcome: Error {
+        case signedOut
+        case unavailable
+    }
+
+    private func performCheck() async {
+        guard let session = authSession else { return }
+        let userID = session.userID
+        do {
+            let entitlement = try await fetchEntitlement(for: session)
+            guard !Task.isCancelled, authSession?.userID == userID else { return }
+            apply(entitlement, userID: userID)
+        } catch CheckOutcome.signedOut {
+            guard !Task.isCancelled, authSession?.userID == userID else { return }
+            signOutLocally()
+        } catch {
+            guard !Task.isCancelled, authSession?.userID == userID else { return }
+            keepCachedState()
         }
-        let validatedAt = boundedValidationTime(validation.serverTime)
-        record.activationReceipt = receipt
-        record.lastValidatedAt = validatedAt
-        record.lastTrustedTime = max(record.lastTrustedTime ?? validatedAt, validatedAt)
-        record.licensePrincipal = validation.principal
-        record.claimDeadline = validation.claimDeadline
-        record.accountClaimRequired = false
-        if validation.principal == .account {
-            record.claimedUserID = authSession?.userID
+    }
+
+    /// One request; on `login_required` the token is refreshed and the
+    /// request retried once. A second rejection means the account is gone.
+    private func fetchEntitlement(for session: LicenseAuthSession) async throws -> MembershipEntitlement {
+        var session = session
+        var refreshed = false
+        if session.isExpired {
+            session = try await refresh(session)
+            refreshed = true
         }
         do {
-            try save(record)
-            principal = validation.principal
-            needsClaim = validation.needsClaim && validation.principal == .installation
-            state = .licensed(lastValidatedAt: validatedAt)
-        } catch {
-            // Keep the in-memory entitlement for this run, but surface the
-            // persistence problem instead of pretending it was saved.
-            state = .unavailable(storageMessage(for: error))
+            return try await requestEntitlement(session.accessToken)
+        } catch CheckOutcome.signedOut {
+            guard !refreshed else { throw CheckOutcome.signedOut }
+            session = try await refresh(session)
+            return try await requestEntitlement(session.accessToken)
         }
     }
 
-    private func revokeLocalReceipt(matching expectedReceipt: String) {
-        guard var record, record.activationReceipt == expectedReceipt else { return }
-        record.activationReceipt = nil
-        record.lastValidatedAt = nil
+    private func requestEntitlement(_ accessToken: String) async throws -> MembershipEntitlement {
         do {
-            try save(record)
-            refreshStateFromLocalRecord()
+            return try await remote.entitlement(accessToken: accessToken)
+        } catch MembershipCheckError.loginRequired {
+            throw CheckOutcome.signedOut
         } catch {
-            state = .unavailable(storageMessage(for: error))
+            throw CheckOutcome.unavailable
         }
     }
 
-    private func refreshStateFromLocalRecord() {
-        guard let record else {
-            state = .unavailable("License state is unavailable.")
-            needsClaim = false
-            return
-        }
-
-        principal = record.principal
-        let hasValidReceipt = record.activationReceipt.map(LicenseReceiptFormat.isValid) ?? false
-
-        if record.principal == .account {
-            needsClaim = false
-            if authSession != nil, hasValidReceipt {
-                state = .licensed(lastValidatedAt: record.lastValidatedAt)
-                return
-            }
-            // After claim, the account is the principal. A Keychain receipt
-            // alone must not keep paid features without a session.
-            state = .unlicensed
-            return
-        }
-
-        if hasValidReceipt {
-            // Binding an installation license to an account is optional. Old
-            // migration deadlines must not expire a valid local activation.
-            needsClaim = record.principal == .installation
-            if record.accountClaimRequired == true {
-                state = .unlicensed
-                return
-            }
-            state = .licensed(lastValidatedAt: record.lastValidatedAt)
-            return
-        }
-
-        needsClaim = false
-        state = .unlicensed
-    }
-
-    private func persistAccountActivation(
-        _ activation: LicenseActivation,
-        on record: inout LocalLicenseRecord
-    ) throws {
-        guard LicenseReceiptFormat.isValid(activation.receipt) else {
-            throw LicenseServiceError.invalidResponse
-        }
-        let validatedAt = boundedValidationTime(activation.serverTime)
-        record.activationReceipt = activation.receipt
-        record.lastValidatedAt = validatedAt
-        record.lastTrustedTime = max(record.lastTrustedTime ?? validatedAt, validatedAt)
-        record.licensePrincipal = .account
-        record.claimedUserID = authSession?.userID
-        record.claimDeadline = nil
-        try save(record)
-        principal = .account
-        needsClaim = false
-        state = .licensed(lastValidatedAt: validatedAt)
-    }
-
-    private func validAccessToken() async throws -> String {
-        try await refreshAuthSessionIfNeeded()
-        guard let token = authSession?.accessToken, !token.isEmpty else {
-            throw LicenseServiceError.loginRequired
-        }
-        return token
-    }
-
-    private func refreshAuthSessionIfNeeded() async throws {
-        guard let session = authSession, session.isExpired else { return }
+    private func refresh(_ session: LicenseAuthSession) async throws -> LicenseAuthSession {
+        let refreshed: LicenseAuthSession
         do {
-            let refreshed = try await authFlow.refresh(session)
-            try authStore.save(refreshed)
-            authSession = refreshed
+            refreshed = try await authFlow.refresh(session)
+        } catch LicenseAuthError.rejected {
+            // The refresh token itself was refused: the sign-in is over.
+            throw CheckOutcome.signedOut
         } catch {
-            try? authStore.clear()
-            authSession = nil
-            throw LicenseServiceError.loginRequired
+            // Network failure while refreshing: keep what is cached.
+            throw CheckOutcome.unavailable
         }
+        guard authSession?.userID == session.userID else { throw CheckOutcome.unavailable }
+        try? authStore.save(refreshed)
+        authSession = refreshed
+        return refreshed
     }
 
-    private func invalidateMalformedLocalReceiptIfNeeded() throws {
-        guard var record,
-              let receipt = record.activationReceipt,
-              !LicenseReceiptFormat.isValid(receipt) else {
+    private func apply(_ entitlement: MembershipEntitlement, userID: UUID) {
+        lastCheckFailed = false
+        let stillValid = entitlement.validUntil.map { $0 > entitlement.serverTime } ?? true
+        guard entitlement.active, stillValid else {
+            // An explicit "not active" revokes immediately.
+            clearCache()
+            state = .notMember(entitlement.status)
             return
         }
-        record.activationReceipt = nil
-        record.lastValidatedAt = nil
-        try save(record)
+        let newCache = EntitlementCache(userID: userID, entitlement: entitlement)
+        // A Keychain failure keeps the entitlement for this run only.
+        try? cacheStore.save(newCache)
+        cache = newCache
+        state = .member(entitlement.status)
     }
 
-    private func boundedValidationTime(_ serverTime: Date) -> Date {
-        min(serverTime, clock.now.addingTimeInterval(Self.maximumServerClockSkew))
-    }
-
-    private func save(_ record: LocalLicenseRecord) throws {
-        do {
-            try store.save(record)
-            self.record = record
-        } catch {
-            throw LicenseServiceError.storage(storageMessage(for: error))
+    private func keepCachedState() {
+        lastCheckFailed = true
+        if let status = usableCacheStatus() {
+            state = .member(status)
+            return
+        }
+        switch state {
+        case .notMember:
+            // The server's last explicit answer still stands.
+            break
+        default:
+            state = .unverified
         }
     }
 
-    private var unavailableStateMessage: String {
-        if case let .unavailable(message) = state {
-            return message
+    private func clearCache() {
+        if cache != nil {
+            try? cacheStore.clear()
         }
-        return "License state is unavailable."
+        cache = nil
     }
 
     private func storageMessage(for error: Error) -> String {
         if let error = error as? LicenseServiceError {
             return error.localizedDescription
         }
-        return "Could not securely store the license state: \(error.localizedDescription)"
+        return "Could not read the saved membership state: \(error.localizedDescription)"
+    }
+
+    // MARK: System events
+
+    /// Revalidates on wake, network return, app activation (returning from
+    /// the browser after paying), and on a timer that also ends the offline
+    /// window exactly when it runs out.
+    func startAutomaticRevalidation() {
+        guard observers.isEmpty else { return }
+        let workspace = NSWorkspace.shared.notificationCenter
+        observers.append((workspace, workspace.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.revalidate(.wake) }
+        }))
+        let center = NotificationCenter.default
+        observers.append((center, center.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.revalidate(.activation) }
+        }))
+
+        let monitor = NWPathMonitor()
+        let tracker = NetworkReturnTracker()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard tracker.returned(satisfied: path.status == .satisfied) else { return }
+            Task { @MainActor in self?.revalidate(.network) }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.gaojiua.StupidMirror.membership.network"))
+        pathMonitor = monitor
+
+        timerTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                let delay = self?.nextTimerDelay() ?? Self.maximumTimerInterval
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self else { return }
+                self.revalidate(.periodic)
+            }
+        }
+    }
+
+    private func stopAutomaticRevalidation() {
+        for (center, observer) in observers {
+            center.removeObserver(observer)
+        }
+        observers.removeAll()
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        timerTask?.cancel()
+        timerTask = nil
+    }
+
+    private func nextTimerDelay() -> TimeInterval {
+        guard state.isEntitled, let cache else { return Self.maximumTimerInterval }
+        let untilExpiry = cache.expiry(offlineWindow: Self.offlineWindow).timeIntervalSince(clock.now)
+        return min(Self.maximumTimerInterval, max(1, untilExpiry + 1))
     }
 }
 
-final class KeychainLicenseStore: LicenseRecordStoring, @unchecked Sendable {
-    static let service = "com.gaojiua.StupidMirror.license.v1"
-    private static let account = "installation-state"
+/// Reports the moment the network comes back after being unavailable.
+private final class NetworkReturnTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var wasSatisfied: Bool?
+
+    func returned(satisfied: Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let returned = satisfied && wasSatisfied == false
+        wasSatisfied = satisfied
+        return returned
+    }
+}
+
+// MARK: - Keychain
+
+final class KeychainEntitlementStore: EntitlementCacheStoring, @unchecked Sendable {
+    static let service = "com.gaojiua.StupidMirror.membership.v1"
+    private static let account = "entitlement"
     private static let interactionLock = NSLock()
 
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    func load() throws -> LocalLicenseRecord? {
+    func load() throws -> EntitlementCache? {
         try withoutLegacyKeychainInteraction {
             var query = Self.nonInteractiveQuery
             query[kSecReturnData as String] = true
@@ -710,16 +697,13 @@ final class KeychainLicenseStore: LicenseRecordStoring, @unchecked Sendable {
             guard status == errSecSuccess, let data = result as? Data else {
                 throw keychainError(status)
             }
-            do {
-                return try decoder.decode(LocalLicenseRecord.self, from: data)
-            } catch {
-                throw LicenseServiceError.storage("The saved license state is damaged and was not reset.")
-            }
+            // A damaged cache only means the next check decides.
+            return try? decoder.decode(EntitlementCache.self, from: data)
         }
     }
 
-    func save(_ record: LocalLicenseRecord) throws {
-        let data = try encoder.encode(record)
+    func save(_ cache: EntitlementCache) throws {
+        let data = try encoder.encode(cache)
         try withoutLegacyKeychainInteraction {
             let updateStatus = SecItemUpdate(
                 Self.nonInteractiveQuery as CFDictionary,
@@ -741,6 +725,15 @@ final class KeychainLicenseStore: LicenseRecordStoring, @unchecked Sendable {
         }
     }
 
+    func clear() throws {
+        try withoutLegacyKeychainInteraction {
+            let status = SecItemDelete(Self.nonInteractiveQuery as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                throw keychainError(status)
+            }
+        }
+    }
+
     /// Developer ID releases are signed directly and do not embed the
     /// provisioning profile/application-identifier entitlement required by
     /// macOS's Data Protection Keychain. Use the traditional login Keychain so
@@ -753,8 +746,8 @@ final class KeychainLicenseStore: LicenseRecordStoring, @unchecked Sendable {
         ]
     }
 
-    /// Never let an ACL mismatch turn a background license check into a
-    /// Keychain password dialog. Official releases keep a stable Developer ID
+    /// Never let an ACL mismatch turn a background check into a Keychain
+    /// password dialog. Official releases keep a stable Developer ID
     /// designated requirement, so normal reads and updates remain silent.
     static var nonInteractiveQuery: [String: Any] {
         var query = itemIdentity
@@ -784,48 +777,71 @@ final class KeychainLicenseStore: LicenseRecordStoring, @unchecked Sendable {
     private func keychainError(_ status: OSStatus) -> LicenseServiceError {
         let message = SecCopyErrorMessageString(status, nil) as String?
             ?? "Keychain error \(status)"
-        return .storage("Could not access the secure license record: \(message)")
+        return .storage("Could not access the saved membership state: \(message)")
     }
 }
 
+// MARK: - Remote
+
 struct LicenseRemoteConfiguration: Sendable {
-    let endpoint: URL?
+    /// The iTool Supabase project (`https://<ref>.supabase.co`): Auth and
+    /// the `itool_entitlement` RPC fallback.
+    let supabaseURL: URL?
+    /// `https://itool.tech/api/membership/entitlement`, reachable where
+    /// supabase.co is blocked.
+    let entitlementURL: URL?
     let publishableKey: String
     let appVersion: String
 
-    var projectURL: URL? {
-        guard let endpoint,
-              var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false) else {
-            return nil
-        }
-        components.path = ""
-        components.query = nil
-        components.fragment = nil
-        return components.url
-    }
-
-    /// Supabase Auth base (`…/auth/v1`), derived from the license Edge Function URL.
+    /// Supabase Auth base (`…/auth/v1`).
     var authBaseURL: URL? {
-        guard let endpoint,
-              var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
-              let host = components.host else {
+        guard let supabaseURL,
+              var components = URLComponents(url: supabaseURL, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              components.host?.isEmpty == false else {
             return nil
         }
-        components.scheme = "https"
-        components.host = host
         components.path = "/auth/v1"
         components.query = nil
         components.fragment = nil
         return components.url
     }
 
+    var entitlementRPCURL: URL? {
+        guard let supabaseURL,
+              var components = URLComponents(url: supabaseURL, resolvingAgainstBaseURL: false),
+              components.scheme?.lowercased() == "https",
+              components.host?.isEmpty == false else {
+            return nil
+        }
+        components.path = "/rest/v1/rpc/itool_entitlement"
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
+
+    var websiteEntitlementURL: URL? {
+        guard let entitlementURL,
+              entitlementURL.scheme?.lowercased() == "https",
+              var components = URLComponents(url: entitlementURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.queryItems = [URLQueryItem(name: "product", value: MembershipProduct.key)]
+        return components.url
+    }
+
     static func from(bundle: Bundle) -> LicenseRemoteConfiguration {
-        let endpointValue = (bundle.object(forInfoDictionaryKey: "StupidMirrorLicenseEndpoint") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let key = (bundle.object(forInfoDictionaryKey: "StupidMirrorLicensePublishableKey") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        func value(_ key: String) -> String {
+            (bundle.object(forInfoDictionaryKey: key) as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }
         let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
-        return LicenseRemoteConfiguration(endpoint: URL(string: endpointValue), publishableKey: key, appVersion: version)
+        return LicenseRemoteConfiguration(
+            supabaseURL: URL(string: value("StupidMirrorSupabaseURL")),
+            entitlementURL: URL(string: value("StupidMirrorEntitlementURL")),
+            publishableKey: value("StupidMirrorLicensePublishableKey"),
+            appVersion: version
+        )
     }
 }
 
@@ -843,13 +859,15 @@ struct URLSessionLicenseTransport: LicenseHTTPTransport {
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
-            throw LicenseServiceError.invalidResponse
+            throw MembershipCheckError.temporarilyUnavailable
         }
         return (data, response)
     }
 }
 
-struct SupabaseLicenseRemoteClient: LicenseRemoteServicing {
+/// Asks itool.tech for the StupidMirror entitlement and falls back to the
+/// Supabase RPC when itool.tech cannot be reached.
+struct MembershipEntitlementClient: MembershipEntitlementServicing {
     private let configuration: LicenseRemoteConfiguration
     private let transport: any LicenseHTTPTransport
 
@@ -861,198 +879,97 @@ struct SupabaseLicenseRemoteClient: LicenseRemoteServicing {
         self.transport = transport
     }
 
-    func activate(code: String, installationID: UUID) async throws -> LicenseActivation {
-        let wire = try await request(
-            ActivateRequest(
-                action: "activate",
-                installationID: installationID.uuidString.lowercased(),
-                code: code,
-                appVersion: configuration.appVersion
-            )
-        )
-        return try Self.makeActivation(from: wire)
-    }
-
-    func validate(receipt: String, installationID: UUID) async throws -> LicenseValidation {
-        let wire = try await request(
-            ValidateRequest(
-                action: "validate",
-                installationID: installationID.uuidString.lowercased(),
-                receipt: receipt,
-                appVersion: configuration.appVersion,
-                clientProtocol: LicenseClientProtocol.accountBound
-            )
-        )
-        return try Self.makeValidation(from: wire)
-    }
-
-    func redeem(code: String, installationID: UUID, accessToken: String) async throws -> LicenseActivation {
-        // Account path: PostgREST JWT RPC (not Edge). installationID kept for protocol symmetry.
-        _ = installationID
-        let wire = try await rpc(
-            "stupidmirror_redeem_for_user",
-            body: RedeemForUserRequest(pCodeHash: Self.compactCodeHash(code)),
-            accessToken: accessToken
-        )
-        return try Self.makeActivation(from: wire)
-    }
-
-    func claim(receipt: String, installationID: UUID, accessToken: String) async throws -> LicenseActivation {
-        let wire = try await rpc(
-            "stupidmirror_claim_for_user",
-            body: ClaimForUserRequest(
-                pReceipt: receipt,
-                pInstallationHash: Self.installationHash(installationID)
-            ),
-            accessToken: accessToken
-        )
-        return try Self.makeActivation(from: wire)
-    }
-
-    func validateAccount(installationID: UUID, accessToken: String) async throws -> LicenseValidation {
-        _ = installationID
-        let wire = try await rpc(
-            "stupidmirror_entitlement_for_user",
-            body: EmptyRPCRequest(),
-            accessToken: accessToken
-        )
-        if wire.active != true && wire.valid != true {
-            throw LicenseServiceError.rejected(
-                code: "invalid_receipt",
-                message: "This account does not have an active StupidMirror license."
-            )
+    func entitlement(accessToken: String) async throws -> MembershipEntitlement {
+        let canUseRPC = configuration.entitlementRPCURL != nil && !configuration.publishableKey.isEmpty
+        guard let websiteURL = configuration.websiteEntitlementURL else {
+            guard canUseRPC else { throw MembershipCheckError.notConfigured }
+            return try await viaRPC(accessToken)
         }
-        return try Self.makeValidation(from: wire, defaultPrincipal: .account)
-    }
-
-    private static func compactCodeHash(_ normalizedCode: String) -> String {
-        sha256Hex(normalizedCode.replacingOccurrences(of: "-", with: ""))
-    }
-
-    private static func installationHash(_ installationID: UUID) -> String {
-        sha256Hex(installationID.uuidString.lowercased())
-    }
-
-    private static func sha256Hex(_ value: String) -> String {
-        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private static func makeActivation(from wire: WireResponse) throws -> LicenseActivation {
-        guard wire.valid != false,
-              wire.active != false,
-              let receipt = wire.receipt?.trimmingCharacters(in: .whitespacesAndNewlines),
-              LicenseReceiptFormat.isValid(receipt) else {
-            throw LicenseServiceError.invalidResponse
+        do {
+            return try await viaWebsite(websiteURL, accessToken)
+        } catch MembershipCheckError.temporarilyUnavailable where canUseRPC {
+            return try await viaRPC(accessToken)
         }
-        let serverTime = parseDate(wire.serverTime) ?? parseDate(wire.activatedAt) ?? Date()
-        return LicenseActivation(receipt: receipt, serverTime: serverTime)
     }
 
-    private static func makeValidation(from wire: WireResponse, defaultPrincipal: LicensePrincipal = .installation) throws -> LicenseValidation {
-        let serverTime = parseDate(wire.serverTime) ?? parseDate(wire.activatedAt) ?? Date()
-        let refreshedReceipt = wire.receipt?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard refreshedReceipt.map(LicenseReceiptFormat.isValid) ?? true else {
-            throw LicenseServiceError.invalidResponse
-        }
-        let principal = LicensePrincipal(rawValue: wire.principal ?? "") ?? defaultPrincipal
-        return LicenseValidation(
-            isValid: wire.active ?? wire.valid ?? wire.ok ?? false,
-            refreshedReceipt: refreshedReceipt,
-            serverTime: serverTime,
-            principal: principal,
-            needsClaim: wire.needsClaim ?? (principal == .installation),
-            claimDeadline: parseDate(wire.claimBy)
-        )
+    private func viaWebsite(_ url: URL, _ accessToken: String) async throws -> MembershipEntitlement {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 12
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("StupidMirror/\(configuration.appVersion)", forHTTPHeaderField: "User-Agent")
+        return try await send(request)
     }
 
-        private func rpc<Request: Encodable>(
-        _ name: String,
-        body: Request,
-        accessToken: String
-    ) async throws -> WireResponse {
-        guard let projectURL = configuration.projectURL,
-              !configuration.publishableKey.isEmpty else {
-            throw LicenseServiceError.notConfigured
+    private func viaRPC(_ accessToken: String) async throws -> MembershipEntitlement {
+        guard let url = configuration.entitlementRPCURL, !configuration.publishableKey.isEmpty else {
+            throw MembershipCheckError.notConfigured
         }
-        let endpoint = projectURL
-            .appendingPathComponent("rest/v1/rpc")
-            .appendingPathComponent(name)
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 12
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Supabase publishable keys belong in `apikey`; the user's JWT is
+        // the Bearer credential.
         request.setValue(configuration.publishableKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONEncoder().encode(body)
-
-        let (data, response) = try await transport.data(for: request)
-        let wire = try? JSONDecoder().decode(WireResponse.self, from: data)
-        let postgrest = try? JSONDecoder().decode(PostgRESTError.self, from: data)
-        guard (200..<300).contains(response.statusCode) else {
-            let code = wire?.code ?? postgrest?.code ?? "http_\(response.statusCode)"
-            throw LicenseServiceError.rejected(
-                code: code,
-                message: wire?.message ?? postgrest?.message ?? "License request failed (HTTP \(response.statusCode))."
-            )
-        }
-        // entitlement_for_user may return {ok, active, ...} without rejecting on inactive
-        guard let wire else {
-            throw LicenseServiceError.invalidResponse
-        }
-        if wire.ok == false {
-            throw LicenseServiceError.rejected(
-                code: wire.code ?? "invalid_response",
-                message: wire.message ?? "The license server rejected the request."
-            )
-        }
-        return wire
+        request.httpBody = try JSONEncoder().encode(["p_product": MembershipProduct.key])
+        return try await send(request)
     }
 
-private func request<Request: Encodable>(
-        _ payload: Request,
-        accessToken: String? = nil
-    ) async throws -> WireResponse {
-        guard let endpoint = configuration.endpoint,
-              endpoint.scheme?.lowercased() == "https",
-              !configuration.publishableKey.isEmpty else {
-            throw LicenseServiceError.notConfigured
+    private func send(_ request: URLRequest) async throws -> MembershipEntitlement {
+        let data: Data
+        let response: HTTPURLResponse
+        do {
+            (data, response) = try await transport.data(for: request)
+        } catch let error as MembershipCheckError {
+            throw error
+        } catch {
+            throw MembershipCheckError.temporarilyUnavailable
         }
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 12
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        // Supabase's current publishable keys belong in `apikey`; they are not
-        // JWTs and must not be sent as a Bearer Authorization credential.
-        request.setValue(configuration.publishableKey, forHTTPHeaderField: "apikey")
-        if let accessToken, !accessToken.isEmpty {
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        }
-        request.httpBody = try JSONEncoder().encode(payload)
-
-        let (data, response) = try await transport.data(for: request)
         let wire = try? JSONDecoder().decode(WireResponse.self, from: data)
-        guard (200..<300).contains(response.statusCode) else {
-            throw LicenseServiceError.rejected(
-                code: wire?.code ?? "http_\(response.statusCode)",
-                message: wire?.message ?? "License request failed (HTTP \(response.statusCode))."
-            )
+        if response.statusCode == 401 || response.statusCode == 403 || wire?.code == "login_required" {
+            throw MembershipCheckError.loginRequired
         }
-        guard let wire, wire.ok != false else {
-            throw LicenseServiceError.rejected(
-                code: wire?.code ?? "invalid_response",
-                message: wire?.message ?? "The license server rejected the request."
-            )
+        guard (200..<300).contains(response.statusCode), let wire, wire.ok == true,
+              let active = wire.active else {
+            throw MembershipCheckError.temporarilyUnavailable
         }
-        return wire
+        if let product = wire.product, product != MembershipProduct.key {
+            throw MembershipCheckError.temporarilyUnavailable
+        }
+        guard let serverTime = Self.parseDate(wire.serverTime) else {
+            throw MembershipCheckError.temporarilyUnavailable
+        }
+        return MembershipEntitlement(
+            active: active,
+            tier: MembershipTier(serverValue: wire.tier),
+            validUntil: Self.parseDate(wire.validUntil),
+            memberUntil: Self.parseDate(wire.memberUntil),
+            yearlyUntil: Self.parseDate(wire.yearlyUntil),
+            serverTime: serverTime
+        )
     }
 
-    private static func parseDate(_ value: String?) -> Date? {
-        guard let value else { return nil }
+    /// Postgres timestamps carry up to six fractional digits and a numeric
+    /// offset (`2026-11-05T10:30:26.938123+00:00`); ISO8601DateFormatter
+    /// accepts at most three.
+    static func parseDate(_ value: String?) -> Date? {
+        guard var value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            return nil
+        }
+        if let dot = value.firstIndex(of: ".") {
+            let fractionStart = value.index(after: dot)
+            let fractionEnd = value[fractionStart...].firstIndex { !$0.isNumber } ?? value.endIndex
+            let digits = value[fractionStart..<fractionEnd]
+            if digits.count > 3 {
+                value.replaceSubrange(fractionStart..<fractionEnd, with: digits.prefix(3))
+            }
+        }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         if let date = formatter.date(from: value) {
@@ -1062,118 +979,23 @@ private func request<Request: Encodable>(
         return formatter.date(from: value)
     }
 
-    private struct ActivateRequest: Encodable {
-        let action: String
-        let installationID: String
-        let code: String
-        let appVersion: String
-
-        enum CodingKeys: String, CodingKey {
-            case action, code
-            case installationID = "installation_id"
-            case appVersion = "app_version"
-        }
-    }
-
-    private struct ValidateRequest: Encodable {
-        let action: String
-        let installationID: String
-        let receipt: String
-        let appVersion: String
-        let clientProtocol: Int
-
-        enum CodingKeys: String, CodingKey {
-            case action, receipt
-            case installationID = "installation_id"
-            case appVersion = "app_version"
-            case clientProtocol = "client_protocol"
-        }
-    }
-
-    private struct AuthenticatedCodeRequest: Encodable {
-        let action: String
-        let installationID: String
-        let code: String
-        let appVersion: String
-        let clientProtocol: Int
-
-        enum CodingKeys: String, CodingKey {
-            case action, code
-            case installationID = "installation_id"
-            case appVersion = "app_version"
-            case clientProtocol = "client_protocol"
-        }
-    }
-
-    private struct ClaimRequest: Encodable {
-        let action: String
-        let installationID: String
-        let receipt: String
-        let appVersion: String
-        let clientProtocol: Int
-
-        enum CodingKeys: String, CodingKey {
-            case action, receipt
-            case installationID = "installation_id"
-            case appVersion = "app_version"
-            case clientProtocol = "client_protocol"
-        }
-    }
-
-    private struct AccountValidateRequest: Encodable {
-        let action: String
-        let installationID: String
-        let appVersion: String
-        let clientProtocol: Int
-
-        enum CodingKeys: String, CodingKey {
-            case action
-            case installationID = "installation_id"
-            case appVersion = "app_version"
-            case clientProtocol = "client_protocol"
-        }
-    }
-
-    private struct EmptyRPCRequest: Encodable {}
-
-    private struct RedeemForUserRequest: Encodable {
-        let pCodeHash: String
-        enum CodingKeys: String, CodingKey { case pCodeHash = "p_code_hash" }
-    }
-
-    private struct ClaimForUserRequest: Encodable {
-        let pReceipt: String
-        let pInstallationHash: String
-        enum CodingKeys: String, CodingKey {
-            case pReceipt = "p_receipt"
-            case pInstallationHash = "p_installation_hash"
-        }
-    }
-
-    private struct PostgRESTError: Decodable {
-        let code: String?
-        let message: String?
-    }
-
     private struct WireResponse: Decodable {
         let ok: Bool?
-        let valid: Bool?
-        let active: Bool?
-        let receipt: String?
-        let serverTime: String?
-        let activatedAt: String?
         let code: String?
-        let message: String?
-        let principal: String?
-        let needsClaim: Bool?
-        let claimBy: String?
+        let product: String?
+        let active: Bool?
+        let tier: String?
+        let validUntil: String?
+        let memberUntil: String?
+        let yearlyUntil: String?
+        let serverTime: String?
 
         enum CodingKeys: String, CodingKey {
-            case ok, valid, active, receipt, code, message, principal
+            case ok, code, product, active, tier
+            case validUntil = "valid_until"
+            case memberUntil = "member_until"
+            case yearlyUntil = "yearly_until"
             case serverTime = "server_time"
-            case activatedAt = "activated_at"
-            case needsClaim = "needs_claim"
-            case claimBy = "claim_by"
         }
     }
 }
@@ -1201,6 +1023,33 @@ final class MemoryLicenseAuthStore: LicenseAuthSessionStoring, @unchecked Sendab
     func clear() throws {
         lock.lock()
         session = nil
+        lock.unlock()
+    }
+}
+
+final class MemoryEntitlementStore: EntitlementCacheStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var cache: EntitlementCache?
+
+    init(cache: EntitlementCache? = nil) {
+        self.cache = cache
+    }
+
+    func load() throws -> EntitlementCache? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cache
+    }
+
+    func save(_ cache: EntitlementCache) throws {
+        lock.lock()
+        self.cache = cache
+        lock.unlock()
+    }
+
+    func clear() throws {
+        lock.lock()
+        cache = nil
         lock.unlock()
     }
 }

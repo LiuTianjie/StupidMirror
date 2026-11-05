@@ -9,7 +9,8 @@ enum DeviceAutomationError: LocalizedError, Sendable {
     case appiumUnavailable
     case controlNotReady
     case controlFailed(String)
-    case activationRequired
+    /// Several devices at once need a signed-in iTool yearly membership.
+    case membershipRequired(MembershipRequirement)
     case mirrorFailed(String)
     case invalidArgument(String)
     case timedOut(String)
@@ -24,7 +25,8 @@ enum DeviceAutomationError: LocalizedError, Sendable {
         case .appiumUnavailable: "appium_unavailable"
         case .controlNotReady: "control_not_ready"
         case .controlFailed: "control_failed"
-        case .activationRequired: "activation_required"
+        case let .membershipRequired(requirement):
+            requirement == .signIn ? "sign_in_required" : "membership_required"
         case .mirrorFailed: "mirror_failed"
         case .invalidArgument: "invalid_argument"
         case .timedOut: "timed_out"
@@ -49,8 +51,15 @@ enum DeviceAutomationError: LocalizedError, Sendable {
         case let .controlFailed(message), let .mirrorFailed(message), let .timedOut(message),
              let .assertionFailed(message):
             message
-        case .activationRequired:
-            "Activation is required for device control or for using more than one device at the same time."
+        case let .membershipRequired(requirement):
+            switch requirement {
+            case .signIn:
+                "Using more than one device at the same time requires signing in to StupidMirror with an iTool account that has the yearly membership (¥99/year, includes every iTool product). Ask the user to sign in under StupidMirror Settings > Membership, or to join at https://itool.tech/pro?from=stupidmirror. One device at a time stays free without signing in."
+            case .yearly:
+                "Using more than one device at the same time requires the iTool yearly membership (¥99/year, includes every iTool product). The signed-in account does not have it. Ask the user to upgrade at https://itool.tech/pro?from=stupidmirror. One device at a time stays free."
+            case .verification:
+                "StupidMirror could not confirm the iTool yearly membership (the last successful check is too old or the server cannot be reached). Ask the user to check the network and choose Refresh under StupidMirror Settings > Membership. One device at a time stays free."
+            }
         case let .invalidArgument(message):
             message
         }
@@ -1510,7 +1519,7 @@ final class DeviceAutomationService: @unchecked Sendable {
     /// control, but it runs through host tools and needs no control session.
     private func appManagementSession(deviceID: String?) throws -> DeviceSession {
         let session = try selectSession(deviceID: deviceID)
-        guard store.canStartControl(for: session) else { throw DeviceAutomationError.activationRequired }
+        guard store.canStartControl(for: session) else { throw store.membershipRequiredError }
         return session
     }
 
@@ -1703,7 +1712,7 @@ final class DeviceAutomationService: @unchecked Sendable {
 
     private func readyControlSession(deviceID: String?) throws -> DeviceSession {
         guard store.canUseControl else {
-            throw DeviceAutomationError.activationRequired
+            throw store.membershipRequiredError
         }
         let session = try selectSession(deviceID: deviceID)
         guard session.controlSession.isReady else { throw DeviceAutomationError.controlNotReady }

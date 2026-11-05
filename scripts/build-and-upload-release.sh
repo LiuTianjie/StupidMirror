@@ -6,7 +6,8 @@ cd "$repo_root"
 
 official_bundle_id="com.gaojiua.StupidMirror"
 official_team_id="L95PYLFT86"
-official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1/stupidmirror-license"
+official_supabase_url="https://mkbeusztkzffnzjdwmqk.supabase.co"
+official_entitlement_url="https://itool.tech/api/membership/entitlement"
 official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
 official_appium_version="3.5.2"
 official_xcuitest_driver_version="12.3.0"
@@ -148,7 +149,8 @@ echo "Building app..."
 BUNDLE_ID="$official_bundle_id" \
   SIGN_IDENTITY="$sign_identity" \
   VERSION="$version" \
-  LICENSE_ENDPOINT="$official_license_endpoint" \
+  SUPABASE_URL="$official_supabase_url" \
+  ENTITLEMENT_URL="$official_entitlement_url" \
   LICENSE_PUBLISHABLE_KEY="$official_license_publishable_key" \
   bash scripts/build-app.sh
 
@@ -210,9 +212,14 @@ assert_release_app() {
     fi
   done
 
-  value="$(/usr/libexec/PlistBuddy -c 'Print :StupidMirrorLicenseEndpoint' "$info_plist" 2>/dev/null || true)"
-  if [ "$value" != "$official_license_endpoint" ]; then
-    echo "Release license endpoint mismatch." >&2
+  value="$(/usr/libexec/PlistBuddy -c 'Print :StupidMirrorSupabaseURL' "$info_plist" 2>/dev/null || true)"
+  if [ "$value" != "$official_supabase_url" ]; then
+    echo "Release Supabase URL mismatch." >&2
+    exit 1
+  fi
+  value="$(/usr/libexec/PlistBuddy -c 'Print :StupidMirrorEntitlementURL' "$info_plist" 2>/dev/null || true)"
+  if [ "$value" != "$official_entitlement_url" ]; then
+    echo "Release membership entitlement URL mismatch." >&2
     exit 1
   fi
   value="$(/usr/libexec/PlistBuddy -c 'Print :StupidMirrorLicensePublishableKey' "$info_plist" 2>/dev/null || true)"

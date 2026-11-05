@@ -33,7 +33,7 @@ StupidMirror 将真实的移动设备接入原生 macOS 工作台。通过 USB �
 
 同一个工作台也可以通过 **MCP** 交给 AI Agent：观察当前画面，用本地 OCR 或原生无障碍信息定位目标，执行操作，再检查结果。通过内置插件，可直接在 Codex 中查看手机实时画面，也可以使用原生 Mac 镜像窗口。
 
-**无需登录，即可镜像和控制一台设备。** 输入 SM- 激活码后可同时连接多台设备，无需登录。源码采用 PolyForm Noncommercial 许可证，商业用途需要单独授权，详见[许可证说明](#许可证)。
+**无需登录，即可镜像和控制一台设备。** 同时连接多台设备包含在 [iTool 年度会员](https://itool.tech/zh/pro?from=stupidmirror)中（¥99/年，含全部 iTool 产品），需要登录。源码采用 PolyForm Noncommercial 许可证，商业用途需要单独授权，详见[许可证说明](#许可证)。
 
 ## 支持 Codex
 
@@ -216,7 +216,7 @@ Android 操作 → Appium / UiAutomator2
 
 采集、播放和 OCR 均在本地完成。StupidMirror 不会自行将镜像内容上传到模型服务商。**外部 AI 客户端可以通过 MCP 获取截图和工具结果**；后续如何处理这些信息，取决于该客户端的账号、模型服务商和数据设置。
 
-账号登录与许可证校验会访问配置的 Supabase 服务，许可请求包含账号和激活信息，不包含镜像帧或控制输入。详见[隐私政策](PRIVACY.md)与[安全策略](SECURITY.md)。
+账号登录与会员校验会访问 itool.tech 和配置的 Supabase 服务，请求只包含账号令牌和产品名，不包含镜像帧或控制输入。详见[隐私政策](PRIVACY.md)与[安全策略](SECURITY.md)。
 
 ## 从源码构建
 
@@ -250,7 +250,7 @@ open dist/StupidMirror.app
 | [研究记录](docs/research.md) | 屏幕捕获与设备接入研究 |
 | [发布流程](RELEASING.md) | 签名、公证、固定应用身份与产物上传 |
 | [更新日志](CHANGELOG.md) | 版本历史 |
-| [账号许可](LICENSING.md) | 激活、账号迁移与许可服务实现 |
+| [会员说明](LICENSING.md) | iTool 会员、登录、离线使用与旧版许可服务 |
 
 ## Codex 插件完整指南
 
@@ -260,6 +260,6 @@ open dist/StupidMirror.app
 
 StupidMirror 以 **source-available（源码可用）** 形式采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 发布，允许许可证约定的非商业用途，不属于 OSI 认可的开源许可证。商业用途需要单独书面授权，详见[商业授权说明](COMMERCIAL-LICENSE.md)。
 
-当前应用在未激活时允许一个镜像会话和一个控制会话。需要同时连接多台设备时，直接输入[官方商店](https://wzyp.cn/item/exords)提供的 `SM-` 激活码即可，无需登录。账号登录仅用于按需恢复已有账号许可或绑定这台 Mac 的许可；不接受 iTool `IT-` 码。功能激活与商业授权是两件独立的事。
+应用无需登录即可使用一个镜像会话和一个控制会话。同时连接多台设备包含在 [iTool 年度会员](https://itool.tech/zh/pro?from=stupidmirror)中，¥99/年，含全部 iTool 产品：用同一个 iTool 账号登录后即可解锁。月度会员不包含 StupidMirror。会员与商业授权是两件独立的事。
 
 第三方组件仍遵循各自许可证，详见 [NOTICE](NOTICE)。

@@ -125,8 +125,8 @@
       "下载 macOS 版"
     ],
     [
-      "Buy activation code",
-      "购买激活码"
+      "iTool yearly membership · ¥99/year",
+      "iTool 年度会员 · ¥99/年"
     ],
     [
       "View source",
@@ -185,8 +185,8 @@
       "多台 iPhone"
     ],
     [
-      "Enter an SM- activation code to unlock multiple devices. No sign-in required.",
-      "输入 SM- 激活码即可解锁多设备功能，无需登录。"
+      "Included in the iTool yearly membership, ¥99/year, all iTool products. Sign in to mirror several devices at once; one device stays free without signing in.",
+      "已包含在 iTool 年度会员中（¥99/年，含全部 iTool 产品）。登录后即可同时镜像多台设备；单台设备无需登录，始终免费。"
     ],
     [
       "Native speed",
@@ -413,8 +413,8 @@
       "演示与多设备"
     ],
     [
-      "Standalone mirrors fit recording, streaming, and demos; an account-bound SM- license unlocks parallel iPhone workflows.",
-      "独立镜像窗口适合录屏、直播与演示；绑定到账号的 SM- 许可可并行管理多台 iPhone。"
+      "Standalone mirrors fit recording, streaming, and demos; the iTool yearly membership unlocks parallel iPhone workflows after sign-in.",
+      "独立镜像窗口适合录屏、直播与演示；登录 iTool 年度会员后可并行管理多台 iPhone。"
     ],
     [
       "Device-ratio windows",
@@ -505,8 +505,8 @@
       "不会。Codex 面板通过加密的本地 WebRTC 传输画面，没有云端中转；MCP Server 只监听本机；文字识别用 Apple Vision 在本地完成。"
     ],
     [
-      "One device can be mirrored and controlled without signing in. An SM- activation code unlocks several devices at once. The source is available under PolyForm Noncommercial, and commercial use needs separate authorization.",
-      "单台设备无需登录即可镜像和控制。SM- 激活码可以解锁多台设备同时使用。源码以 PolyForm Noncommercial 许可公开，商业使用需要另行授权。"
+      "One device can be mirrored and controlled without signing in. Several devices at once are included in the iTool yearly membership (¥99/year, all iTool products); sign in to unlock them. The source is available under PolyForm Noncommercial, and commercial use needs separate authorization.",
+      "单台设备无需登录即可镜像和控制。同时使用多台设备包含在 iTool 年度会员中（¥99/年，含全部 iTool 产品），登录后解锁。源码以 PolyForm Noncommercial 许可公开，商业使用需要另行授权。"
     ],
     [
       "A Mac with macOS 15 or newer and Xcode for iPhone or iOS Simulator support. Real iPhones need trust and Developer Mode. Both USB and Wi-Fi iPhone video require a signed screen agent prepared through Set Up This iPhone over USB; accessibility automation and compatibility control use that agent too.",
@@ -525,8 +525,8 @@
       "MCP 配置"
     ],
     [
-      "The live phone opens first, on the device Claude uses.",
-      "手机画面自动先打开，并跟随 Claude 正在用的设备。"
+      "Multiple devices now come with the iTool yearly membership.",
+      "多设备现已包含在 iTool 年度会员中。"
     ],
     [
       "Mirror a real iPhone over USB or Wi-Fi. Then hand it to Codex or Claude Code: the live screen opens beside the chat, and your agent can operate it.",
