@@ -33,7 +33,7 @@ StupidMirror brings real mobile devices into a native macOS workspace. View an i
 
 The same workspace is available to AI agents over **MCP**: observe the current screen, locate a target with local OCR or native accessibility, act on the device, and inspect the result. Watch the phone inside Codex with the bundled plugin, or use the native Mac mirror.
 
-**One device can be mirrored and controlled without signing in.** An SM- activation code unlocks simultaneous devices without signing in. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
+**One device can be mirrored and controlled without signing in.** Simultaneous devices are included in the [iTool yearly membership](https://itool.tech/pro?from=stupidmirror) (¥99/year, all iTool products) and need sign-in. The source is available under PolyForm Noncommercial; commercial use requires separate authorization. [License details](#license).
 
 ## Built for Codex
 
@@ -216,7 +216,7 @@ Android actions → Appium / UiAutomator2
 
 Capture, playback, and OCR run locally. StupidMirror does not independently upload mirrored content to a model provider. **An external AI client can receive screenshots and tool results through MCP**; its account, model provider, and data settings determine what happens to that information afterward.
 
-Account sign-in and license validation contact the configured Supabase service. License requests contain account/activation data, not mirrored frames or control input. See the [privacy policy](PRIVACY.md) and [security policy](SECURITY.md).
+Account sign-in and membership checks contact itool.tech and the configured Supabase service. These requests carry your account token and the product name, not mirrored frames or control input. See the [privacy policy](PRIVACY.md) and [security policy](SECURITY.md).
 
 ## Build from source
 
@@ -253,12 +253,12 @@ Device bugs are most useful with macOS/device OS versions, connection type, repr
 | [Research notes](docs/research.md) | Capture and device-integration research |
 | [Release process](RELEASING.md) | Signing, notarization, fixed app identity, and artifact upload |
 | [Changelog](CHANGELOG.md) | Release history |
-| [Account licensing](LICENSING.md) | Activation, account migration, and licensing infrastructure |
+| [Membership](LICENSING.md) | iTool membership, sign-in, offline use, and legacy licensing infrastructure |
 
 ## License
 
 StupidMirror is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE). It permits the noncommercial uses described in that license and is not an OSI-approved open-source license. Commercial use requires separate written authorization; see [commercial licensing](COMMERCIAL-LICENSE.md).
 
-The current app allows one mirror and one control session without activation. To unlock simultaneous devices, enter an `SM-` activation code from the [official store](https://wzyp.cn/item/exords). No sign-in is required. Account sign-in remains optional for restoring an existing account license or binding a Mac license. iTool `IT-` codes are not accepted. Feature activation and commercial authorization are separate matters.
+The app allows one mirror and one control session without signing in. Simultaneous devices are included in the [iTool yearly membership](https://itool.tech/pro?from=stupidmirror), ¥99/year for all iTool products: sign in with the same iTool account and StupidMirror unlocks them. A monthly membership does not include StupidMirror. Membership and commercial authorization are separate matters.
 
 Third-party components retain their own licenses. See [NOTICE](NOTICE).

@@ -289,7 +289,7 @@ struct DeviceDetailView: View {
 
     private var controlStatusLabel: String {
         if !store.canUseControl {
-            return store.t("control.state.activationRequired")
+            return store.t("control.state.membershipRequired")
         }
         switch controlSession.state {
         case .connecting:
@@ -678,7 +678,7 @@ struct DeviceActionDock: View {
             }
             .buttonStyle(PillButtonStyle(kind: .secondary))
             .disabled(!store.canAttemptConnection(session) || (store.canUseControl && session.device.udid == nil))
-            .help(store.t(store.canUseControl ? "detail.controlHelp" : "detail.controlActivationHelp"))
+            .help(store.t(store.canUseControl ? "detail.controlHelp" : "detail.controlMembershipHelp"))
 
             Button {
                 isLive ? store.stop(session) : store.start(session)

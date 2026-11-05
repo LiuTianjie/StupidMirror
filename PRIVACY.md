@@ -12,10 +12,11 @@ The app may process:
 - Optional Appium/WebDriverAgent control events such as taps, swipes, and typed
   text.
 - Local thumbnails used in the dashboard.
-- A random StupidMirror installation identifier and an activation receipt stored
-  in the macOS Keychain. Upgraded installations may retain unused legacy trial
-  timestamps. These values are not an iPhone UDID, Mac serial number, or
-  advertising identifier.
+- A membership cache in the macOS Keychain after a successful check: the
+  account user id, the membership end date and tier, and the server time of the
+  check. Signing out deletes it. Macs upgraded from 0.7.x may keep an unused
+  legacy installation identifier and activation receipt, which 0.8.0 never reads
+  or sends.
 - Optional Google, GitHub, or email sign-in through the shared iTool Supabase Auth project. The resulting
   session tokens and the account user id are stored in the macOS Keychain.
 
@@ -45,28 +46,14 @@ iOS control talks to WebDriverAgent through a local device tunnel. Android
 control talks to the configured Appium server URL. The default
 is `http://127.0.0.1:4723`.
 
-License activation, redeem, claim, and periodic validation send the random
-installation identifier, activation code (only while redeeming), activation
-receipt, app version, and — for buy/redeem/claim/account checks — the signed-in
-user's Supabase access token to the configured StupidMirror license endpoint
-hosted on Supabase. Google and GitHub only receive the OAuth sign-in; email/password stays with Supabase Auth. Screen
-frames, thumbnails, iPhone metadata, control events, and typed text are not
-included in license requests.
-
-An unclaimed Mac-bound Keychain receipt can keep paid features working for a
-limited grandfather period without signing in. After the license is claimed or
-redeemed onto an account, the account is the principal; signing out stops paid
-features on that Mac until the same account signs in again. Free one-device
-mirroring does not require a session. Activated installations can continue to
-work from a locally cached account or grandfathered receipt when the license
-endpoint is temporarily unavailable.
-
-The license endpoint also applies abuse rate limits using the request's network
-address. Before a rate-limit identifier reaches the licensing database, the Edge
-Function transforms it with a server-secret HMAC. The licensing tables never
-store a plaintext network address; their short-lived rate-limit buckets are
-eligible for bounded cleanup after two days. Supabase may separately process
-normal request metadata as the hosting provider.
+Membership checks send the signed-in user's Supabase access token and the
+product name `stupidmirror` to `https://itool.tech/api/membership/entitlement`,
+or, when that route is unavailable, to the iTool Supabase project's
+`itool_entitlement` function. The answer contains the membership tier and end
+dates. Google and GitHub only receive the OAuth sign-in; email/password stays
+with Supabase Auth. Screen frames, thumbnails, device metadata, control events,
+and typed text are never part of these requests. Free one-device use sends no
+membership request and needs no account.
 
 ## Permissions
 

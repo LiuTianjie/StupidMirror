@@ -7,571 +7,579 @@ import XCTest
 @MainActor
 final class LicenseManagerTests: XCTestCase {
     private let baseDate = Date(timeIntervalSince1970: 2_000_000_000)
-    private let receipt1 = "8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1"
-    private let receipt2 = "5e7dbd7e-6717-4cde-9db1-c8f910c5108e"
+    private let day: TimeInterval = 24 * 60 * 60
+    private let userID = UUID()
 
-    func testUnactivatedInstallAllowsOneDeviceAndOneControl() async throws {
-        let store = MemoryLicenseStore()
+    // MARK: Free path
+
+    func testSignedOutInstallKeepsFreeOneDevicePathWithoutAnyRequest() async {
+        let remote = FakeEntitlementRemote()
+        let authFlow = FakeLicenseAuthFlow(session: session())
         let manager = LicenseManager(
-            store: store,
-            remote: FakeLicenseRemote(),
-            clock: TestLicenseClock(now: baseDate)
+            cacheStore: MemoryEntitlementStore(),
+            remote: remote,
+            clock: TestLicenseClock(now: baseDate),
+            authStore: MemoryLicenseAuthStore(),
+            authFlow: authFlow
         )
 
         await manager.bootstrap()
+        manager.revalidate(.periodic)
+        manager.revalidate(.wake)
+        await manager.checkNow()
 
-        XCTAssertEqual(manager.state, .unlicensed)
+        XCTAssertEqual(manager.state, .signedOut)
+        XCTAssertEqual(manager.state.capabilities, .unactivated)
         XCTAssertEqual(manager.state.capabilities.maximumSimultaneousDevices, 1)
         XCTAssertEqual(manager.state.capabilities.maximumSimultaneousControls, 1)
         XCTAssertTrue(manager.state.capabilities.controlEnabled)
+        XCTAssertEqual(manager.membershipRequirement, .signIn)
+        let calls = await remote.callCount()
+        XCTAssertEqual(calls, 0)
+        let refreshes = await authFlow.refreshCount()
+        XCTAssertEqual(refreshes, 0)
     }
 
-    func testBootstrapRetriesAfterATemporaryKeychainFailure() async {
-        let store = FlakyLicenseStore(failuresRemaining: 1)
-        let manager = LicenseManager(
-            store: store,
-            remote: FakeLicenseRemote(),
-            clock: TestLicenseClock(now: baseDate)
-        )
-
-        await manager.bootstrap()
-        XCTAssertEqual(manager.state, .unavailable("temporary Keychain failure"))
-
-        await manager.bootstrap()
-        XCTAssertEqual(manager.state, .unlicensed)
-    }
-
-    func testLegacyTrialTimestampsDoNotRestrictMirroringCapabilities() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.trialStartedAt = baseDate
-        record.lastTrustedTime = baseDate.addingTimeInterval(10 * 365 * 24 * 60 * 60)
-        let store = MemoryLicenseStore(record: record)
-        let manager = LicenseManager(store: store, remote: FakeLicenseRemote())
+    func testStrayCacheWithoutSignInGrantsNothingAndIsCleared() async throws {
+        let store = MemoryEntitlementStore(cache: cache(checkedAt: baseDate))
+        let manager = makeManager(store: store, signedIn: false)
 
         await manager.bootstrap()
 
-        XCTAssertEqual(manager.state, .unlicensed)
-        XCTAssertEqual(manager.state.capabilities, .unactivated)
+        XCTAssertEqual(manager.state, .signedOut)
+        XCTAssertNil(try store.load())
     }
 
-    func testUnactivatedMirrorPolicyAllowsOnlyOneRequestedDevice() {
+    func testFreeCapabilitiesAllowOneDeviceAndOneControl() {
         let decision = LicenseCapabilityPolicy.mirrorStartDecision(
             capabilities: .unactivated,
             activeIDs: [],
             requestedIDs: ["iphone-a", "iphone-b"],
             preferredID: "iphone-b"
         )
-
         XCTAssertEqual(decision.allowedIDs, ["iphone-b"])
         XCTAssertEqual(decision.blockedIDs, ["iphone-a"])
-    }
 
-    func testUnactivatedMirrorPolicyBlocksSecondActiveDevice() {
-        let decision = LicenseCapabilityPolicy.mirrorStartDecision(
+        let second = LicenseCapabilityPolicy.mirrorStartDecision(
             capabilities: .unactivated,
             activeIDs: ["iphone-a"],
             requestedIDs: ["iphone-b"],
             preferredID: "iphone-b"
         )
+        XCTAssertTrue(second.allowedIDs.isEmpty)
+        XCTAssertEqual(second.blockedIDs, ["iphone-b"])
 
-        XCTAssertTrue(decision.allowedIDs.isEmpty)
-        XCTAssertEqual(decision.blockedIDs, ["iphone-b"])
+        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(capabilities: .unactivated, activeIDs: [], targetID: "a"))
+        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(capabilities: .unactivated, activeIDs: ["a"], targetID: "a"))
+        XCTAssertFalse(LicenseCapabilityPolicy.canStartControl(capabilities: .unactivated, activeIDs: ["a"], targetID: "b"))
     }
 
-    func testActivatedMirrorPolicyAllowsAllDevicesAndControl() {
+    func testMemberCapabilitiesAllowEveryDeviceAndControl() {
         let decision = LicenseCapabilityPolicy.mirrorStartDecision(
             capabilities: .activated,
             activeIDs: ["iphone-a"],
             requestedIDs: ["iphone-b", "iphone-c"],
             preferredID: nil
         )
-
         XCTAssertEqual(decision.allowedIDs, ["iphone-b", "iphone-c"])
         XCTAssertTrue(decision.blockedIDs.isEmpty)
-        XCTAssertTrue(LicenseCapabilities.activated.controlEnabled)
+        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(capabilities: .activated, activeIDs: ["a", "b"], targetID: "c"))
     }
 
-    func testUnactivatedControlPolicyAllowsFirstControlAndBlocksSecond() {
-        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(
-            capabilities: .unactivated,
-            activeIDs: [],
-            targetID: "iphone-a"
-        ))
-        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(
-            capabilities: .unactivated,
-            activeIDs: ["iphone-a"],
-            targetID: "iphone-a"
-        ))
-        XCTAssertFalse(LicenseCapabilityPolicy.canStartControl(
-            capabilities: .unactivated,
-            activeIDs: ["iphone-a"],
-            targetID: "iphone-b"
-        ))
-    }
+    // MARK: Online checks
 
-    func testActivatedControlPolicyAllowsMultipleControls() {
-        XCTAssertTrue(LicenseCapabilityPolicy.canStartControl(
-            capabilities: .activated,
-            activeIDs: ["iphone-a", "iphone-b"],
-            targetID: "iphone-c"
-        ))
-    }
-
-    func testActivationNormalizesCodeAndPersistsReceipt() async throws {
-        let remote = FakeLicenseRemote(
-            activation: LicenseActivation(receipt: receipt1, serverTime: baseDate)
-        )
-        let store = MemoryLicenseStore()
-        let manager = LicenseManager(
-            store: store,
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate)
-        )
-
-        try await manager.activate(code: " sm1-ab cd ")
-
-        let call = await remote.lastActivationCall()
-        XCTAssertEqual(call?.code, "SM1ABCD")
-        XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
-        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: baseDate))
-        XCTAssertEqual(manager.state.capabilities, .activated)
-        XCTAssertNil(manager.authSession)
-        XCTAssertNil(try store.load()?.claimDeadline)
-        XCTAssertFalse(manager.showsDashboardActivationEntry)
-        let redemption = await remote.lastRedeemCall()
-        XCTAssertNil(redemption)
-
-        let restored = LicenseManager(
-            store: store,
-            remote: FakeLicenseRemote(validationError: .rejected(code: "temporarily_unavailable", message: "offline")),
-            clock: TestLicenseClock(now: baseDate.addingTimeInterval(86_400))
-        )
-        await restored.bootstrap()
-        await restored.waitForBackgroundValidation()
-        XCTAssertNil(restored.authSession)
-        XCTAssertEqual(restored.state.capabilities, .activated)
-    }
-
-    func testActivatedReceiptAllowsOfflineStartWhileValidationFails() async {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        record.lastValidatedAt = nil
-        let remote = FakeLicenseRemote(validationError: .rejected(code: "temporarily_unavailable", message: "offline"))
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(record: record),
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate)
-        )
-
-        await manager.bootstrap()
-        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: nil))
-    }
-
-    func testBackgroundValidationRequestsAreCoalesced() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        let remote = FakeLicenseRemote(validationDelayNanoseconds: 100_000_000)
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(record: record),
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate)
-        )
-
-        await manager.bootstrap()
-        manager.validateInBackgroundIfNeeded(force: true)
-        manager.validateInBackgroundIfNeeded(force: true)
-        try await Task.sleep(nanoseconds: 20_000_000)
-
-        let callCount = await remote.validationCallCount()
-        XCTAssertEqual(callCount, 1)
-        manager.cancel()
-    }
-
-    func testInvalidReceiptClearsOfflineEntitlement() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.trialStartedAt = baseDate
-        record.activationReceipt = receipt1
-        let store = MemoryLicenseStore(record: record)
-        let remote = FakeLicenseRemote(
-            validationError: .rejected(code: "invalid_receipt", message: "Invalid receipt")
-        )
-        let manager = LicenseManager(
-            store: store,
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate)
-        )
+    func testYearlyMemberGetsMultipleDevicesAndCacheIsSaved() async throws {
+        let store = MemoryEntitlementStore()
+        let remote = FakeEntitlementRemote(results: [.success(entitlement(active: true))])
+        let manager = makeManager(store: store, remote: remote)
 
         await manager.bootstrap()
         await manager.waitForBackgroundValidation()
 
-        XCTAssertNil(try store.load()?.activationReceipt)
-        XCTAssertEqual(manager.state, .unlicensed)
-    }
-
-    func testMalformedLocalReceiptIsInvalidatedBeforeItCanAuthorizeAStart() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.trialStartedAt = baseDate
-        record.activationReceipt = "forged-or-damaged"
-        record.lastValidatedAt = baseDate
-        let store = MemoryLicenseStore(record: record)
-        let remote = FakeLicenseRemote()
-        let manager = LicenseManager(
-            store: store,
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate)
-        )
-
-        await manager.bootstrap()
-
-        XCTAssertEqual(manager.state, .unlicensed)
-        XCTAssertNil(try store.load()?.activationReceipt)
-        XCTAssertNil(try store.load()?.lastValidatedAt)
-        let validationCallCount = await remote.validationCallCount()
-        XCTAssertEqual(validationCallCount, 0)
-    }
-
-    func testFutureValidationTimestampCannotSuppressBackgroundValidation() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.trialStartedAt = baseDate
-        record.activationReceipt = receipt1
-        record.lastValidatedAt = baseDate.addingTimeInterval(365 * 24 * 60 * 60)
-        let store = MemoryLicenseStore(record: record)
-        let remote = FakeLicenseRemote(
-            validationError: .rejected(code: "invalid_receipt", message: "Invalid receipt")
-        )
-        let manager = LicenseManager(store: store, remote: remote, clock: TestLicenseClock(now: baseDate))
-
-        await manager.bootstrap()
-        await manager.waitForBackgroundValidation()
-
-        let validationCallCount = await remote.validationCallCount()
-        XCTAssertEqual(validationCallCount, 1)
-        XCTAssertNil(try store.load()?.activationReceipt)
-    }
-
-    func testStaleValidationCannotRevokeANewActivationReceipt() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        let store = MemoryLicenseStore(record: record)
-        let remote = FakeLicenseRemote(
-            activation: LicenseActivation(receipt: receipt2, serverTime: baseDate),
-            validationError: .rejected(code: "invalid_receipt", message: "Old receipt"),
-            validationDelayNanoseconds: 50_000_000
-        )
-        let manager = LicenseManager(store: store, remote: remote, clock: TestLicenseClock(now: baseDate))
-
-        await manager.bootstrap()
-        try await manager.activate(code: "SM1-ABCD")
-        await manager.waitForBackgroundValidation()
-
-        XCTAssertEqual(try store.load()?.activationReceipt, receipt2)
-        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: baseDate))
-    }
-
-    func testServerTimeIsBoundedForValidationScheduling() async throws {
-        let farFuture = baseDate.addingTimeInterval(365 * 24 * 60 * 60)
-        let store = MemoryLicenseStore()
-        let manager = LicenseManager(
-            store: store,
-            remote: FakeLicenseRemote(
-                activation: LicenseActivation(receipt: receipt1, serverTime: farFuture)
-            ),
-            clock: TestLicenseClock(now: baseDate)
-        )
-
-        try await manager.activate(code: "SM1-ABCD")
-
-        let record = try XCTUnwrap(store.load())
-        let boundedTime = baseDate.addingTimeInterval(LicenseManager.maximumServerClockSkew)
-        XCTAssertEqual(record.lastValidatedAt, boundedTime)
-        XCTAssertEqual(record.lastTrustedTime, boundedTime)
-    }
-
-    func testCodeNormalizationRemovesSeparatorsAndPreservesLettersAndDigits() {
-        XCTAssertEqual(LicenseManager.normalize(code: " sm1-a2_c 3 "), "SM1A2C3")
-    }
-
-    func testReceiptFormatMatchesServerUUIDContract() {
-        XCTAssertTrue(LicenseReceiptFormat.isValid(receipt1))
-        XCTAssertTrue(LicenseReceiptFormat.isValid(receipt2.uppercased()))
-        XCTAssertFalse(LicenseReceiptFormat.isValid("forged-or-damaged"))
-        XCTAssertFalse(LicenseReceiptFormat.isValid("00000000-0000-0000-0000-000000000000"))
-        XCTAssertFalse(LicenseReceiptFormat.isValid("8dc53b7d1a3c4fc8a201f70c3d88b2e1"))
-    }
-
-    func testLoggedOutInstallKeepsFreeOneDeviceMirror() async {
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(),
-            remote: FakeLicenseRemote(),
-            clock: TestLicenseClock(now: baseDate)
-        )
-        await manager.bootstrap()
-        XCTAssertNil(manager.authSession)
-        XCTAssertEqual(manager.state, .unlicensed)
-        XCTAssertEqual(manager.state.capabilities.maximumSimultaneousDevices, 1)
-        XCTAssertTrue(manager.state.capabilities.controlEnabled)
-    }
-
-    func testOldReceiptIsHonoredWithoutLoginUntilClaim() async {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        record.licensePrincipal = .installation
-        record.claimDeadline = baseDate.addingTimeInterval(86_400)
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(record: record),
-            remote: FakeLicenseRemote(
-                validation: LicenseValidation(
-                    isValid: true,
-                    refreshedReceipt: receipt1,
-                    serverTime: baseDate,
-                    principal: .installation,
-                    needsClaim: true,
-                    claimDeadline: baseDate.addingTimeInterval(86_400)
-                )
-            ),
-            clock: TestLicenseClock(now: baseDate)
-        )
-        await manager.bootstrap()
-        XCTAssertNil(manager.authSession)
-        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: nil))
-        XCTAssertTrue(manager.needsClaim)
-        XCTAssertEqual(manager.state.capabilities, .activated)
-    }
-
-    func testHistoricalClaimDeadlineDoesNotExpireInstallationLicense() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        record.licensePrincipal = .installation
-        record.claimDeadline = baseDate.addingTimeInterval(-1)
-        let store = MemoryLicenseStore(record: record)
-        let manager = LicenseManager(
-            store: store,
-            remote: FakeLicenseRemote(),
-            clock: TestLicenseClock(now: baseDate)
-        )
-        await manager.bootstrap()
-        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: nil))
-        XCTAssertTrue(manager.needsClaim)
-        XCTAssertEqual(manager.state.capabilities, .activated)
-        XCTAssertNotNil(manager.installationID)
-        XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
-    }
-
-    func testRedeemRequiresSignIn() async {
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(),
-            remote: FakeLicenseRemote(),
-            clock: TestLicenseClock(now: baseDate)
-        )
-        do {
-            try await manager.redeem(code: "SM-2345-6789-ABCD-EFGH-JKLM-NPQR")
-            XCTFail("Expected loginRequired")
-        } catch LicenseServiceError.loginRequired {
-            // expected
-        } catch {
-            XCTFail("Unexpected error: \(error)")
+        guard case let .member(status) = manager.state else {
+            return XCTFail("Expected member, got \(manager.state)")
         }
+        XCTAssertEqual(status.tier, .yearly)
+        XCTAssertEqual(manager.state.capabilities, .activated)
+        let saved = try XCTUnwrap(store.load())
+        XCTAssertEqual(saved.userID, userID)
+        XCTAssertEqual(saved.checkedAt, baseDate)
+        XCTAssertEqual(saved.validUntil, baseDate.addingTimeInterval(300 * day))
     }
 
-    func testExplicitServerClaimRequirementStillRestrictsLicense() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        let store = MemoryLicenseStore(record: record)
-        let manager = LicenseManager(
-            store: store,
-            remote: FakeLicenseRemote(validationError: .rejected(code: "claim_required", message: "Claim required")),
-            clock: TestLicenseClock(now: baseDate)
-        )
+    func testMonthlyMemberIsSignedInButNotEntitled() async throws {
+        let store = MemoryEntitlementStore()
+        let remote = FakeEntitlementRemote(results: [
+            .success(entitlement(active: false, tier: .monthly, openEnded: true))
+        ])
+        let manager = makeManager(store: store, remote: remote)
+
         await manager.bootstrap()
         await manager.waitForBackgroundValidation()
-        manager.checkpointTrustedTime()
-        XCTAssertEqual(manager.state, .unlicensed)
-        XCTAssertEqual(try store.load()?.activationReceipt, receipt1)
-        XCTAssertEqual(try store.load()?.accountClaimRequired, true)
-    }
 
-    func testRedeemToAccountPersistsAccountPrincipal() async throws {
-        let session = LicenseAuthSession(
-            userID: UUID(),
-            accessToken: "access",
-            refreshToken: "refresh",
-            expiresAt: baseDate.addingTimeInterval(3_600),
-            email: "alex@example.com",
-            provider: "google"
-        )
-        let remote = FakeLicenseRemote(
-            redeemResult: LicenseActivation(receipt: receipt2, serverTime: baseDate)
-        )
-        let store = MemoryLicenseStore()
-        let manager = LicenseManager(
-            store: store,
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate),
-            authStore: MemoryLicenseAuthStore(session: session),
-            authFlow: FakeLicenseAuthFlow(session: session)
-        )
-        try await manager.activate(code: " sm-2345 ")
-        let installationActivation = await remote.lastActivationCall()
-        XCTAssertNil(installationActivation)
-        XCTAssertEqual(try store.load()?.activationReceipt, receipt2)
-        XCTAssertEqual(try store.load()?.licensePrincipal, .account)
-        XCTAssertEqual(manager.principal, .account)
-        XCTAssertFalse(manager.needsClaim)
-        XCTAssertEqual(manager.state, .licensed(lastValidatedAt: baseDate))
-        let redeem = await remote.lastRedeemCall()
-        XCTAssertEqual(redeem?.code, "SM2345")
-    }
-
-    func testClaimBindsOldReceiptToSignedInAccount() async throws {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        record.licensePrincipal = .installation
-        let session = LicenseAuthSession(
-            userID: UUID(),
-            accessToken: "access",
-            refreshToken: "refresh",
-            expiresAt: baseDate.addingTimeInterval(3_600)
-        )
-        let remote = FakeLicenseRemote(
-            claimResult: LicenseActivation(receipt: receipt1, serverTime: baseDate)
-        )
-        let store = MemoryLicenseStore(record: record)
-        let manager = LicenseManager(
-            store: store,
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate),
-            authStore: MemoryLicenseAuthStore(session: session),
-            authFlow: FakeLicenseAuthFlow(session: session)
-        )
-        try await manager.claimFromReceipt()
-        XCTAssertEqual(try store.load()?.licensePrincipal, .account)
-        XCTAssertEqual(try store.load()?.claimedUserID, session.userID)
-        XCTAssertFalse(manager.needsClaim)
-        let claims = await remote.claimCallCount()
-        XCTAssertEqual(claims, 1)
-    }
-
-    func testDoubleEntitlementRedeemIsRejected() async {
-        let session = LicenseAuthSession(
-            userID: UUID(),
-            accessToken: "access",
-            refreshToken: "refresh",
-            expiresAt: baseDate.addingTimeInterval(3_600)
-        )
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(),
-            remote: FakeLicenseRemote(
-                redeemError: .rejected(code: "already_licensed", message: "already")
-            ),
-            clock: TestLicenseClock(now: baseDate),
-            authStore: MemoryLicenseAuthStore(session: session),
-            authFlow: FakeLicenseAuthFlow(session: session)
-        )
-        do {
-            try await manager.redeem(code: "SM2345")
-            XCTFail("Expected already_licensed")
-        } catch let LicenseServiceError.rejected(code, _) {
-            XCTAssertEqual(code, "already_licensed")
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-        XCTAssertEqual(manager.state, .unlicensed)
-    }
-
-    func testClaimedReceiptWithoutSessionDoesNotGrantPaidFeatures() async {
-        var record = LocalLicenseRecord(installationID: UUID())
-        record.activationReceipt = receipt1
-        record.licensePrincipal = .account
-        record.claimedUserID = UUID()
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(record: record),
-            remote: FakeLicenseRemote(),
-            clock: TestLicenseClock(now: baseDate)
-        )
-        await manager.bootstrap()
-        XCTAssertEqual(manager.state, .unlicensed)
+        XCTAssertEqual(manager.state, .notMember(MembershipStatus(
+            tier: .monthly,
+            validUntil: nil,
+            memberUntil: baseDate.addingTimeInterval(20 * day)
+        )))
         XCTAssertEqual(manager.state.capabilities, .unactivated)
+        XCTAssertEqual(manager.membershipRequirement, .yearly)
+        XCTAssertNil(try store.load())
     }
 
-    func testIToolCodesAreRejectedWithoutRemoteCall() async {
-        let remote = FakeLicenseRemote()
-        let manager = LicenseManager(
-            store: MemoryLicenseStore(),
-            remote: remote,
-            clock: TestLicenseClock(now: baseDate)
-        )
-        do {
-            try await manager.activate(code: "IT-PRO-CODE")
-            XCTFail("Expected iTool rejection")
-        } catch LicenseServiceError.iToolCodeNotAccepted {
-            // expected
-        } catch {
-            XCTFail("Unexpected error: \(error)")
+    func testExplicitInactiveAnswerRevokesACachedMemberImmediately() async throws {
+        let store = MemoryEntitlementStore(cache: cache(checkedAt: baseDate.addingTimeInterval(-1 * 60 * 60)))
+        let remote = FakeEntitlementRemote(results: [.success(entitlement(active: false, tier: .free, openEnded: true))])
+        let manager = makeManager(store: store, remote: remote)
+
+        await manager.bootstrap()
+        XCTAssertTrue(manager.state.isEntitled, "A fresh cache starts as member before the check finishes")
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertEqual(manager.state.capabilities, .unactivated)
+        guard case .notMember = manager.state else {
+            return XCTFail("Expected notMember, got \(manager.state)")
         }
-        let activationCall = await remote.lastActivationCall()
-        XCTAssertNil(activationCall)
+        XCTAssertNil(try store.load())
+    }
+
+    func testActiveAnswerWithPastValidUntilIsNotEntitled() async {
+        let remote = FakeEntitlementRemote(results: [
+            .success(entitlement(active: true, validUntil: baseDate.addingTimeInterval(-60)))
+        ])
+        let manager = makeManager(remote: remote)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertFalse(manager.state.isEntitled)
+    }
+
+    func testOpenEndedGrantIsEntitledAndCachedWithoutEnd() async throws {
+        let store = MemoryEntitlementStore()
+        let remote = FakeEntitlementRemote(results: [.success(entitlement(active: true, openEnded: true))])
+        let manager = makeManager(store: store, remote: remote)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertTrue(manager.state.isEntitled)
+        XCTAssertNil(try XCTUnwrap(store.load()).validUntil)
+    }
+
+    // MARK: Offline window
+
+    func testCachedMemberWorksOfflineWithinSevenDays() async {
+        let checkedAt = baseDate.addingTimeInterval(-6 * day)
+        let remote = FakeEntitlementRemote(results: [.failure(.temporarilyUnavailable)])
+        let manager = makeManager(
+            store: MemoryEntitlementStore(cache: cache(checkedAt: checkedAt)),
+            remote: remote
+        )
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertTrue(manager.state.isEntitled)
+        XCTAssertTrue(manager.lastCheckFailed)
+        let calls = await remote.callCount()
+        XCTAssertEqual(calls, 1, "Launch always revalidates")
+    }
+
+    func testOfflineWindowEndsAfterSevenDays() async {
+        let checkedAt = baseDate.addingTimeInterval(-7 * day - 60)
+        let remote = FakeEntitlementRemote(results: [.failure(.temporarilyUnavailable)])
+        let manager = makeManager(
+            store: MemoryEntitlementStore(cache: cache(checkedAt: checkedAt)),
+            remote: remote
+        )
+
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .checking)
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertEqual(manager.state, .unverified)
+        XCTAssertEqual(manager.state.capabilities, .unactivated)
+        XCTAssertEqual(manager.membershipRequirement, .verification)
+    }
+
+    func testRunningMemberLosesMultiDeviceWhenOfflineWindowRunsOut() async {
+        let clock = TestLicenseClock(now: baseDate)
+        let remote = FakeEntitlementRemote(results: [
+            .success(entitlement(active: true)),
+            .failure(.temporarilyUnavailable)
+        ])
+        let manager = makeManager(remote: remote, clock: clock)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        XCTAssertTrue(manager.state.isEntitled)
+
+        clock.set(baseDate.addingTimeInterval(6 * day))
+        manager.reevaluateCachedState()
+        XCTAssertTrue(manager.state.isEntitled)
+
+        clock.set(baseDate.addingTimeInterval(7 * day + 1))
+        manager.revalidate(.periodic)
+        XCTAssertEqual(manager.state, .unverified, "The cache stops granting before the network answers")
+        await manager.waitForBackgroundValidation()
+        XCTAssertEqual(manager.state, .unverified)
+    }
+
+    func testOfflineCacheNeverOutlivesValidUntil() async {
+        let checkedAt = baseDate.addingTimeInterval(-1 * day)
+        let staleCache = cache(checkedAt: checkedAt, validUntil: baseDate.addingTimeInterval(-60))
+        let remote = FakeEntitlementRemote(results: [.failure(.temporarilyUnavailable)])
+        let manager = makeManager(store: MemoryEntitlementStore(cache: staleCache), remote: remote)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertFalse(manager.state.isEntitled)
+    }
+
+    func testClockRollbackRequiresAFreshCheck() async {
+        // The last server time is two days after the Mac's clock.
+        let checkedAt = baseDate.addingTimeInterval(2 * day)
+        let remote = FakeEntitlementRemote(results: [.failure(.temporarilyUnavailable)])
+        let manager = makeManager(
+            store: MemoryEntitlementStore(cache: cache(checkedAt: checkedAt)),
+            remote: remote
+        )
+
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .checking)
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertEqual(manager.state, .unverified)
+    }
+
+    func testSmallClockSkewIsTolerated() {
+        let entry = cache(checkedAt: baseDate.addingTimeInterval(60))
+        XCTAssertTrue(entry.isUsable(
+            for: userID,
+            now: baseDate,
+            offlineWindow: LicenseManager.offlineWindow,
+            clockTolerance: LicenseManager.clockTolerance
+        ))
+        XCTAssertFalse(entry.isUsable(
+            for: UUID(),
+            now: baseDate,
+            offlineWindow: LicenseManager.offlineWindow,
+            clockTolerance: LicenseManager.clockTolerance
+        ), "A cache belongs to one account")
+    }
+
+    func testCacheForAnotherAccountIsDiscarded() async throws {
+        let store = MemoryEntitlementStore(cache: EntitlementCache(
+            userID: UUID(),
+            entitlement: entitlement(active: true)
+        ))
+        let remote = FakeEntitlementRemote(results: [.failure(.temporarilyUnavailable)])
+        let manager = makeManager(store: store, remote: remote)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertFalse(manager.state.isEntitled)
+        XCTAssertNil(try store.load())
+    }
+
+    // MARK: Token refresh
+
+    func testLoginRequiredRefreshesTokenAndRetriesOnce() async {
+        let remote = FakeEntitlementRemote(results: [
+            .failure(.loginRequired),
+            .success(entitlement(active: true))
+        ])
+        let authFlow = FakeLicenseAuthFlow(session: session(), refreshedToken: "fresh-token")
+        let manager = makeManager(remote: remote, authFlow: authFlow)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertTrue(manager.state.isEntitled)
+        let tokens = await remote.tokens()
+        XCTAssertEqual(tokens, ["token", "fresh-token"])
+        let refreshes = await authFlow.refreshCount()
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertEqual(manager.authSession?.accessToken, "fresh-token")
+    }
+
+    func testSecondLoginRequiredSignsOutAndClearsCache() async throws {
+        let store = MemoryEntitlementStore(cache: cache(checkedAt: baseDate.addingTimeInterval(-60)))
+        let authStore = MemoryLicenseAuthStore(session: session())
+        let remote = FakeEntitlementRemote(results: [.failure(.loginRequired), .failure(.loginRequired)])
+        let manager = makeManager(store: store, remote: remote, authStore: authStore)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertEqual(manager.state, .signedOut)
+        XCTAssertNil(manager.authSession)
+        XCTAssertNil(try authStore.load())
+        XCTAssertNil(try store.load())
+        let calls = await remote.callCount()
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testRefusedRefreshTokenSignsOut() async {
+        let remote = FakeEntitlementRemote(results: [.failure(.loginRequired)])
+        let authFlow = FakeLicenseAuthFlow(session: session(), refreshError: LicenseAuthError.rejected("revoked"))
+        let manager = makeManager(remote: remote, authFlow: authFlow)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertEqual(manager.state, .signedOut)
+    }
+
+    func testRefreshOutageKeepsTheCachedMember() async {
+        let expired = session(expiresAt: Date().addingTimeInterval(-60))
+        let remote = FakeEntitlementRemote()
+        let authFlow = FakeLicenseAuthFlow(session: expired, refreshError: MembershipCheckError.temporarilyUnavailable)
+        let manager = makeManager(
+            store: MemoryEntitlementStore(cache: cache(checkedAt: baseDate.addingTimeInterval(-day))),
+            remote: remote,
+            authStore: MemoryLicenseAuthStore(session: expired),
+            authFlow: authFlow
+        )
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertTrue(manager.state.isEntitled)
+        XCTAssertNotNil(manager.authSession)
+        let calls = await remote.callCount()
+        XCTAssertEqual(calls, 0)
+    }
+
+    // MARK: Sign-in and sign-out
+
+    func testSignInChecksEntitlementBeforeReturning() async {
+        let remote = FakeEntitlementRemote(results: [.success(entitlement(active: true))])
+        let manager = makeManager(remote: remote, authStore: MemoryLicenseAuthStore())
+
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .signedOut)
+        try? await manager.signIn(provider: .github)
+
+        XCTAssertTrue(manager.state.isEntitled)
+    }
+
+    func testSignOutClearsSessionAndCache() async throws {
+        let store = MemoryEntitlementStore()
+        let authStore = MemoryLicenseAuthStore(session: session())
+        let remote = FakeEntitlementRemote(results: [.success(entitlement(active: true))])
+        let manager = makeManager(store: store, remote: remote, authStore: authStore)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        XCTAssertNotNil(try store.load())
+
+        await manager.signOut()
+
+        XCTAssertEqual(manager.state, .signedOut)
+        XCTAssertNil(try store.load())
+        XCTAssertNil(try authStore.load())
+    }
+
+    // MARK: Revalidation triggers
+
+    func testActivationDoesNotRecheckAFreshMember() async {
+        let clock = TestLicenseClock(now: baseDate)
+        let remote = FakeEntitlementRemote(results: [.success(entitlement(active: true))])
+        let manager = makeManager(remote: remote, clock: clock)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        clock.set(baseDate.addingTimeInterval(60 * 60))
+        manager.revalidate(.activation)
+        manager.revalidate(.periodic)
+        await manager.waitForBackgroundValidation()
+
+        let calls = await remote.callCount()
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testActivationRechecksANonMemberSoAPaymentIsPickedUp() async {
+        let clock = TestLicenseClock(now: baseDate)
+        let remote = FakeEntitlementRemote(results: [
+            .success(entitlement(active: false, tier: .free, openEnded: true)),
+            .success(entitlement(active: true))
+        ])
+        let manager = makeManager(remote: remote, clock: clock)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        XCTAssertFalse(manager.state.isEntitled)
+
+        clock.set(baseDate.addingTimeInterval(5 * 60))
+        manager.revalidate(.activation)
+        await manager.waitForBackgroundValidation()
+
+        XCTAssertTrue(manager.state.isEntitled)
+    }
+
+    func testAutomaticChecksAreSpacedButTheRefreshButtonIsNot() async {
+        let clock = TestLicenseClock(now: baseDate)
+        let remote = FakeEntitlementRemote(results: Array(
+            repeating: .success(entitlement(active: false, tier: .free, openEnded: true)),
+            count: 4
+        ))
+        let manager = makeManager(remote: remote, clock: clock)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        clock.set(baseDate.addingTimeInterval(5))
+        manager.revalidate(.activation)
+        manager.revalidate(.wake)
+        manager.revalidate(.network)
+        await manager.waitForBackgroundValidation()
+        var calls = await remote.callCount()
+        XCTAssertEqual(calls, 1)
+
+        await manager.checkNow()
+        calls = await remote.callCount()
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testDailyPeriodicRecheck() async {
+        let clock = TestLicenseClock(now: baseDate)
+        let remote = FakeEntitlementRemote(results: [
+            .success(entitlement(active: true)),
+            .success(entitlement(active: true, serverTime: baseDate.addingTimeInterval(day + 60)))
+        ])
+        let manager = makeManager(remote: remote, clock: clock)
+
+        await manager.bootstrap()
+        await manager.waitForBackgroundValidation()
+        clock.set(baseDate.addingTimeInterval(day + 60))
+        manager.revalidate(.periodic)
+        await manager.waitForBackgroundValidation()
+
+        let calls = await remote.callCount()
+        XCTAssertEqual(calls, 2)
+        XCTAssertTrue(manager.state.isEntitled)
+    }
+
+    func testBootstrapRetriesAfterATemporaryKeychainFailure() async {
+        let store = FlakyEntitlementStore(failuresRemaining: 1)
+        let manager = makeManager(store: store, signedIn: false)
+
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .unavailable("temporary Keychain failure"))
+        XCTAssertEqual(manager.state.capabilities, .unactivated)
+
+        await manager.bootstrap()
+        XCTAssertEqual(manager.state, .signedOut)
     }
 
     func testReleaseCompatibleKeychainQueryIsNonInteractiveAndDoesNotRequireAccessGroupEntitlements() {
-        let identity = KeychainLicenseStore.itemIdentity
+        let identity = KeychainEntitlementStore.itemIdentity
         XCTAssertNil(identity[kSecUseDataProtectionKeychain as String])
         XCTAssertNil(identity[kSecAttrAccessible as String])
         XCTAssertNil(identity[kSecAttrSynchronizable as String])
 
-        let query = KeychainLicenseStore.nonInteractiveQuery
+        let query = KeychainEntitlementStore.nonInteractiveQuery
         let context = query[kSecUseAuthenticationContext as String] as? LAContext
         XCTAssertEqual(context?.interactionNotAllowed, true)
     }
+
+    // MARK: Helpers
+
+    private func session(token: String = "token", expiresAt: Date? = nil) -> LicenseAuthSession {
+        LicenseAuthSession(
+            userID: userID,
+            accessToken: token,
+            refreshToken: "refresh",
+            expiresAt: expiresAt ?? Date().addingTimeInterval(3_600),
+            email: "name@example.com",
+            provider: "github"
+        )
+    }
+
+    private func entitlement(
+        active: Bool,
+        tier: MembershipTier = .yearly,
+        validUntil: Date? = nil,
+        openEnded: Bool = false,
+        serverTime: Date? = nil
+    ) -> MembershipEntitlement {
+        let until: Date? = openEnded ? nil : (validUntil ?? baseDate.addingTimeInterval(300 * day))
+        return MembershipEntitlement(
+            active: active,
+            tier: tier,
+            validUntil: until,
+            memberUntil: tier == .free ? nil : baseDate.addingTimeInterval(tier == .monthly ? 20 * day : 300 * day),
+            yearlyUntil: tier == .yearly ? until : nil,
+            serverTime: serverTime ?? baseDate
+        )
+    }
+
+    private func cache(checkedAt: Date, validUntil: Date? = nil) -> EntitlementCache {
+        EntitlementCache(userID: userID, entitlement: MembershipEntitlement(
+            active: true,
+            tier: .yearly,
+            validUntil: validUntil ?? checkedAt.addingTimeInterval(300 * day),
+            memberUntil: nil,
+            yearlyUntil: nil,
+            serverTime: checkedAt
+        ))
+    }
+
+    private func makeManager(
+        store: any EntitlementCacheStoring = MemoryEntitlementStore(),
+        remote: FakeEntitlementRemote = FakeEntitlementRemote(),
+        clock: TestLicenseClock? = nil,
+        authStore: MemoryLicenseAuthStore? = nil,
+        signedIn: Bool = true,
+        authFlow: FakeLicenseAuthFlow? = nil
+    ) -> LicenseManager {
+        let initialSession: LicenseAuthSession? = signedIn ? self.session() : nil
+        return LicenseManager(
+            cacheStore: store,
+            remote: remote,
+            clock: clock ?? TestLicenseClock(now: baseDate),
+            authStore: authStore ?? MemoryLicenseAuthStore(session: initialSession),
+            authFlow: authFlow ?? FakeLicenseAuthFlow(session: self.session())
+        )
+    }
 }
 
-private final class MemoryLicenseStore: LicenseRecordStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var record: LocalLicenseRecord?
-
-    init(record: LocalLicenseRecord? = nil) {
-        self.record = record
-    }
-
-    func load() throws -> LocalLicenseRecord? {
-        lock.lock()
-        defer { lock.unlock() }
-        return record
-    }
-
-    func save(_ record: LocalLicenseRecord) throws {
-        lock.lock()
-        self.record = record
-        lock.unlock()
-    }
-}
-
-private final class FlakyLicenseStore: LicenseRecordStoring, @unchecked Sendable {
+private final class FlakyEntitlementStore: EntitlementCacheStoring, @unchecked Sendable {
     private let lock = NSLock()
     private var failuresRemaining: Int
-    private var record: LocalLicenseRecord?
+    private var cache: EntitlementCache?
 
     init(failuresRemaining: Int) {
         self.failuresRemaining = failuresRemaining
     }
 
-    func load() throws -> LocalLicenseRecord? {
+    func load() throws -> EntitlementCache? {
         lock.lock()
         defer { lock.unlock() }
         if failuresRemaining > 0 {
             failuresRemaining -= 1
             throw LicenseServiceError.storage("temporary Keychain failure")
         }
-        return record
+        return cache
     }
 
-    func save(_ record: LocalLicenseRecord) throws {
+    func save(_ cache: EntitlementCache) throws {
         lock.lock()
-        self.record = record
+        self.cache = cache
+        lock.unlock()
+    }
+
+    func clear() throws {
+        lock.lock()
+        cache = nil
         lock.unlock()
     }
 }
 
-private final class TestLicenseClock: LicenseClock, @unchecked Sendable {
+final class TestLicenseClock: LicenseClock, @unchecked Sendable {
     private let lock = NSLock()
     private var value: Date
 
@@ -592,142 +600,61 @@ private final class TestLicenseClock: LicenseClock, @unchecked Sendable {
     }
 }
 
-private actor FakeLicenseRemote: LicenseRemoteServicing {
-    struct ActivationCall: Sendable {
-        let code: String
-        let installationID: UUID
+actor FakeEntitlementRemote: MembershipEntitlementServicing {
+    private var results: [Result<MembershipEntitlement, MembershipCheckError>]
+    private var receivedTokens: [String] = []
+
+    init(results: [Result<MembershipEntitlement, MembershipCheckError>] = []) {
+        self.results = results
     }
 
-    private let activation: LicenseActivation
-    private let validation: LicenseValidation
-    private let redeemResult: LicenseActivation
-    private let claimResult: LicenseActivation
-    private let accountValidation: LicenseValidation
-    private let activationError: LicenseServiceError?
-    private let validationError: LicenseServiceError?
-    private let redeemError: LicenseServiceError?
-    private let claimError: LicenseServiceError?
-    private let accountValidationError: LicenseServiceError?
-    private let validationDelayNanoseconds: UInt64
-    private var activationCalls: [ActivationCall] = []
-    private var redeemCalls: [ActivationCall] = []
-    private var claimCalls = 0
-    private var validationCalls = 0
-    private var accountValidationCalls = 0
-
-    init(
-        activation: LicenseActivation = LicenseActivation(
-            receipt: "8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1",
-            serverTime: Date(timeIntervalSince1970: 2_000_000_000)
-        ),
-        validation: LicenseValidation = LicenseValidation(
-            isValid: true,
-            refreshedReceipt: nil,
-            serverTime: Date(timeIntervalSince1970: 2_000_000_000),
-            principal: .installation,
-            needsClaim: true
-        ),
-        redeemResult: LicenseActivation? = nil,
-        claimResult: LicenseActivation? = nil,
-        accountValidation: LicenseValidation? = nil,
-        activationError: LicenseServiceError? = nil,
-        validationError: LicenseServiceError? = nil,
-        redeemError: LicenseServiceError? = nil,
-        claimError: LicenseServiceError? = nil,
-        accountValidationError: LicenseServiceError? = nil,
-        validationDelayNanoseconds: UInt64 = 0
-    ) {
-        self.activation = activation
-        self.validation = validation
-        self.redeemResult = redeemResult ?? activation
-        self.claimResult = claimResult ?? activation
-        self.accountValidation = accountValidation ?? LicenseValidation(
-            isValid: true,
-            refreshedReceipt: activation.receipt,
-            serverTime: activation.serverTime,
-            principal: .account,
-            needsClaim: false
-        )
-        self.activationError = activationError
-        self.validationError = validationError
-        self.redeemError = redeemError
-        self.claimError = claimError
-        self.accountValidationError = accountValidationError
-        self.validationDelayNanoseconds = validationDelayNanoseconds
+    func entitlement(accessToken: String) async throws -> MembershipEntitlement {
+        receivedTokens.append(accessToken)
+        guard !results.isEmpty else { throw MembershipCheckError.temporarilyUnavailable }
+        return try results.removeFirst().get()
     }
 
-    func activate(code: String, installationID: UUID) async throws -> LicenseActivation {
-        activationCalls.append(ActivationCall(code: code, installationID: installationID))
-        if let activationError { throw activationError }
-        return activation
+    func callCount() -> Int {
+        receivedTokens.count
     }
 
-    func validate(receipt: String, installationID: UUID) async throws -> LicenseValidation {
-        validationCalls += 1
-        if validationDelayNanoseconds > 0 {
-            try await Task.sleep(nanoseconds: validationDelayNanoseconds)
-        }
-        if let validationError { throw validationError }
-        return validation
-    }
-
-    func redeem(code: String, installationID: UUID, accessToken: String) async throws -> LicenseActivation {
-        redeemCalls.append(ActivationCall(code: code, installationID: installationID))
-        if let redeemError { throw redeemError }
-        return redeemResult
-    }
-
-    func claim(receipt: String, installationID: UUID, accessToken: String) async throws -> LicenseActivation {
-        claimCalls += 1
-        if let claimError { throw claimError }
-        return claimResult
-    }
-
-    func validateAccount(installationID: UUID, accessToken: String) async throws -> LicenseValidation {
-        accountValidationCalls += 1
-        if let accountValidationError { throw accountValidationError }
-        return accountValidation
-    }
-
-    func lastActivationCall() -> ActivationCall? {
-        activationCalls.last
-    }
-
-    func lastRedeemCall() -> ActivationCall? {
-        redeemCalls.last
-    }
-
-    func claimCallCount() -> Int {
-        claimCalls
-    }
-
-    func validationCallCount() -> Int {
-        validationCalls
+    func tokens() -> [String] {
+        receivedTokens
     }
 }
 
-private actor FakeLicenseAuthFlow: LicenseAuthFlowPerforming {
-    var session: LicenseAuthSession
-    var signInError: LicenseAuthError?
+actor FakeLicenseAuthFlow: LicenseAuthFlowPerforming {
+    private let session: LicenseAuthSession
+    private let refreshedToken: String
+    private let refreshError: Error?
+    private var refreshes = 0
 
-    init(session: LicenseAuthSession, signInError: LicenseAuthError? = nil) {
+    init(session: LicenseAuthSession, refreshedToken: String = "refreshed-token", refreshError: Error? = nil) {
         self.session = session
-        self.signInError = signInError
+        self.refreshedToken = refreshedToken
+        self.refreshError = refreshError
     }
 
     func signIn(provider: LicenseAuthProvider) async throws -> LicenseAuthSession {
-        if let signInError { throw signInError }
-        return session
-    }
-
-    func signIn(email: String, password: String) async throws -> LicenseAuthSession {
-        if let signInError { throw signInError }
-        return session
-    }
-
-    func refresh(_ session: LicenseAuthSession) async throws -> LicenseAuthSession {
         session
     }
 
+    func signIn(email: String, password: String) async throws -> LicenseAuthSession {
+        session
+    }
+
+    func refresh(_ session: LicenseAuthSession) async throws -> LicenseAuthSession {
+        refreshes += 1
+        if let refreshError { throw refreshError }
+        var next = session
+        next.accessToken = refreshedToken
+        next.expiresAt = Date().addingTimeInterval(3_600)
+        return next
+    }
+
     func signOut(_ session: LicenseAuthSession) async {}
+
+    func refreshCount() -> Int {
+        refreshes
+    }
 }

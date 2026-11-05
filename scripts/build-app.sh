@@ -28,9 +28,12 @@ default_control_bundle_id="${DEFAULT_CONTROL_BUNDLE_ID:-}"
 default_xcode_org_id="${DEFAULT_XCODE_ORG_ID:-${STUPIDMIRROR_XCODE_ORG_ID:-}}"
 default_xcode_signing_id="${DEFAULT_XCODE_SIGNING_ID:-${STUPIDMIRROR_XCODE_SIGNING_ID:-Apple Development}}"
 default_wda_bundle_id="${DEFAULT_WDA_BUNDLE_ID:-${STUPIDMIRROR_WDA_BUNDLE_ID:-}}"
-official_license_endpoint="https://mkbeusztkzffnzjdwmqk.supabase.co/functions/v1/stupidmirror-license"
+# iTool sign-in (Supabase Auth) and the membership entitlement check.
+official_supabase_url="https://mkbeusztkzffnzjdwmqk.supabase.co"
+official_entitlement_url="https://itool.tech/api/membership/entitlement"
 official_license_publishable_key="sb_publishable_GVf42S8a5aU4NHxMSFmTNA_LB6i6vlz"
-license_endpoint="${LICENSE_ENDPOINT:-${STUPIDMIRROR_LICENSE_ENDPOINT:-$official_license_endpoint}}"
+supabase_url="${SUPABASE_URL:-${STUPIDMIRROR_SUPABASE_URL:-$official_supabase_url}}"
+entitlement_url="${ENTITLEMENT_URL:-${STUPIDMIRROR_ENTITLEMENT_URL:-$official_entitlement_url}}"
 license_publishable_key="${LICENSE_PUBLISHABLE_KEY:-${STUPIDMIRROR_LICENSE_PUBLISHABLE_KEY:-$official_license_publishable_key}}"
 # Sparkle updates. Only a Developer ID build can replace a signed install, so
 # ad hoc and development builds carry no feed and their updater stays inert.
@@ -61,7 +64,8 @@ xml_escape() {
   printf '%s' "$value"
 }
 
-license_endpoint_xml="$(xml_escape "$license_endpoint")"
+supabase_url_xml="$(xml_escape "$supabase_url")"
+entitlement_url_xml="$(xml_escape "$entitlement_url")"
 license_publishable_key_xml="$(xml_escape "$license_publishable_key")"
 
 echo "Building ${product_name} (${configuration})..."
@@ -218,8 +222,10 @@ cat > "${contents_path}/Info.plist" <<PLIST
   <string>${default_xcode_signing_id}</string>
   <key>StupidMirrorDefaultWDABundleID</key>
   <string>${default_wda_bundle_id}</string>
-  <key>StupidMirrorLicenseEndpoint</key>
-  <string>${license_endpoint_xml}</string>
+  <key>StupidMirrorSupabaseURL</key>
+  <string>${supabase_url_xml}</string>
+  <key>StupidMirrorEntitlementURL</key>
+  <string>${entitlement_url_xml}</string>
   <key>StupidMirrorLicensePublishableKey</key>
   <string>${license_publishable_key_xml}</string>
 ${update_plist_entries}  <key>CFBundleURLTypes</key>

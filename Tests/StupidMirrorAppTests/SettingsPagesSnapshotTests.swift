@@ -17,9 +17,8 @@ final class SettingsPagesSnapshotTests: XCTestCase {
         ]
         for (language, code) in [(AppLanguage.zhHans, "zh"), (.en, "en")] {
             let manager = LicenseManager(
-                store: SnapshotLicenseStore(record: nil),
+                cacheStore: MemoryEntitlementStore(),
                 remote: SnapshotLicenseRemote(),
-                validationInterval: .greatestFiniteMagnitude,
                 authStore: MemoryLicenseAuthStore(session: nil)
             )
             await manager.bootstrap()
@@ -51,9 +50,8 @@ final class SettingsPagesSnapshotTests: XCTestCase {
             throw XCTSkip("Set STUPIDMIRROR_DESIGN_SNAPSHOT_DIR to render the sidebar rows.")
         }
         let manager = LicenseManager(
-            store: SnapshotLicenseStore(record: nil),
+            cacheStore: MemoryEntitlementStore(),
             remote: SnapshotLicenseRemote(),
-            validationInterval: .greatestFiniteMagnitude,
             authStore: MemoryLicenseAuthStore(session: nil)
         )
         await manager.bootstrap()

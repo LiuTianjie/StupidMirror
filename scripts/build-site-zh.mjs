@@ -105,6 +105,9 @@ let body = html.slice(bodyStart);
 
 body = replaceOnce(body, /<a href="zh\/" hreflang="zh-CN" lang="zh-CN">中文<\/a>/, '<a href="../" hreflang="en" lang="en">English</a>');
 
+// The membership page has its own Chinese URL.
+body = body.replaceAll("https://itool.tech/en/pro?from=stupidmirror", "https://itool.tech/zh/pro?from=stupidmirror");
+
 body = body.replace(/>([^<]+)</g, (match, raw) => {
   const translation = text.get(normalize(decode(raw)));
   if (!translation) return match;

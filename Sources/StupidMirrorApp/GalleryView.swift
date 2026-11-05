@@ -170,7 +170,7 @@ private struct DashboardTopBar: View {
                     Button {
                         store.presentActivation()
                     } label: {
-                        Label(store.t("license.badge.unactivated"), systemImage: licenseBadgeIcon)
+                        Label(licenseBadgeTitle, systemImage: licenseBadgeIcon)
                     }
                     .buttonStyle(PillButtonStyle(kind: .quiet, compact: true))
                     .help(store.t("license.badge.help"))
@@ -227,8 +227,18 @@ private struct DashboardTopBar: View {
         switch store.licenseManager.state {
         case .unavailable:
             "lock"
-        case .unlicensed, .checking, .licensed:
-            "key"
+        case .unverified:
+            "wifi.exclamationmark"
+        case .signedOut, .notMember, .checking, .member:
+            "person.crop.circle"
+        }
+    }
+
+    private var licenseBadgeTitle: String {
+        switch store.licenseManager.state {
+        case .notMember: store.t("license.badge.notMember")
+        case .unverified: store.t("license.badge.unverified")
+        default: store.t("license.badge.free")
         }
     }
 }
@@ -1453,8 +1463,10 @@ extension DeviceGalleryStore {
     func licenseStatusLabel(_ state: LicenseState) -> String {
         switch state {
         case .checking: t("license.status.checking")
-        case .unlicensed: t("license.status.unlicensed")
-        case .licensed: t("license.status.licensed")
+        case .signedOut: t("license.status.free")
+        case let .notMember(status): status.tier == .monthly ? t("license.status.monthly") : t("license.status.free")
+        case .member: t("license.status.member")
+        case .unverified: t("license.status.unverified")
         case .unavailable: t("license.status.unavailable")
         }
     }
@@ -1474,9 +1486,9 @@ extension MCPServerStatus {
 extension LicenseState {
     static func dotColor(_ state: LicenseState) -> Color? {
         switch state {
-        case .licensed: Theme.Palette.live
-        case .checking: nil
-        case .unlicensed: Theme.Palette.pending
+        case .member: Theme.Palette.live
+        case .checking, .signedOut: nil
+        case .notMember, .unverified: Theme.Palette.pending
         case .unavailable: Theme.Palette.danger
         }
     }
@@ -1497,7 +1509,7 @@ extension DashboardSettingsTab {
         case .general: "gearshape"
         case .mirroring: "iphone"
         case .mcp: "sparkles"
-        case .license: "key"
+        case .license: "person.crop.circle"
         }
     }
 }

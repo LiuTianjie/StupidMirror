@@ -52,7 +52,7 @@ enum StupidMirrorMCPToolCatalog {
             ]) { _, new in new },
             metadata: Metadata(additionalFields: ["ui": .object(["visibility": .array(["app"])])])
         ),
-        tool("start_mirror", "Open and start the device mirror. Unactivated installations can mirror one device at a time.", deviceProperties),
+        tool("start_mirror", "Open and start the device mirror. Without an iTool yearly membership, one device can be mirrored at a time.", deviceProperties),
         tool(
             "set_device_posture", "Set a foldable iOS Simulator's actual hinge to Closed (0°), Partially Open (130°) or Open (180°), matching Device Hub. Waits for the system to confirm the posture and active display. Check can_set_posture in list_devices first.",
             deviceProperties.merging([

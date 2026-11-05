@@ -3,180 +3,202 @@ import Foundation
 import XCTest
 
 final class LicenseRemoteClientTests: XCTestCase {
-    func testActivateUsesSingleEndpointPublishableHeaderAndExpectedBody() async throws {
-        let transport = RecordingLicenseTransport(
-            statusCode: 200,
-            body: #"{"ok":true,"valid":true,"receipt":"8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1","server_time":"2033-05-18T03:33:20Z"}"#
-        )
-        let endpoint = try XCTUnwrap(URL(string: "https://example.supabase.co/functions/v1/stupidmirror-license"))
-        let client = SupabaseLicenseRemoteClient(
-            configuration: LicenseRemoteConfiguration(
-                endpoint: endpoint,
-                publishableKey: "sb_publishable_test",
-                appVersion: "0.1.6"
-            ),
-            transport: transport
-        )
-        let installationID = UUID(uuidString: "8DC53B7D-1A3C-4FC8-A201-F70C3D88B2E1")!
+    private let activeBody = """
+    {"ok":true,"product":"stupidmirror","required_tier":"yearly","active":true,
+     "valid_until":"2027-11-05T10:30:26.938123+00:00","tier":"yearly",
+     "member_until":"2027-11-05T10:30:26.938123+00:00",
+     "yearly_until":"2027-11-05T10:30:26.938123+00:00",
+     "server_time":"2026-11-05T10:30:26.938123+00:00"}
+    """
 
-        let result = try await client.activate(code: "SM1ABC", installationID: installationID)
+    func testWebsiteRequestSendsBearerTokenAndProduct() async throws {
+        let transport = RecordingLicenseTransport(responses: [.status(200, activeBody)])
+        let client = MembershipEntitlementClient(configuration: configuration, transport: transport)
 
-        XCTAssertEqual(result.receipt, "8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1")
-        let capturedRequest = await transport.lastRequest()
-        let request = try XCTUnwrap(capturedRequest)
-        XCTAssertEqual(request.url, endpoint)
-        XCTAssertEqual(request.httpMethod, "POST")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "apikey"), "sb_publishable_test")
-        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
-        let body = try XCTUnwrap(request.httpBody)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
-        XCTAssertEqual(json["action"], "activate")
-        XCTAssertEqual(json["installation_id"], installationID.uuidString.lowercased())
-        XCTAssertEqual(json["code"], "SM1ABC")
-        XCTAssertEqual(json["app_version"], "0.1.6")
-    }
+        let entitlement = try await client.entitlement(accessToken: "user-jwt")
 
-    func testValidateSendsReceiptAndKeepsRefreshedReceiptOptional() async throws {
-        let transport = RecordingLicenseTransport(
-            statusCode: 200,
-            body: #"{"ok":true,"valid":true,"receipt":"8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1","server_time":"2033-05-18T03:33:20.000Z"}"#
-        )
-        let client = SupabaseLicenseRemoteClient(
-            configuration: configuredEndpoint,
-            transport: transport
-        )
-
-        let validation = try await client.validate(receipt: "cached", installationID: UUID())
-
-        XCTAssertTrue(validation.isValid)
-        XCTAssertEqual(validation.refreshedReceipt, "8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1")
-        let capturedRequest = await transport.lastRequest()
-        let request = try XCTUnwrap(capturedRequest)
-        let body = try XCTUnwrap(request.httpBody)
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(json["action"] as? String, "validate")
-        XCTAssertEqual(json["receipt"] as? String, "cached")
-        XCTAssertEqual(json["client_protocol"] as? Int, 2)
-    }
-
-    func testRedeemSendsBearerTokenAndDoesNotAcceptMissingLogin() async throws {
-        let transport = RecordingLicenseTransport(
-            statusCode: 200,
-            body: #"{"ok":true,"active":true,"receipt":"8dc53b7d-1a3c-4fc8-a201-f70c3d88b2e1","principal":"account","server_time":"2033-05-18T03:33:20Z"}"#
-        )
-        let client = SupabaseLicenseRemoteClient(
-            configuration: configuredEndpoint,
-            transport: transport
-        )
-        _ = try await client.redeem(
-            code: "SM-1ABC-DEFG-HIJK-LMNO-PQRS-TUVW",
-            installationID: UUID(),
-            accessToken: "user-jwt"
-        )
-        let captured = await transport.lastRequest()
-        let request = try XCTUnwrap(captured)
-        XCTAssertEqual(
-            request.url?.absoluteString,
-            "https://example.supabase.co/rest/v1/rpc/stupidmirror_redeem_for_user"
-        )
+        let request = try await XCTUnwrapAsync(await transport.requests().first)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.absoluteString, "https://itool.tech/api/membership/entitlement?product=stupidmirror")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-jwt")
-        XCTAssertEqual(request.value(forHTTPHeaderField: "apikey"), "sb_publishable_test")
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(request.httpBody)) as? [String: Any])
-        XCTAssertNotNil(json["p_code_hash"] as? String)
-        XCTAssertEqual((json["p_code_hash"] as? String)?.count, 64)
-        XCTAssertNil(json["action"])
+        XCTAssertNil(request.value(forHTTPHeaderField: "apikey"), "The website route needs no Supabase key")
+        XCTAssertTrue(entitlement.active)
+        XCTAssertEqual(entitlement.tier, .yearly)
+        XCTAssertEqual(entitlement.serverTime, MembershipEntitlementClient.parseDate("2026-11-05T10:30:26.938Z"))
+        XCTAssertEqual(entitlement.validUntil, MembershipEntitlementClient.parseDate("2027-11-05T10:30:26.938Z"))
     }
 
-    func testRevokedResponseMapsStableServerCode() async {
-        let transport = RecordingLicenseTransport(
-            statusCode: 403,
-            body: #"{"ok":false,"code":"license_revoked","message":"Revoked"}"#
-        )
-        let client = SupabaseLicenseRemoteClient(
-            configuration: configuredEndpoint,
-            transport: transport
-        )
+    func testInactiveMonthlyAnswerIsReturnedNotThrown() async throws {
+        let body = """
+        {"ok":true,"product":"stupidmirror","required_tier":"yearly","active":false,"valid_until":null,
+         "tier":"monthly","member_until":"2026-12-05T00:00:00+00:00","yearly_until":null,
+         "server_time":"2026-11-05T10:30:26+00:00"}
+        """
+        let transport = RecordingLicenseTransport(responses: [.status(200, body)])
+        let client = MembershipEntitlementClient(configuration: configuration, transport: transport)
 
-        do {
-            _ = try await client.validate(receipt: "old", installationID: UUID())
-            XCTFail("Expected a revoked response")
-        } catch let error as LicenseServiceError {
-            XCTAssertEqual(error, .rejected(code: "license_revoked", message: "Revoked"))
-        } catch {
-            XCTFail("Unexpected error: \(error)")
+        let entitlement = try await client.entitlement(accessToken: "user-jwt")
+
+        XCTAssertFalse(entitlement.active)
+        XCTAssertEqual(entitlement.tier, .monthly)
+        XCTAssertNil(entitlement.validUntil)
+        XCTAssertNotNil(entitlement.memberUntil)
+    }
+
+    func testUnauthorizedMapsToLoginRequiredWithoutFallback() async {
+        let transport = RecordingLicenseTransport(responses: [.status(401, #"{"ok":false,"code":"login_required"}"#)])
+        let client = MembershipEntitlementClient(configuration: configuration, transport: transport)
+
+        await XCTAssertThrowsErrorAsync(try await client.entitlement(accessToken: "old")) { error in
+            XCTAssertEqual(error as? MembershipCheckError, .loginRequired)
+        }
+        let count = await transport.requests().count
+        XCTAssertEqual(count, 1)
+    }
+
+    func testServiceUnavailableFallsBackToSupabaseRPC() async throws {
+        let transport = RecordingLicenseTransport(responses: [
+            .status(503, #"{"ok":false,"code":"temporarily_unavailable"}"#),
+            .status(200, activeBody)
+        ])
+        let client = MembershipEntitlementClient(configuration: configuration, transport: transport)
+
+        let entitlement = try await client.entitlement(accessToken: "user-jwt")
+
+        XCTAssertTrue(entitlement.active)
+        let requests = await transport.requests()
+        XCTAssertEqual(requests.count, 2)
+        let rpc = requests[1]
+        XCTAssertEqual(rpc.httpMethod, "POST")
+        XCTAssertEqual(rpc.url?.absoluteString, "https://example.supabase.co/rest/v1/rpc/itool_entitlement")
+        XCTAssertEqual(rpc.value(forHTTPHeaderField: "apikey"), "sb_publishable_test")
+        XCTAssertEqual(rpc.value(forHTTPHeaderField: "Authorization"), "Bearer user-jwt")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(rpc.httpBody)) as? [String: String]
+        XCTAssertEqual(body, ["p_product": "stupidmirror"])
+    }
+
+    func testNetworkFailureOnBothPathsIsTemporarilyUnavailable() async {
+        let transport = RecordingLicenseTransport(responses: [.network, .network])
+        let client = MembershipEntitlementClient(configuration: configuration, transport: transport)
+
+        await XCTAssertThrowsErrorAsync(try await client.entitlement(accessToken: "user-jwt")) { error in
+            XCTAssertEqual(error as? MembershipCheckError, .temporarilyUnavailable)
         }
     }
 
-    func testInvalidReceiptResponseMapsStableServerCode() async {
-        let transport = RecordingLicenseTransport(
-            statusCode: 403,
-            body: #"{"ok":false,"code":"invalid_receipt","message":"Invalid receipt"}"#
-        )
-        let client = SupabaseLicenseRemoteClient(
-            configuration: configuredEndpoint,
-            transport: transport
-        )
+    func testMalformedAnswerIsTemporarilyUnavailable() async {
+        let transport = RecordingLicenseTransport(responses: [
+            .status(200, #"{"ok":true,"active":true}"#),
+            .status(200, #"{"ok":true,"product":"transeen","active":true,"server_time":"2026-11-05T10:30:26+00:00"}"#)
+        ])
+        let client = MembershipEntitlementClient(configuration: configuration, transport: transport)
 
-        do {
-            _ = try await client.validate(receipt: "not-a-uuid", installationID: UUID())
-            XCTFail("Expected an invalid receipt response")
-        } catch let error as LicenseServiceError {
-            XCTAssertEqual(error, .rejected(code: "invalid_receipt", message: "Invalid receipt"))
-        } catch {
-            XCTFail("Unexpected error: \(error)")
+        await XCTAssertThrowsErrorAsync(try await client.entitlement(accessToken: "user-jwt")) { error in
+            XCTAssertEqual(error as? MembershipCheckError, .temporarilyUnavailable)
         }
     }
 
     func testMissingConfigurationFailsWithoutNetworkRequest() async {
-        let transport = RecordingLicenseTransport(statusCode: 500, body: "{}")
-        let client = SupabaseLicenseRemoteClient(
-            configuration: LicenseRemoteConfiguration(endpoint: nil, publishableKey: "", appVersion: "dev"),
+        let transport = RecordingLicenseTransport(responses: [])
+        let client = MembershipEntitlementClient(
+            configuration: LicenseRemoteConfiguration(
+                supabaseURL: nil,
+                entitlementURL: URL(string: "http://itool.tech/api/membership/entitlement"),
+                publishableKey: "",
+                appVersion: "0.8.0"
+            ),
             transport: transport
         )
 
-        do {
-            _ = try await client.activate(code: "SM1ABC", installationID: UUID())
-            XCTFail("Expected not configured")
-        } catch let error as LicenseServiceError {
-            XCTAssertEqual(error, .notConfigured)
-        } catch {
-            XCTFail("Unexpected error: \(error)")
+        await XCTAssertThrowsErrorAsync(try await client.entitlement(accessToken: "user-jwt")) { error in
+            XCTAssertEqual(error as? MembershipCheckError, .notConfigured)
         }
-        let capturedRequest = await transport.lastRequest()
-        XCTAssertNil(capturedRequest)
+        let count = await transport.requests().count
+        XCTAssertEqual(count, 0)
     }
 
-    private var configuredEndpoint: LicenseRemoteConfiguration {
+    func testConfigurationDerivesAuthAndRPCFromTheProjectURL() {
+        XCTAssertEqual(configuration.authBaseURL?.absoluteString, "https://example.supabase.co/auth/v1")
+        XCTAssertEqual(configuration.entitlementRPCURL?.absoluteString, "https://example.supabase.co/rest/v1/rpc/itool_entitlement")
+    }
+
+    func testBuyPageIsTheITooMembershipPage() {
+        XCTAssertEqual(LicensePurchaseURLs.buyURL.absoluteString, "https://itool.tech/pro?from=stupidmirror")
+        XCTAssertEqual(LicensePurchaseURLs.buyURL(chinese: true).absoluteString, "https://itool.tech/zh/pro?from=stupidmirror")
+        XCTAssertEqual(LicensePurchaseURLs.buyURL(chinese: false).absoluteString, "https://itool.tech/en/pro?from=stupidmirror")
+    }
+
+    func testMembershipErrorsDistinguishSignInFromMissingYearlyTier() {
+        XCTAssertEqual(DeviceAutomationError.membershipRequired(.signIn).code, "sign_in_required")
+        XCTAssertEqual(DeviceAutomationError.membershipRequired(.yearly).code, "membership_required")
+        XCTAssertEqual(DeviceAutomationError.membershipRequired(.verification).code, "membership_required")
+        for requirement in [MembershipRequirement.signIn, .yearly, .verification] {
+            let message = DeviceAutomationError.membershipRequired(requirement).localizedDescription
+            XCTAssertTrue(message.contains("One device at a time stays free"), message)
+        }
+        XCTAssertTrue(DeviceAutomationError.membershipRequired(.yearly).localizedDescription
+            .contains("https://itool.tech/pro?from=stupidmirror"))
+    }
+
+    private var configuration: LicenseRemoteConfiguration {
         LicenseRemoteConfiguration(
-            endpoint: URL(string: "https://example.supabase.co/functions/v1/stupidmirror-license"),
+            supabaseURL: URL(string: "https://example.supabase.co"),
+            entitlementURL: URL(string: "https://itool.tech/api/membership/entitlement"),
             publishableKey: "sb_publishable_test",
-            appVersion: "0.1.6"
+            appVersion: "0.8.0"
         )
     }
 }
 
-private actor RecordingLicenseTransport: LicenseHTTPTransport {
-    private let statusCode: Int
-    private let body: Data
-    private var request: URLRequest?
+private func XCTUnwrapAsync<T>(_ value: T?, file: StaticString = #filePath, line: UInt = #line) async throws -> T {
+    try XCTUnwrap(value, file: file, line: line)
+}
 
-    init(statusCode: Int, body: String) {
-        self.statusCode = statusCode
-        self.body = Data(body.utf8)
+private func XCTAssertThrowsErrorAsync<T>(
+    _ expression: @autoclosure () async throws -> T,
+    file: StaticString = #filePath,
+    line: UInt = #line,
+    _ handler: (Error) -> Void
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected an error", file: file, line: line)
+    } catch {
+        handler(error)
+    }
+}
+
+private actor RecordingLicenseTransport: LicenseHTTPTransport {
+    enum Response: Sendable {
+        case status(Int, String)
+        case network
+    }
+
+    private var responses: [Response]
+    private var recorded: [URLRequest] = []
+
+    init(responses: [Response]) {
+        self.responses = responses
     }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        self.request = request
-        let response = HTTPURLResponse(
-            url: request.url!,
-            statusCode: statusCode,
-            httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
-        )!
-        return (body, response)
+        recorded.append(request)
+        guard !responses.isEmpty else { throw URLError(.notConnectedToInternet) }
+        switch responses.removeFirst() {
+        case .network:
+            throw URLError(.notConnectedToInternet)
+        case let .status(code, body):
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: code,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            return (Data(body.utf8), response)
+        }
     }
 
-    func lastRequest() -> URLRequest? {
-        request
+    func requests() -> [URLRequest] {
+        recorded
     }
 }

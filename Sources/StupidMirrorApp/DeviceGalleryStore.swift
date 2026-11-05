@@ -338,6 +338,15 @@ final class DeviceGalleryStore: ObservableObject {
                 guard let self else { return }
                 self.enforceSimultaneousDeviceLimit(state.capabilities)
                 self.enforceSimultaneousControlLimit(state.capabilities)
+                if state.isEntitled, !self.pendingActivationMirrorIDs.isEmpty {
+                    // `$state` publishes before the new value is stored, so
+                    // start the waiting mirrors once it is.
+                    Task { @MainActor [weak self] in
+                        guard let self, self.licenseManager.state.isEntitled,
+                              !self.pendingActivationMirrorIDs.isEmpty else { return }
+                        self.finishSuccessfulLicenseChange()
+                    }
+                }
                 self.refresh()
             }
             .store(in: &cancellables)
@@ -347,6 +356,7 @@ final class DeviceGalleryStore: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.licenseManager.bootstrap()
+            self.licenseManager.startAutomaticRevalidation()
             self.refresh()
             await self.mcpServer.startIfEnabled()
         }
@@ -1536,19 +1546,22 @@ final class DeviceGalleryStore: ObservableObject {
         setActiveSheet(nil)
     }
 
-    func activateLicense(code: String) async throws {
-        try await licenseManager.activate(code: code)
-        finishSuccessfulLicenseChange()
+    /// Re-checks the iTool membership now (the Refresh button, or after
+    /// paying on itool.tech).
+    func refreshMembership() async {
+        await licenseManager.checkNow()
     }
 
-    func redeemLicense(code: String) async throws {
-        try await licenseManager.redeem(code: code)
-        finishSuccessfulLicenseChange()
+    /// Opens the iTool membership page in the browser. The app re-checks
+    /// the membership when the user comes back.
+    func openMembershipPurchase() {
+        NSWorkspace.shared.open(LicensePurchaseURLs.buyURL(chinese: language.usesChinese))
     }
 
-    func claimLicense() async throws {
-        try await licenseManager.claimFromReceipt()
-        finishSuccessfulLicenseChange()
+    /// The error automation returns when a request needs more than the free
+    /// one-device path.
+    var membershipRequiredError: DeviceAutomationError {
+        .membershipRequired(licenseManager.membershipRequirement)
     }
 
     func signInLicense(provider: LicenseAuthProvider) async throws {
@@ -1619,7 +1632,6 @@ final class DeviceGalleryStore: ObservableObject {
         refreshRequestedWhileRunning = false
         pendingActivationMirrorIDs.removeAll()
         setActiveSheet(nil)
-        licenseManager.checkpointTrustedTime()
         licenseManager.cancel()
         refreshTimer?.invalidate()
         refreshTimer = nil
@@ -1716,7 +1728,7 @@ final class DeviceGalleryStore: ObservableObject {
         performAuthorizedStarts(decision.allowedIDs, activateExistingWindow: showWindow ?? false)
         if !decision.blockedIDs.isEmpty {
             pendingActivationMirrorIDs.formUnion(decision.blockedIDs)
-            statusMessage = t("status.activationDeviceLimit")
+            statusMessage = t("status.membershipDeviceLimit")
             if presentActivationWhenBlocked {
                 showActivation(for: decision.blockedIDs)
             }
@@ -1763,7 +1775,7 @@ final class DeviceGalleryStore: ObservableObject {
             pendingActivationMirrorIDs.insert(session.id)
             MirrorWindowRegistry.shared.close(session: session)
         }
-        statusMessage = t("status.activationDeviceLimit")
+        statusMessage = t("status.membershipDeviceLimit")
     }
 
     /// The session that currently owns a mirror. A session's ID can change
@@ -2004,7 +2016,7 @@ final class DeviceGalleryStore: ObservableObject {
         guard !isShuttingDown,
               let session = beginConnectionAttemptIfNeeded(for: session) else { return }
         guard canStartControl(for: session) else {
-            statusMessage = t("status.activationControlRequired")
+            statusMessage = t("status.membershipControlRequired")
             showActivation(for: [])
             return
         }
@@ -2183,7 +2195,7 @@ final class DeviceGalleryStore: ObservableObject {
         }
         guard canStartControl(for: session) else {
             showActivation(for: [])
-            throw DeviceAutomationError.activationRequired
+            throw membershipRequiredError
         }
         guard !isShuttingDown else {
             throw DeviceAutomationError.deviceUnavailable
@@ -2251,7 +2263,7 @@ final class DeviceGalleryStore: ObservableObject {
 
         let decision = requestMirrorStarts([session.id], presentActivationWhenBlocked: showWindow, showWindow: showWindow)
         if decision.blockedIDs.contains(session.id) {
-            throw DeviceAutomationError.activationRequired
+            throw membershipRequiredError
         }
         // Embedded views poll the capture state while wireless setup proceeds.
         // Returning promptly keeps first-time WDA setup outside the host's tool timeout.
@@ -2488,7 +2500,7 @@ final class DeviceGalleryStore: ObservableObject {
 
     private func prepareQueuedControlAction(for session: DeviceSession) -> Bool {
         guard canUseControl else {
-            statusMessage = t("status.activationControlRequired")
+            statusMessage = t("status.membershipControlRequired")
             showActivation(for: [])
             return false
         }
@@ -2528,7 +2540,7 @@ final class DeviceGalleryStore: ObservableObject {
             }
             session.controlSession.disconnect()
         }
-        statusMessage = t("status.activationControlRequired")
+        statusMessage = t("status.membershipControlRequired")
     }
 
     func select(_ session: DeviceSession) {

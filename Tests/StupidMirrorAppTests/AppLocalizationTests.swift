@@ -21,6 +21,31 @@ final class AppLocalizationTests: XCTestCase {
         XCTAssertEqual(AppCopy.plain(AppCopy.text("connection.disconnected", language: .zhHans)), "重连中")
     }
 
+    func testMembershipCopyNamesTheYearlyOfferAndNoActivationCodes() {
+        XCTAssertEqual(
+            AppCopy.plain(AppCopy.text("license.purchase.join", language: .zhHans)),
+            "开通 iTool 年度会员（¥99/年，含全部 iTool 产品）"
+        )
+        XCTAssertEqual(AppCopy.plain(AppCopy.text("license.purchase.upgrade", language: .zhHans)), "升级年度会员")
+        for language in [AppLanguage.en, .zhHans] {
+            for key in criticalKeys where key.hasPrefix("license.") || key.contains("membership") || key.contains("Membership") {
+                let text = AppCopy.plain(AppCopy.text(key, language: language))
+                XCTAssertFalse(text.contains("SM-"), "\(key) mentions SM- codes")
+                XCTAssertFalse(text.lowercased().contains("activation code"), "\(key) mentions activation codes")
+                XCTAssertFalse(text.contains("激活码"), "\(key) mentions activation codes")
+            }
+        }
+    }
+
+    func testMonthlyAndMemberDetailsFormatADate() {
+        for language in [AppLanguage.en, .zhHans] {
+            for key in ["license.page.monthly.detail", "license.page.member.detail"] {
+                let text = String(format: AppCopy.text(key, language: language), "2027-11-05")
+                XCTAssertTrue(text.contains("2027-11-05"), "\(key) does not show the date")
+            }
+        }
+    }
+
     private var criticalKeys: [String] {
         [
             "dashboard.subtitle",
@@ -73,33 +98,40 @@ final class AppLocalizationTests: XCTestCase {
             "control.loading.startingAgent",
             "control.loading.connectingAgent",
             "license.menu",
-            "license.activation.title",
-            "license.activation.subtitle",
-            "license.code.help",
-            "license.badge.unactivated",
-            "license.badge.help",
-            "license.purchase.help",
+            "license.account",
+            "license.page.free.title",
+            "license.page.free.detail",
+            "license.page.notMember.detail",
+            "license.page.monthly.title",
+            "license.page.monthly.detail",
+            "license.page.member.title",
+            "license.page.member.detail",
+            "license.page.member.detailNoEnd",
+            "license.page.unverified.detail",
+            "license.purchase.join",
+            "license.purchase.upgrade",
+            "license.page.purchase.help",
+            "license.page.upgrade.help",
             "license.purchase.online",
-            "license.signIn.google",
-            "license.account.optional",
-            "license.signIn.github",
+            "license.purchase.upgradeButton",
+            "license.refresh",
+            "license.badge.free",
+            "license.badge.notMember",
+            "license.badge.help",
             "license.signIn.email",
             "license.signIn.password",
-            "license.signIn.emailSubmit",
-            "license.redeem",
-            "license.claim",
-            "license.error.loginRequired",
-            "license.error.itool",
-            "license.status.unlicensed",
-            "license.status.licensed",
+            "license.tier.yearly",
+            "license.tier.monthly",
+            "license.status.free",
+            "license.status.member",
+            "license.status.unverified",
             "license.error.storage",
-            "license.capabilities.unactivated",
-            "license.capabilities.activated",
-            "control.state.activationRequired",
-            "status.activationDeviceLimit",
-            "status.activationControlRequired",
+            "license.error.offline",
             "license.error.notConfigured",
-            "license.error.invalid",
+            "control.state.membershipRequired",
+            "detail.controlMembershipHelp",
+            "status.membershipDeviceLimit",
+            "status.membershipControlRequired",
             "settings.language",
             "settings.audioPlayback",
             "settings.audioPlaybackHelp",
