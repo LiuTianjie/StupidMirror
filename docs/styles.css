@@ -1,34 +1,32 @@
 /* StupidMirror site.
-   One dark, neutral ground. Elevation is a lighter step and a hairline,
-   never a glow on the chrome. The app icon's gradient (amber, magenta,
-   violet, cyan) appears in three places only: the aurora light behind the
-   hero and the final call, the beam around the product shot, and a few
-   words of type. Components follow common 21st.dev patterns (announcement
-   pill, beam frame, marquee, bento, spotlight cards), built without a
-   framework so the page stays a static file. */
+   Page chrome follows the iTool family skeleton (assets/family.css): one
+   dark neutral ground, hairline edges, 6/8/12 corners, no aurora, beam,
+   marquee or pointer light. The rainbow lives only in the app icon; the
+   page's own colour is StupidMirror amber, on a few words of type, the
+   focus ring and small marks. */
 
 :root {
-  --bg: #08090a;
-  --bg-2: #0c0d0f;
-  --card: #111214;
-  --card-2: #16171a;
-  --line: rgba(255, 255, 255, 0.075);
-  --line-2: rgba(255, 255, 255, 0.13);
-  --text: #f4f4f5;
-  --muted: #a1a1aa;
-  --faint: #8b8b94;
+  --bg: var(--fam-canvas);
+  --bg-2: #0d0d10;
+  --card: var(--fam-surface);
+  --card-2: var(--fam-surface);
+  --line: var(--fam-line);
+  --line-2: var(--fam-line-strong);
+  --text: var(--fam-text);
+  --muted: var(--fam-text-2);
+  --faint: var(--fam-text-3);
+  --hue: var(--fam-accent);
   --amber: #ffb547;
   --pink: #ff4f93;
   --violet: #7c5cff;
   --cyan: #33cfff;
   --live: #3ccf7f;
-  --brand: linear-gradient(100deg, var(--amber) 0%, var(--pink) 34%, var(--violet) 66%, var(--cyan) 100%);
-  --sans: "Geist", "Noto Sans SC", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-  --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: var(--fam-sans);
+  --mono: var(--fam-mono);
   --shell: min(1200px, calc(100vw - 48px));
-  --r-lg: 24px;
-  --r-md: 16px;
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --r-lg: var(--fam-r-lg);
+  --r-md: var(--fam-r-md);
+  --ease: var(--fam-ease);
 }
 
 *,
@@ -123,23 +121,20 @@ section[id] {
   left: 12px;
   z-index: 100;
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: var(--fam-r-md);
   background: var(--text);
   color: var(--bg);
 }
 
 :focus-visible {
-  outline: 2px solid var(--cyan);
+  outline: 2px solid var(--hue);
   outline-offset: 3px;
 }
 
 /* ---------- type helpers ---------- */
 
 .brand-gradient {
-  background: var(--brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--hue);
 }
 
 /* The second line of a headline fades from ink into grey. */
@@ -169,7 +164,7 @@ section[id] {
   gap: 8px;
   height: 46px;
   padding: 0 22px;
-  border-radius: 999px;
+  border-radius: var(--fam-r-md);
   font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
@@ -177,7 +172,7 @@ section[id] {
 }
 
 .button:active {
-  transform: scale(0.97);
+  transform: translateY(1px);
 }
 
 .button svg {
@@ -205,7 +200,6 @@ section[id] {
 
 .button-primary:hover {
   background: #ffffff;
-  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
 }
 
 .button-secondary {
@@ -302,7 +296,7 @@ section[id] {
 
 .site-menu a {
   padding: 6px 12px;
-  border-radius: 999px;
+  border-radius: var(--fam-r-md);
   font-size: 14px;
   white-space: nowrap;
   color: var(--muted);
@@ -340,7 +334,7 @@ section[id] {
   height: 40px;
   margin-left: auto;
   border: 1px solid var(--line-2);
-  border-radius: 999px;
+  border-radius: var(--fam-r-md);
   background: transparent;
   cursor: pointer;
   position: relative;
@@ -375,59 +369,9 @@ section[id] {
 
 /* ---------- aurora ---------- */
 
+/* Family rule: no aurora backdrops. The markup stays for now; it draws nothing. */
 .aurora {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.aurora i {
-  position: absolute;
-  width: 46vw;
-  max-width: 720px;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  filter: blur(90px);
-  opacity: 0.32;
-  animation: drift 22s ease-in-out infinite alternate;
-}
-
-.aurora i:nth-child(1) {
-  background: var(--pink);
-  top: -18%;
-  left: 12%;
-}
-
-.aurora i:nth-child(2) {
-  background: var(--violet);
-  top: -10%;
-  right: 8%;
-  animation-delay: -7s;
-}
-
-.aurora i:nth-child(3) {
-  background: var(--amber);
-  top: 18%;
-  left: 38%;
-  width: 30vw;
-  opacity: 0.18;
-  animation-delay: -14s;
-}
-
-.aurora-low i {
-  top: auto !important;
-  bottom: -40%;
-  opacity: 0.2;
-}
-
-@keyframes drift {
-  0% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  100% {
-    transform: translate3d(6%, 8%, 0) scale(1.12);
-  }
+  display: none;
 }
 
 /* ---------- hero ---------- */
@@ -461,7 +405,7 @@ section[id] {
   align-items: center;
   gap: 10px;
   padding: 5px 12px 5px 5px;
-  border-radius: 999px;
+  border-radius: var(--fam-r-md);
   border: 1px solid var(--line-2);
   background: rgba(255, 255, 255, 0.04);
   font-size: 13px;
@@ -476,9 +420,9 @@ section[id] {
 }
 
 .announce-tag {
-  padding: 2px 9px;
-  border-radius: 999px;
-  background: var(--brand);
+  padding: 2px 7px;
+  border-radius: var(--fam-r-sm);
+  background: var(--hue);
   color: #0a0a0b;
   font-family: var(--mono);
   font-size: 12px;
@@ -551,8 +495,7 @@ section[id] {
   perspective: 1600px;
 }
 
-/* A light travelling round the frame's edge (21st.dev "border beam"). */
-/* The frame is the window's own edge: 1px of beam around the screenshot,
+/* The frame is the window's own edge: a hairline around the screenshot,
    its radius matching the window corner (40 px on a 2200 x 1400 image). */
 .beam-frame {
   position: relative;
@@ -560,27 +503,6 @@ section[id] {
   border-radius: calc(1.82% + 1px) / calc(2.86% + 1px);
   background: var(--line-2);
   overflow: hidden;
-  box-shadow: 0 40px 120px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-.beam-frame::before {
-  content: "";
-  position: absolute;
-  inset: -50%;
-  background: conic-gradient(from var(--beam-angle, 0deg), transparent 0deg, transparent 300deg, var(--amber) 318deg, var(--pink) 332deg, var(--violet) 346deg, var(--cyan) 360deg);
-  animation: beam 6s linear infinite;
-}
-
-@property --beam-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
-
-@keyframes beam {
-  to {
-    --beam-angle: 360deg;
-  }
 }
 
 .beam-frame > .screenshot-button {
@@ -627,20 +549,25 @@ section[id] {
 }
 
 .marquee {
-  overflow: hidden;
-  mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
+  width: var(--shell);
+  margin-inline: auto;
+}
+
+/* Beside its label the row fills the second column and starts at its left edge. */
+.marquee-band .marquee {
+  width: auto;
+  margin: 0;
+}
+
+.marquee-band .marquee-track {
+  justify-content: flex-start;
 }
 
 .marquee-track {
   display: flex;
-  width: max-content;
-  gap: 44px;
-  animation: marquee 38s linear infinite;
-}
-
-.marquee:hover .marquee-track {
-  animation-play-state: paused;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 28px;
 }
 
 .marquee-track > * {
@@ -651,24 +578,18 @@ section[id] {
   letter-spacing: -0.01em;
 }
 
-@keyframes marquee {
-  to {
-    transform: translateX(calc(-50% - 22px));
-  }
-}
-
 .marquee-tools {
-  margin: 56px 0 8px;
+  margin: 40px auto 0;
+  max-width: 920px;
 }
 
 .marquee-tools .marquee-track {
-  gap: 12px;
-  animation-duration: 46s;
+  gap: 8px;
 }
 
 .marquee-tools code {
-  padding: 8px 14px;
-  border-radius: 10px;
+  padding: 7px 12px;
+  border-radius: var(--fam-r-md);
   border: 1px solid var(--line-2);
   background: var(--card);
   font-family: var(--mono);
@@ -714,7 +635,7 @@ section[id] {
   position: relative;
   border-radius: var(--r-lg);
   border: 1px solid var(--line);
-  background: linear-gradient(180deg, var(--card-2), var(--card));
+  background: var(--card);
   overflow: hidden;
 }
 
@@ -727,38 +648,6 @@ section[id] {
   color: var(--muted);
   font-size: 15px;
   line-height: 1.6;
-}
-
-/* Spotlight: a soft light follows the pointer inside the card. */
-.spotlight::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, -20%), rgba(255, 255, 255, 0.07), transparent 45%);
-  opacity: 0;
-  transition: opacity 0.3s var(--ease);
-  pointer-events: none;
-}
-
-.spotlight::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, -20%), rgba(255, 255, 255, 0.28), transparent 50%);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  opacity: 0;
-  transition: opacity 0.3s var(--ease);
-  pointer-events: none;
-}
-
-.spotlight:hover::before,
-.spotlight:hover::after {
-  opacity: 1;
 }
 
 .card-icon {
@@ -1016,19 +905,14 @@ section[id] {
 }
 
 .client-card {
-  --accent: var(--cyan);
-  --accent-soft: rgba(51, 207, 255, 0.07);
+  --accent: var(--hue);
   display: flex;
   flex-direction: column;
   padding: 30px 30px 32px;
-  background:
-    radial-gradient(120% 60% at 50% 0%, var(--accent-soft), transparent 62%),
-    linear-gradient(180deg, var(--card-2), var(--card));
 }
 
 .client-claude {
-  --accent: var(--amber);
-  --accent-soft: rgba(255, 181, 71, 0.07);
+  --accent: var(--hue);
 }
 
 .client-head {
@@ -1428,17 +1312,14 @@ section[id] {
   background: var(--faint);
 }
 
-/* The featured case gets the brand gradient as its edge, not its fill. */
+/* The featured case gets the product hue as its edge, not its fill. */
 .scene-featured {
-  border-color: transparent;
-  background:
-    linear-gradient(180deg, var(--card-2), var(--card)) padding-box,
-    var(--brand) border-box;
+  border-color: color-mix(in srgb, var(--hue) 45%, var(--line));
 }
 
 .scene-featured .step-number {
   border-color: transparent;
-  background: var(--brand);
+  background: var(--hue);
   color: #0a0a0b;
 }
 
@@ -1470,7 +1351,6 @@ section[id] {
 .cta-icon {
   margin: 0 auto 36px;
   border-radius: 26px;
-  box-shadow: 0 30px 80px -10px rgba(124, 92, 255, 0.45);
 }
 
 .cta-content h2 {
@@ -1487,6 +1367,7 @@ section[id] {
 
 .site-footer {
   border-top: 1px solid var(--line);
+  overflow: hidden;
 }
 
 .footer-inner {
@@ -1557,9 +1438,8 @@ section[id] {
 
 .js .reveal {
   opacity: 0;
-  transform: translateY(18px);
-  filter: blur(6px);
-  transition: opacity 0.9s var(--ease), transform 0.9s var(--ease), filter 0.9s var(--ease);
+  transform: translateY(8px);
+  transition: opacity 0.44s var(--ease), transform 0.44s var(--ease);
 }
 
 .js .reveal.in-view {
@@ -1693,6 +1573,10 @@ section[id] {
     grid-template-columns: 1fr;
     gap: 14px;
     text-align: center;
+  }
+
+  .marquee-band .marquee-track {
+    justify-content: center;
   }
 
   .wireless,
@@ -1965,7 +1849,7 @@ section[id] {
 .release-heading > div { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
 .release-heading h2 { font-size: 30px; letter-spacing: -0.025em; line-height: 1.2; }
 .release-heading time, .release-date { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-.release-badge { border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 10px; font-size: 11px; color: var(--muted); }
+.release-badge { border: 1px solid var(--line-2); border-radius: var(--fam-r-sm); padding: 3px 10px; font-size: 11px; color: var(--muted); }
 .release-body { max-width: 780px; color: var(--muted); font-size: 15px; line-height: 1.8; overflow-wrap: anywhere; }
 .release-body strong, .release-body h3 { color: var(--text); }
 .release-body h3 { margin: 24px 0 12px; }

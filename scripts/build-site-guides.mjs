@@ -258,7 +258,7 @@ function render(pages, key) {
     .map(([q, a]) => `          <details class="faq-item">\n            <summary><h3>${esc(q)}</h3></summary>\n            <p>${esc(a)}</p>\n          </details>`)
     .join("\n");
   return `<!doctype html>
-<html lang="${p.lang}">
+<html lang="${p.lang}" data-product="stupidmirror">
   <head>
     <meta charset="UTF-8" />
     ${redirect}
@@ -289,7 +289,8 @@ function render(pages, key) {
     <link rel="apple-touch-icon" sizes="180x180" href="${p.up}assets/apple-touch-icon.png" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="manifest" href="/site.webmanifest" />
-    <link rel="stylesheet" href="${p.up}styles.css?v=20261026-changelog" />
+    <link rel="stylesheet" href="${p.up}assets/family.css" />
+    <link rel="stylesheet" href="${p.up}styles.css?v=20261106-family" />
     <script type="application/ld+json">
       ${json}
     </script>
@@ -344,6 +345,7 @@ ${faq}
         <nav class="guide-footer-nav" aria-label="${key === "zh" ? "指南" : "Guides"}">${guides.map((g) => `<a href="${p.up}${g[key].path}">${esc(g[key].guideLabel)}</a>`).join("")}<a href="${p.up}${p.home}changelog/">${key === "zh" ? "更新日志" : "Changelog"}</a></nav>
         <span>© 2026 StupidMirror</span>
       </div>
+      <p class="fam-wordmark" aria-hidden="true" translate="no">StupidMirror</p>
     </footer>
   </body>
 </html>

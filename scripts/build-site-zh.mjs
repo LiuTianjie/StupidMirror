@@ -47,7 +47,7 @@ const replaceOnce = (html, pattern, replacement) => {
 let html = readFileSync(sourcePath, "utf8");
 
 // <head>
-html = replaceOnce(html, /<html lang="en">/, '<html lang="zh-CN">');
+html = replaceOnce(html, /<html lang="en"/, '<html lang="zh-CN"');
 html = replaceOnce(html, /<title>[^<]*<\/title>/, `<title>${encode(meta.title)}</title>`);
 html = replaceOnce(html, /(name="description"\s+content=")[^"]*"/, (_, head) => `${head}${encode(meta.description)}"`);
 html = replaceOnce(html, /<link rel="canonical" href="[^"]*" \/>/, `<link rel="canonical" href="${zhURL}" />`);

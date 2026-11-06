@@ -139,7 +139,7 @@ function render(p) {
         </article>`).join("\n");
   return `<!doctype html>
 <!-- Generated from CHANGELOG.md; sha256 ${digest}. Do not edit this page directly. -->
-<html lang="${p.lang}">
+<html lang="${p.lang}" data-product="stupidmirror">
   <head>
     <meta charset="UTF-8" />
     <script>if(location.hostname.endsWith("github.io"))location.replace("https://stupidmirror.itool.tech"+location.pathname.replace(/^\\/StupidMirror/i,"")+location.search+location.hash)</script>
@@ -161,7 +161,8 @@ function render(p) {
     <meta property="og:image" content="${base}assets/og-image.jpg" />
     <link rel="icon" type="image/png" sizes="128x128" href="${p.up}assets/favicon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="${p.up}assets/apple-touch-icon.png" />
-    <link rel="stylesheet" href="${p.up}styles.css?v=20261026-changelog" />
+    <link rel="stylesheet" href="${p.up}assets/family.css" />
+    <link rel="stylesheet" href="${p.up}styles.css?v=20261106-family" />
     <script type="application/ld+json">${JSON.stringify(structured).replace(/</g, "\\u003c")}</script>
   </head>
   <body id="top">
@@ -196,6 +197,7 @@ ${articles}
         <a class="brand" href="${p.up}${p.home}"><img src="${p.up}assets/app-icon.webp" alt="" width="22" height="22" /><span>StupidMirror</span></a>
         <nav class="guide-footer-nav" aria-label="${p.nav}"><a href="${p.up}${p.home}codex/">${p.codex}</a><a href="${p.up}${p.home}mcp/">${p.mcp}</a><a href="${repository}/blob/main/CHANGELOG.md">${p.source}</a><a href="#top">${p.top} ↑</a></nav>
       </div>
+      <p class="fam-wordmark" aria-hidden="true" translate="no">StupidMirror</p>
     </footer>
   </body>
 </html>

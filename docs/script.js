@@ -5,15 +5,6 @@ const lightbox = document.querySelector("[data-lightbox-dialog]");
 const lightboxImage = document.querySelector("[data-lightbox-image]");
 const lightboxClose = document.querySelector("[data-lightbox-close]");
 
-// Marquees loop by scrolling two copies of their items.
-document.querySelectorAll("[data-marquee] .marquee-track").forEach((track) => {
-  Array.from(track.children).forEach((item) => {
-    const copy = item.cloneNode(true);
-    copy.setAttribute("aria-hidden", "true");
-    track.appendChild(copy);
-  });
-});
-
 // Chinese copy is a static page (zh/index.html, built by scripts/build-site-zh.mjs
 // from scripts/site-zh.json) so search engines index it as Chinese.
 
@@ -90,12 +81,3 @@ if ("IntersectionObserver" in window) {
 } else {
   revealTargets.forEach((target) => target.classList.add("in-view"));
 }
-
-// Spotlight cards: the light follows the pointer.
-document.querySelectorAll(".spotlight").forEach((card) => {
-  card.addEventListener("pointermove", (event) => {
-    const rect = card.getBoundingClientRect();
-    card.style.setProperty("--mx", `${event.clientX - rect.left}px`);
-    card.style.setProperty("--my", `${event.clientY - rect.top}px`);
-  });
-});
