@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.2 - 2026-11-06
+
+- Signing out of StupidMirror ends only StupidMirror's sign-in. Before, it
+  also signed the account out of itool.tech and the other iTool apps.
+
 ## 0.8.1 - 2026-11-05
 
 - Google and GitHub sign-in now opens as a tab in your own browser, where you

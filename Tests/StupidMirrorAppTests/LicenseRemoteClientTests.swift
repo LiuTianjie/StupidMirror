@@ -140,6 +140,22 @@ final class LicenseRemoteClientTests: XCTestCase {
             .contains("https://itool.tech/pro?from=stupidmirror"))
     }
 
+    /// Signing out of StupidMirror ends only this sign-in; itool.tech and the other iTool apps
+    /// stay signed in. Without `scope=local` Supabase ends every session of the account.
+    func testSignOutEndsOnlyThisSignIn() async throws {
+        let transport = RecordingLicenseTransport(responses: [.status(204, "")])
+        let client = SupabaseLicenseAuthClient(configuration: configuration, transport: transport)
+        await client.signOut(LicenseAuthSession(
+            userID: UUID(), accessToken: "user-jwt", refreshToken: "refresh",
+            expiresAt: Date().addingTimeInterval(3600), email: nil, provider: nil
+        ))
+        let request = try await XCTUnwrapAsync(await transport.requests().first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/auth/v1/logout")
+        XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems, [URLQueryItem(name: "scope", value: "local")])
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-jwt")
+    }
+
     private var configuration: LicenseRemoteConfiguration {
         LicenseRemoteConfiguration(
             supabaseURL: URL(string: "https://example.supabase.co"),
