@@ -254,7 +254,11 @@ struct SupabaseLicenseAuthClient: LicenseAuthFlowPerforming {
               !configuration.publishableKey.isEmpty else {
             return
         }
-        var request = URLRequest(url: authBase.appending(path: "logout"))
+        // Only this sign-in: without the scope Supabase ends every session of the account, on
+        // itool.tech and in the other iTool apps too.
+        var components = URLComponents(url: authBase.appending(path: "logout"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "scope", value: "local")]
+        var request = URLRequest(url: components?.url ?? authBase.appending(path: "logout"))
         request.httpMethod = "POST"
         request.timeoutInterval = 8
         request.setValue(configuration.publishableKey, forHTTPHeaderField: "apikey")
